@@ -1,0 +1,37 @@
+{
+    "test_metadata": {
+        "timestamp_utc": "2026-07-31T20:37:05Z",
+        "test_name": "BenchmarkParallelWrites",
+        "test_pattern": "Concurrent Multi-Threaded Write-And-Commit",
+        "package_path": "owndbms/lsmengine"
+    },
+    "environment": {
+        "os": "linux",
+        "architecture": "amd64",
+        "cpu_model": "AMD Ryzen 7 7445HS w/ Radeon 740M Graphics",
+        "logical_cores": 12,
+        "runtime": "WSL2 (Windows Subsystem for Linux)",
+        "working_directory_type": "NTFS Mount (/mnt/c/)",
+        "go_compiler": "1.26"
+    },
+    "engine_configuration": {
+        "skiplist_max_level": 32,
+        "memtable_threshold_bytes": 67108864,
+        "wal_persistence_strategy": "synchronous append with strict mutex lock",
+        "concurrency_model": "GOMAXPROCS=12"
+    },
+    "performance_metrics": {
+        "iterations_completed": 440,
+        "total_test_duration_seconds": 2.250,
+        "latency_per_operation": {
+            "value": 2690794,
+            "unit": "nanoseconds",
+            "converted_ms": 2.691
+        },
+        "memory": {
+            "bytes_allocated_per_op": 1086,
+            "heap_allocations_per_op": 12
+        }
+    },
+    "system_bottleneck_notes": "Performance is identical to sequential writes, indicating severe lock contention at the WAL Mutex layer. Concurrent goroutines are forced to serialize at the physical disk I/O boundary. The WSL2 9P filesystem bridge further inflates the baseline I/O wait time."
+}

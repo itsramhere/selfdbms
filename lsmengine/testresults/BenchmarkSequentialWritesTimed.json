@@ -1,0 +1,37 @@
+{
+  "test_metadata": {
+    "timestamp_utc": "2026-07-31T17:28:00Z",
+    "test_name": "BenchmarkSequentialWrites",
+    "test_pattern": "Single-Threaded Sequential Write-And-Commit (Extended 10s Sample)",
+    "package_path": "owndbms/lsmengine"
+  },
+  "environment": {
+    "os": "linux",
+    "architecture": "amd64",
+    "cpu_model": "AMD Ryzen 7 7445HS w/ Radeon 740M Graphics",
+    "logical_cores": 12,
+    "runtime": "WSL2",
+    "working_directory_type": "NTFS Mount (/mnt/c/)",
+    "go_compiler": "1.26"
+  },
+  "engine_configuration": {
+    "skiplist_max_level": 32,
+    "memtable_threshold_bytes": 67108864,
+    "wal_persistence_strategy": "synchronous append",
+    "benchmark_duration_flag": "-benchtime=10s"
+  },
+  "performance_metrics": {
+    "iterations_completed": 4472,
+    "total_test_duration_seconds": 12.700,
+    "latency_per_operation": {
+      "value": 2772327,
+      "unit": "nanoseconds",
+      "converted_ms": 2.772
+    },
+    "memory": {
+      "bytes_allocated_per_op": 1038,
+      "heap_allocations_per_op": 13
+    }
+  },
+  "system_bottleneck_notes": "Extended benchmark forced a statistically significant sample size (N=4472). The latency remains tightly clustered around ~2.77ms, confirming that synchronous WAL file I/O over the WSL2 9P bridge is a consistent architectural constraint, completely independent of benchmark sample size artifacts."
+}

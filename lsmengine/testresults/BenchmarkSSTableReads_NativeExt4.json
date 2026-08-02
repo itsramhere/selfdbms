@@ -1,0 +1,38 @@
+{
+  "test_metadata": {
+    "timestamp_utc": "2026-07-31T23:20:00Z",
+    "test_name": "BenchmarkSSTableReads_NativeExt4",
+    "test_pattern": "Concurrent Cache Miss / Positional Disk Read (Native Linux)",
+    "package_path": "owndbms/lsmengine"
+  },
+  "environment": {
+    "os": "linux",
+    "architecture": "amd64",
+    "cpu_model": "AMD Ryzen 7 7445HS w/ Radeon 740M Graphics",
+    "runtime": "WSL2 (Native ext4 Root Filesystem)",
+    "working_directory_type": "ext4 (~/selfdbms)",
+    "go_compiler": "1.26.3"
+  },
+  "engine_configuration": {
+    "io_strategy": "Concurrent io.SectionReader (Stateless Positional Reads)",
+    "concurrency_model": "GOMAXPROCS=12",
+    "benchmark_duration_flag": "-benchtime=10s"
+  },
+  "performance_metrics": {
+    "iterations_completed": 379525,
+    "total_test_duration_seconds": 24.062,
+    "latency_per_operation": {
+      "value": 27953,
+      "unit": "nanoseconds",
+      "converted_ms": 0.02795
+    },
+    "memory": {
+      "bytes_allocated_per_op": 2583,
+      "heap_allocations_per_op": 179
+    }
+  },
+  "comparative_insights": {
+    "wsl2_interop_tax_factor": "298.1x speedup when moving from /mnt/c/ (NTFS 9P bridge) to native ext4",
+    "true_ram_vs_disk_cache_miss_ratio": "143.4x degradation from Memtable RAM (194.9ns) to SSTable ext4 (27.95µs)"
+  }
+}

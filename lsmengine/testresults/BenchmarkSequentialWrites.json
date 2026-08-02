@@ -1,0 +1,36 @@
+{
+    "test_metadata": {
+        "timestamp_utc": "2026-07-31T20:35:00Z",
+        "test_name": "BenchmarkSequentialWrites",
+        "test_pattern": "Single-Threaded Sequential Write-And-Commit",
+        "package_path": "owndbms/lsmengine"
+    },
+    "environment": {
+        "os": "linux",
+        "architecture": "amd64",
+        "cpu_model": "AMD Ryzen 7 7445HS w/ Radeon 740M Graphics",
+        "logical_cores": 12,
+        "runtime": "WSL2 (Windows Subsystem for Linux)",
+        "working_directory_type": "NTFS Mount (/mnt/c/)",
+        "go_compiler": "1.26"
+    },
+    "engine_configuration": {
+        "skiplist_max_level": 32,
+        "memtable_threshold_bytes": 67108864,
+        "wal_persistence_strategy": "synchronous append"
+    },
+    "performance_metrics": {
+        "iterations_completed": 438,
+        "total_test_duration_seconds": 1.998,
+        "latency_per_operation": {
+            "value": 2674267,
+            "unit": "nanoseconds",
+            "converted_ms": 2.674
+        },
+        "memory": {
+            "bytes_allocated_per_op": 1030,
+            "heap_allocations_per_op": 12
+        }
+    },
+    "system_bottleneck_notes": "Primary latency driver is synchronous WAL file I/O over the WSL2 9P filesystem bridge."
+}

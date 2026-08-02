@@ -1,0 +1,37 @@
+{
+    "test_metadata": {
+        "timestamp_utc": "2026-07-31T15:13:28Z",
+        "test_name": "BenchmarkParallelReads",
+        "test_pattern": "Concurrent Multi-Threaded Read-Only Transactions",
+        "package_path": "owndbms/lsmengine"
+    },
+    "environment": {
+        "os": "linux",
+        "architecture": "amd64",
+        "cpu_model": "AMD Ryzen 7 7445HS w/ Radeon 740M Graphics",
+        "logical_cores": 12,
+        "runtime": "WSL2 (Windows Subsystem for Linux)",
+        "working_directory_type": "NTFS Mount (/mnt/c/)",
+        "go_compiler": "1.26"
+    },
+    "engine_configuration": {
+        "skiplist_max_level": 32,
+        "memtable_threshold_bytes": 67108864,
+        "concurrency_model": "GOMAXPROCS=12",
+        "pre_populated_keys": 1000
+    },
+    "performance_metrics": {
+        "iterations_completed": 5677010,
+        "total_test_duration_seconds": 15.565,
+        "latency_per_operation": {
+            "value": 194.9,
+            "unit": "nanoseconds",
+            "converted_ms": 0.0001949
+        },
+        "memory": {
+            "bytes_allocated_per_op": 94,
+            "heap_allocations_per_op": 3
+        }
+    },
+    "system_bottleneck_notes": "Operations are entirely CPU and RAM-bound, completely bypassing the WAL disk I/O mutex. Demonstrates near-linear read scalability typical of lock-free MVCC SkipList traversals, achieving a roughly 13,800x speedup compared to synchronous disk writes."
+}

@@ -1,0 +1,38 @@
+{
+  "test_metadata": {
+    "timestamp_utc": "2026-07-31T23:05:00Z",
+    "test_name": "BenchmarkBoltDBComparison",
+    "test_pattern": "B+Tree Baseline (Sequential Writes & Parallel Reads)",
+    "package_path": "owndbms/lsmengine"
+  },
+  "environment": {
+    "os": "linux",
+    "architecture": "amd64",
+    "cpu_model": "AMD Ryzen 7 7445HS w/ Radeon 740M Graphics",
+    "runtime": "WSL2",
+    "working_directory_type": "NTFS Mount (/mnt/c/)",
+    "go_compiler": "1.26.3"
+  },
+  "engine_configuration": {
+    "database_engine": "go.etcd.io/bbolt (B+Tree)",
+    "concurrency_model": "GOMAXPROCS=12",
+    "benchmark_duration_flag": "-benchtime=10s"
+  },
+  "performance_metrics": {
+    "sequential_writes": {
+      "iterations_completed": 2346,
+      "latency_per_op_ns": 5654512,
+      "latency_converted_ms": 5.654,
+      "bytes_allocated_per_op": 20797,
+      "heap_allocations_per_op": 57
+    },
+    "parallel_reads": {
+      "iterations_completed": 10143279,
+      "latency_per_op_ns": 1083,
+      "latency_converted_ms": 0.001083,
+      "bytes_allocated_per_op": 494,
+      "heap_allocations_per_op": 9
+    }
+  },
+  "system_bottleneck_notes": "BoltDB B+Tree writes incur higher latency (5.65ms vs 2.77ms) and memory overhead due to in-place page splits, whereas LSM sequential WAL appends are more write-efficient. For reads, BoltDB leverages memory-mapped files (mmap), achieving sub-microsecond point lookups, though trailing custom in-memory SkipList traversal (~194ns) due to zero-allocation routing."
+}
