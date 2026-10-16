@@ -1,6 +1,6 @@
 # CHECKPOINT CP0.5 — Baseline Invariants & Transaction Commit Deadlock Repair
 
-**Commit:** `85775ba`  
+**Commit:** `4ca8787`  
 **Branch:** `research/reader-compactor-sync`  
 **Date:** `2026-10-16`  
 

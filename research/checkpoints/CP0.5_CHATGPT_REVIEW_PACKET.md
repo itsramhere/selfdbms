@@ -3,7 +3,7 @@
 **Project:** Reader–Compactor Synchronization in a Go LSM Storage Engine  
 **Milestone:** Mini-Checkpoint CP0.5 (Sub-phases I1.1 & I1.1a Complete)  
 **Target Git Branch:** `research/reader-compactor-sync`  
-**Git Commit:** `85775ba`  
+**Git Commit:** `4ca8787`  
 **Host Platform:** Windows 11 amd64 (AMD Ryzen 7 7445HS, NTFS NVMe SSD) / WSL2 Linux amd64 (Kernel 6.6, GCC 13.3)  
 **Date:** 2026-10-16  
 
