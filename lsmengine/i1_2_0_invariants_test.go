@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"os"
+	"sync"
 	"testing"
 )
 
@@ -341,3 +342,143 @@ func TestI1_2_0_SSTableOrderingAnomaly(t *testing.T) {
 		t.Fatalf("FAIL: conflict detector returned seq %d instead of greatest committed sequence 50 when SSTable ordering changed", seq2)
 	}
 }
+
+// 7. Test transaction conflict detection where the globally newest version is not in the last SSTable searched
+func TestE004_TxnConflict_NewestVersionNotInLastSSTable(t *testing.T) {
+	dir := "test_data_e004_txn_conflict"
+	os.MkdirAll(dir, 0755)
+	defer os.RemoveAll(dir)
+
+	// SST 1 (older, seq 10)
+	sstOld := createTestSSTable(t, dir+"/sst_old.sst", []struct {
+		key      string
+		seq      uint64
+		val      string
+		isDelete bool
+	}{
+		{"reordered_key", 10, "val10", false},
+	})
+	defer sstOld.Close()
+
+	// SST 2 (newer, seq 50)
+	sstNew := createTestSSTable(t, dir+"/sst_new.sst", []struct {
+		key      string
+		seq      uint64
+		val      string
+		isDelete bool
+	}{
+		{"reordered_key", 50, "val50", false},
+	})
+	defer sstNew.Close()
+
+	// Deliberately configure ActiveSSreaders with sstNew at index 0 and sstOld at index 1
+	// (so reverse search visits sstOld FIRST).
+	walPath := dir + "/wal.log"
+	wal, err := NewWal(walPath)
+	if err != nil {
+		t.Fatalf("failed to create WAL: %v", err)
+	}
+	defer wal.File.Close()
+
+	man := &Manager{
+		Mu:              &sync.RWMutex{},
+		Mem:             newTestMemtable(),
+		ActiveSSreaders: []*SSTableReader{sstNew, sstOld},
+		Log:             wal,
+	}
+	man.CurrentSeqNo.Store(50)
+
+	// Transaction T1 starts with ReadTs = 20.
+	// Since ReadTs (20) > sstOld (10), if latestValueLocked stopped at sstOld, T1 would NOT detect a conflict!
+	// But since sstNew has seq 50 (> 20), T1 MUST detect a conflict and abort!
+	t1 := &Transaction{
+		ReadTs:   20,
+		WriteSet: make(map[string]PendingWrite),
+		Man:      man,
+	}
+	t1.Put("reordered_key", "val_t1_overwrite")
+
+	err1 := t1.Commit()
+	if err1 == nil {
+		t.Fatalf("DEFECT: T1 committed without detecting conflict against sstNew (seq 50)!")
+	}
+	expected := "Write-write conflict detected. Transaction aborted."
+	if err1.Error() != expected {
+		t.Fatalf("expected error %q, got %q", expected, err1.Error())
+	}
+	t.Logf("T1 correctly aborted upon detecting conflict with sstNew: %v", err1)
+
+	// Transaction T2 starts with ReadTs = 60.
+	// Since ReadTs (60) > sstNew (50), T2 should commit cleanly!
+	t2 := &Transaction{
+		ReadTs:   60,
+		WriteSet: make(map[string]PendingWrite),
+		Man:      man,
+	}
+	t2.Put("reordered_key", "val_t2_clean")
+	if err2 := t2.Commit(); err2 != nil {
+		t.Fatalf("T2 should have committed cleanly without conflict, got: %v", err2)
+	}
+	t.Logf("T2 successfully committed cleanly with ReadTs > 50")
+}
+
+// 8. Step 4 Audit: Determine whether reader-set ordering influences Manager.Get MVCC results
+func TestManagerGet_OrderingAudit(t *testing.T) {
+	dir := "test_data_get_ordering_audit"
+	os.MkdirAll(dir, 0755)
+	defer os.RemoveAll(dir)
+
+	sstOld := createTestSSTable(t, dir+"/sst_old.sst", []struct {
+		key      string
+		seq      uint64
+		val      string
+		isDelete bool
+	}{
+		{"audit_key", 10, "val_old_10", false},
+	})
+	defer sstOld.Close()
+
+	sstNew := createTestSSTable(t, dir+"/sst_new.sst", []struct {
+		key      string
+		seq      uint64
+		val      string
+		isDelete bool
+	}{
+		{"audit_key", 50, "val_new_50", false},
+	})
+	defer sstNew.Close()
+
+	// Case 1: Invariant INV-ORDER-1 satisfied [sstOld (0), sstNew (1)]
+	manChronological := &Manager{
+		Mu:              &sync.RWMutex{},
+		Mem:             newTestMemtable(),
+		ActiveSSreaders: []*SSTableReader{sstOld, sstNew},
+	}
+
+	val, err := manChronological.Get("audit_key", 100)
+	if err != nil || val != "val_new_50" {
+		t.Fatalf("Chronological Get failed: expected val_new_50, got %q, err %v", val, err)
+	}
+	t.Logf("Chronological Get correctly returned newest visible version: %q", val)
+
+	// Case 2: Inverted order [sstNew (0), sstOld (1)]
+	// This confirms that Manager.Get is strictly dependent on invariant INV-ORDER-1.
+	manInverted := &Manager{
+		Mu:              &sync.RWMutex{},
+		Mem:             newTestMemtable(),
+		ActiveSSreaders: []*SSTableReader{sstNew, sstOld},
+	}
+
+	valInverted, errInverted := manInverted.Get("audit_key", 100)
+	if errInverted != nil {
+		t.Fatalf("Inverted Get unexpected error: %v", errInverted)
+	}
+	if valInverted == "val_old_10" {
+		t.Logf("AUDIT CONFIRMATION: Manager.Get returned older version %q because sstOld was placed after sstNew in ActiveSSreaders.", valInverted)
+		t.Logf("CONCLUSION: Manager.Get relies strictly on invariant INV-ORDER-1 (ActiveSSreaders ordered oldest to newest). Sub-phase I1.2.2 MUST preserve this ordering during compaction publication.")
+	} else {
+		t.Logf("Unexpected result from inverted Get: %q", valInverted)
+	}
+}
+
+

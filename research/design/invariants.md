@@ -70,8 +70,18 @@ This document codifies the exact correctness, lifetime, and safety invariants of
 
 ### INV-MVCC-5: Cross-Tier Conflict Detection Safety
 - **Statement**: For every key in a committing transaction's write set, conflict validation must inspect the latest committed sequence number across all tiers (Active Memtable $\to$ Frozen Memtables $\to$ Active SSTables) including both Puts and Tombstones. If any visible version has $Seq > T_{\text{read}}$, the transaction must abort.
-- **Current Status**: **Verified (Sub-phase I1.1b)**.
-- **Evidence / Justification**: Implemented in `latestValueLocked` via `m.ActiveSSreaders[i].LatestValue(userKey)`. Verified by deterministic tests in `lsmengine/cross_tier_conflict_test.go` (`TestCrossTierWriteConflict_FlushedSSTable`, `TestCrossTierWriteConflict_FlushedTombstone`, `TestCrossTierWriteConflict_NonConflicting`).
+- **Current Status**: **Verified (Sub-phases I1.1b & I1.2.0 Option A)**.
+- **Evidence / Justification**: Implemented in `latestValueLocked` via Option A: iterates all `ActiveSSreaders` and tracks `maxSeq`, eliminating vulnerability to SSTable slice reordering (Issue E-004). Verified by `TestI1_2_0_SSTableOrderingAnomaly` and `TestE004_TxnConflict_NewestVersionNotInLastSSTable`.
+
+### INV-MVCC-6: Monotonic Sequence Ordering of RAM vs Disk
+- **Statement**: Any version stored in the active Memtable `m.Mem` has a sequence number strictly greater than all versions in frozen Memtables and on-disk SSTables. Any version in a frozen Memtable `m.Frozenmem[i]` has a sequence number strictly greater than all versions in `m.Frozenmem[i-1]` and all on-disk SSTables.
+- **Current Status**: **Verified**.
+- **Evidence / Justification**: Sequence numbers are atomically incremented on commit, and all writes append directly to `m.Mem`. Memtables only freeze after active writes stop. This guarantees that finding a key in RAM tiers allows safe early return in `latestValueLocked` without needing disk I/O.
+
+### INV-ORDER-1: Chronological Ordering of ActiveSSreaders
+- **Statement**: Elements in `m.ActiveSSreaders` must be ordered chronologically by creation timestamp/generation, from oldest at index 0 to newest at index `len-1`.
+- **Current Status**: **Required for Manager.Get; Guaranteed by flushToDisk and protected publication in I1.2.2**.
+- **Evidence / Justification**: Point reads (`Manager.Get`) iterate backwards from `len-1` down to 0 and terminate on the first visible version. Audit test `TestManagerGet_OrderingAudit` demonstrated that inverting `ActiveSSreaders` causes older versions to mask newer visible versions. Therefore, compaction publication must replace compacted inputs in-place to preserve chronological sequence.
 
 ---
 

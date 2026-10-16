@@ -132,9 +132,14 @@ Format:
   ```
 - **Hypotheses Considered**:
   1. *Early-return optimization in `latestValueLocked` assumes strict chronological ordering*: Confirmed. `latestValueLocked` returns on the first match (`return seq, nil`), which is valid ONLY if `ActiveSSreaders` is guaranteed to be chronologically ordered.
-- **Proposed Fix (Awaiting Authorization)**: Update `latestValueLocked` to scan all readers in `ActiveSSreaders` and track `maxSeq` instead of returning on the first match.
-- **Status**: REPRODUCED / AWAITING AUTHORIZATION BEFORE OUT-OF-SCOPE REPAIR.
-- **Residual Risk**: Awaiting reviewer guidance on whether to repair `latestValueLocked` or enforce strict slice position invariants during compaction publication.
-- **Evidence Path**: [`research/debug/E-004/repro.md`](../debug/E-004/repro.md), [`research/debug/E-004/failing_test.log`](../debug/E-004/failing_test.log).
-- **Commit**: `b03b338`
+- **Fix**: Implemented Option A approved by reviewer: `latestValueLocked` now iterates across all `ActiveSSreaders` tracking `maxSeq` while preserving RAM monotonic early-returns (INV-MVCC-6).
+- **Regression Tests**: `TestI1_2_0_SSTableOrderingAnomaly`, `TestE004_TxnConflict_NewestVersionNotInLastSSTable` in `lsmengine/i1_2_0_invariants_test.go`.
+- **Validation**:
+  - Windows Native: 16/16 tests PASS (1.26s).
+  - WSL2 Linux: 16/16 tests PASS under `-race` with 0 race warnings (1.77s).
+- **Status**: FIXED (Option A implemented).
+- **Residual Risk**: Point-read `Manager.Get` still requires chronological ordering (`INV-ORDER-1`), which must be preserved during compaction publication in Sub-phase I1.2.2.
+- **Evidence Path**: [`research/debug/E-004/repro.md`](../debug/E-004/repro.md), [`research/debug/E-004/before.log`](../debug/E-004/before.log), [`research/debug/E-004/after.log`](../debug/E-004/after.log).
+- **Commit**: `d09e407`
+
 

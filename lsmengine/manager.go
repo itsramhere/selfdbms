@@ -123,31 +123,50 @@ func (m *Manager) LatestValue(userKey []byte) (uint64, error) {
 }
 
 func (m *Manager) latestValueLocked(userKey []byte) (uint64, error) {
+	var maxSeq uint64
+	var found bool
+
+	// Tier 1: Check active Memtable.
+	// Monotonic Invariant (INV-MVCC-6): m.Mem receives writes with monotonically increasing
+	// sequence numbers that strictly postdate all frozen memtables and on-disk SSTables.
 	seq, err := m.Mem.LatestValue(userKey)
 	if err == nil {
 		return seq, nil
-	} else if errors.Is(err, ErrKeyDeleted) {
+	} else if !errors.Is(err, ErrNotFound) {
 		return 0, err
 	}
 
+	// Tier 2: Check frozen Memtables (newest to oldest).
+	// Frozen memtables are strictly newer than any on-disk SSTable.
 	for i := len(m.Frozenmem) - 1; i >= 0; i-- {
 		seq, err := m.Frozenmem[i].LatestValue(userKey)
 		if err == nil {
 			return seq, nil
-		} else if errors.Is(err, ErrKeyDeleted) {
+		} else if !errors.Is(err, ErrNotFound) {
 			return 0, err
 		}
 	}
 
-	for i := len(m.ActiveSSreaders) - 1; i >= 0; i-- {
-		seq, err := m.ActiveSSreaders[i].LatestValue(userKey)
+	// Tier 3: Check all on-disk SSTables (Option A fix for Issue E-004).
+	// To prevent missed write-write conflicts if SSTables are reordered (e.g. during
+	// compaction publication, generation reorganization, or concurrent flushes),
+	// examine all active SSTables and track the greatest committed sequence number.
+	for _, reader := range m.ActiveSSreaders {
+		seq, err := reader.LatestValue(userKey)
 		if err == nil {
-			return seq, nil
+			if !found || seq > maxSeq {
+				maxSeq = seq
+				found = true
+			}
 		} else if errors.Is(err, ErrNotFound) {
 			continue
-		} else if err != nil {
+		} else {
 			return 0, err
 		}
+	}
+
+	if found {
+		return maxSeq, nil
 	}
 
 	return 0, ErrNotFound

@@ -1,0 +1,6 @@
+﻿=== RUN   TestI1_2_0_SSTableOrderingAnomaly
+    i1_2_0_invariants_test.go:341: FAIL: conflict detector returned seq 10 instead of greatest committed sequence 50 when SSTable ordering changed
+--- FAIL: TestI1_2_0_SSTableOrderingAnomaly (0.01s)
+FAIL
+FAIL	owndbms/lsmengine	0.929s
+FAIL
