@@ -29,6 +29,7 @@ type Manager struct {
 	state                       EngineState
 	flushWg                     sync.WaitGroup
 	flushErr                    error
+	flushChan                   chan *Memtable
 	Mem                         *Memtable
 	Log                         *Wal
 	Frozenmem                   []*Memtable
@@ -39,6 +40,8 @@ type Manager struct {
 	beforeFlushPublishHook      func()
 	flushBuildHook              func() error
 }
+
+var sstableFileSeq atomic.Uint64
 
 var ErrNotFound = errors.New("key not found")
 var ErrKeyDeleted = errors.New("key has been deleted")
@@ -61,6 +64,7 @@ func CreateManager() *Manager {
 	}
 
 	man.Log, _ = NewWal("wal.log")
+	man.initFlushWorkerLocked()
 	return man
 }
 
@@ -142,6 +146,9 @@ func (m *Manager) Close() error {
 	}
 	m.state = EngineClosing
 	m.isClosed = true
+	if m.flushChan != nil {
+		close(m.flushChan)
+	}
 	m.Mu.Unlock()
 
 	// Drain in-flight flushes outside m.Mu to prevent self-deadlock
@@ -221,6 +228,71 @@ func (m *Manager) latestValueLocked(userKey []byte) (uint64, error) {
 	return 0, ErrNotFound
 }
 
+func (m *Manager) initFlushWorkerLocked() {
+	if m.flushChan == nil {
+		m.flushChan = make(chan *Memtable, 64)
+		m.flushWg.Add(1)
+		go m.flushLoop()
+	}
+}
+
+func (m *Manager) flushLoop() {
+	defer m.flushWg.Done()
+	for mem := range m.flushChan {
+		m.flushToDisk(mem)
+	}
+}
+
+func (m *Manager) enqueueFlushLocked(mem *Memtable) {
+	m.initFlushWorkerLocked()
+	m.flushChan <- mem
+}
+
+// EnqueueFlush enqueues a frozen Memtable into the FIFO flush queue.
+// It assumes the caller has already added the Memtable to m.Frozenmem under m.Mu.Lock().
+func (m *Manager) EnqueueFlush(mem *Memtable) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	if m.state != EngineOpen {
+		return
+	}
+	m.enqueueFlushLocked(mem)
+}
+
+// TriggerFlush freezes the active Memtable and enqueues it to the background FIFO flush worker.
+func (m *Manager) TriggerFlush() {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	if m.state != EngineOpen {
+		return
+	}
+	if m.Mem == nil || (m.Mem.SizeBytes == 0 && m.Mem.SK.headNode.Forward[0] == nil) {
+		return
+	}
+
+	frozen := m.Mem
+	m.Frozenmem = append(m.Frozenmem, frozen)
+
+	sk := &SkipList{
+		headNode: &Node{
+			Forward: make([]*Node, 32),
+		},
+		maxLevel:     32,
+		currentLevel: 1,
+	}
+	m.Mem = &Memtable{
+		SK:        sk,
+		SizeBytes: 0,
+	}
+
+	if m.Log != nil && m.Log.File != nil {
+		m.Log.File.Close()
+		m.Log, _ = NewWal(fmt.Sprintf("wal_%d.log", time.Now().UnixNano()))
+	}
+
+	m.enqueueFlushLocked(frozen)
+}
+
 func (m *Manager) checkAndTriggerFlush() {
 	m.Mu.Lock()
 	if m.state != EngineOpen {
@@ -256,14 +328,8 @@ func (m *Manager) checkAndTriggerFlush() {
 		m.Log, _ = NewWal(fmt.Sprintf("wal_%d.log", time.Now().UnixNano()))
 	}
 
-	m.flushWg.Add(1)
+	m.enqueueFlushLocked(frozen)
 	m.Mu.Unlock()
-
-	// Spawn the background worker
-	go func() {
-		defer m.flushWg.Done()
-		m.flushToDisk(frozen)
-	}()
 }
 
 func (m *Manager) flushToDisk(mem *Memtable) {
@@ -278,7 +344,7 @@ func (m *Manager) flushToDisk(mem *Memtable) {
 		}
 	}
 
-	filename := fmt.Sprintf("data_%d.sst", time.Now().UnixNano())
+	filename := fmt.Sprintf("data_%d_%d.sst", time.Now().UnixNano(), sstableFileSeq.Add(1))
 	file, err := os.Create(filename)
 	if err != nil {
 		m.Mu.Lock()

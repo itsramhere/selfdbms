@@ -251,9 +251,10 @@ Format:
 - **Proposed Architectural Options**:
   - *Option 1*: Serialized flush worker or dedicated `flushMu sync.Mutex` enforcing FIFO flush completion.
   - *Option 2*: Multi-threaded flush builder with sequence-ordered publication queue.
-  - *Option 3*: Approach B level/generation architecture with explicit sequence ranges.
-- **Status**: IDENTIFIED & REPRODUCED (BLOCKED — Awaiting External Reviewer Decision).
-- **Evidence Path**: [`research/debug/E-008/repro.md`](../debug/E-008/repro.md), [`research/debug/E-008/failing_repro.log`](../debug/E-008/failing_repro.log), [`research/debug/E-008/wsl_failing_repro.log`](../debug/E-008/wsl_failing_repro.log).
+  - *Option 3*: Dedicated managed FIFO flush worker with buffered channel (Selected).
+- **Status**: FIXED & VERIFIED (Sub-phase I1.3.7c).
+- **Resolution**: Implemented dedicated background FIFO flush worker with buffered `flushChan chan *Memtable` (D-014). Memtables are enqueued under `Manager.Mu` at the instant of freezing in exact chronological creation order. The single worker processes and publishes SSTables sequentially to `ActiveSSreaders` in strict FIFO order, guaranteeing `INV-ORDER-1`. Draining is seamlessly coordinated with `Manager.Close()` 4-phase drain protocol. Verified by 6 deterministic regression tests (reversed timing, 3+ queue drain, multi-version MVCC, tombstone precedence, interleaved compaction, concurrent point reads) in `lsmengine/flush_ordering_test.go` on Windows native (1.18s) and WSL2 with `-race` (2.50s, 0 data races).
+- **Evidence Path**: [`research/debug/E-008/repro.md`](../debug/E-008/repro.md), [`research/debug/E-008/failing_repro.log`](../debug/E-008/failing_repro.log), [`research/debug/E-008/wsl_failing_repro.log`](../debug/E-008/wsl_failing_repro.log), [`research/debug/E-008/after.log`](../debug/E-008/after.log), [`research/debug/E-008/wsl_after.log`](../debug/E-008/wsl_after.log).
 
 
 

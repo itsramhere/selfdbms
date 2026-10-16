@@ -1,0 +1,14 @@
+﻿=== RUN   TestFlushOrdering_Case1_TwoFlushesWithReversedTiming
+--- PASS: TestFlushOrdering_Case1_TwoFlushesWithReversedTiming (0.01s)
+=== RUN   TestFlushOrdering_Case2_ThreeOrMoreFrozenMemtablesInQueue
+--- PASS: TestFlushOrdering_Case2_ThreeOrMoreFrozenMemtablesInQueue (0.02s)
+=== RUN   TestFlushOrdering_Case3_MultipleVersionsOfSameKeyAcrossFlushes
+--- PASS: TestFlushOrdering_Case3_MultipleVersionsOfSameKeyAcrossFlushes (0.01s)
+=== RUN   TestFlushOrdering_Case4_DeleteFollowedByPutAcrossFlushes
+--- PASS: TestFlushOrdering_Case4_DeleteFollowedByPutAcrossFlushes (0.02s)
+=== RUN   TestFlushOrdering_Case5_CompactionInterleavedWithQueuedFlushes
+--- PASS: TestFlushOrdering_Case5_CompactionInterleavedWithQueuedFlushes (0.03s)
+=== RUN   TestFlushOrdering_Case6_PointReadsAtSupportedTimestamps
+--- PASS: TestFlushOrdering_Case6_PointReadsAtSupportedTimestamps (0.11s)
+PASS
+ok  	owndbms/lsmengine	1.176s
