@@ -27,6 +27,8 @@ Format:
 | 2026-10-16 19:13:30 | I1.2.4 | Audit compaction ownership and error handling | `research/design/compaction_ownership_audit.md`, `research/logs/WORKLOG.md` | Verified reader ownership, error propagation, atomic swap, and Windows NTFS sharing violation avoidance | `f4019e2` |
 | 2026-10-16 19:14:00 | I1.2.5 | Full validation across Windows and WSL2 `-race` | `research/debug/TEST_MATRIX.md`, `research/design/architecture.md`, `research/logs/WORKLOG.md` | Ran `go vet ./...` (0 errors), 20/20 unit tests PASS on Windows native (1.47s), 20/20 PASS under WSL2 `-race` (2.44s) with zero race warnings | `f4019e2` |
 | 2026-10-16 19:15:00 | CP1.2 | Delivered Checkpoint CP1.2 and ChatGPT review packet | `research/checkpoints/CP1.2.md`, `research/checkpoints/CP1.2_CHATGPT_REVIEW_PACKET.md`, `research/logs/WORKLOG.md` | Produced comprehensive CP1.2 report and standalone review packet with diagrams, algorithm, and test matrix. Stopped for external review | `f4019e2` |
+| 2026-10-16 19:26:00 | I1.3.0 | Audit SSTable reader ownership and verify compaction ordering invariants | `research/design/reader_ownership_audit.md`, `research/debug/E-005/`, `lsmengine/noncontiguous_compaction_counterexample_test.go`, `research/logs/ISSUES.md`, `research/logs/WORKLOG.md` | Completed full reader ownership audit across 7 paths. Discovered and proved defect E-005 (noncontiguous compaction violates INV-ORDER-1, causing stale reads in Manager.Get). Created deterministic failing counterexample test. Paused execution for external reviewer authorization | `345bc8a` |
+
 
 
 

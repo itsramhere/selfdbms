@@ -1,0 +1,7 @@
+﻿=== RUN   TestCounterexample_NoncontiguousCompactionViolatesOrder
+    noncontiguous_compaction_counterexample_test.go:85: Result of Manager.Get after noncontiguous compaction: "v1_mid"
+    noncontiguous_compaction_counterexample_test.go:88: COUNTEREXAMPLE PROVEN: Noncontiguous compaction resulted in stale read "v1_mid" (expected "v2_new"). r1 (seq 20) masked newer compacted version mCompact (seq 30) because mCompact was placed before r1 in the flat slice!
+--- FAIL: TestCounterexample_NoncontiguousCompactionViolatesOrder (0.02s)
+FAIL
+FAIL	owndbms/lsmengine	0.949s
+FAIL

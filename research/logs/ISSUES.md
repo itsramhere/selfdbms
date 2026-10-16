@@ -140,6 +140,37 @@ Format:
 - **Status**: FIXED (Option A implemented).
 - **Residual Risk**: Point-read `Manager.Get` still requires chronological ordering (`INV-ORDER-1`), which must be preserved during compaction publication in Sub-phase I1.2.2.
 - **Evidence Path**: [`research/debug/E-004/repro.md`](../debug/E-004/repro.md), [`research/debug/E-004/before.log`](../debug/E-004/before.log), [`research/debug/E-004/after.log`](../debug/E-004/after.log).
-- **Commit**: `d09e407`
+- **Commit**: `5bf95d2`
+
+---
+
+### E-005: Noncontiguous Compaction Input Selection Violates Invariant `INV-ORDER-1`
+
+- **ID**: `E-005`
+- **Detected**: 2026-10-16, commit `6527d7f`, baseline Approach A, Windows 11 amd64
+- **Sub-phase**: I1.3.0 (Reader Ownership & Ordering Audit)
+- **Severity**: Architectural Invariant Hazard (P1)
+- **Symptom**: If compaction selects noncontiguous input SSTables (e.g. $[R_0, R_2]$ skipping $R_1$), replacing them with a single merged table in the flat slice `m.ActiveSSreaders` violates chronological ordering `INV-ORDER-1`. As a result, older uncompacted versions in $R_1$ mask newer visible versions from $R_2$ in `Manager.Get`, returning stale data and violating snapshot isolation.
+- **Minimal Reproduction**:
+  ```powershell
+  go test -v ./lsmengine -run TestCounterexample_NoncontiguousCompactionViolatesOrder
+  ```
+- **Expected / Actual**:
+  - *Expected*: Point lookup returns latest visible version `"v2_new"` (seq 30).
+  - *Actual*: Point lookup returns stale version `"v1_mid"` (seq 20) because $R_1$ sits after the merged table in the reverse search order.
+- **Trace / Log**:
+  ```
+  === RUN   TestCounterexample_NoncontiguousCompactionViolatesOrder
+      noncontiguous_compaction_counterexample_test.go:85: Result of Manager.Get after noncontiguous compaction: "v1_mid"
+      noncontiguous_compaction_counterexample_test.go:88: COUNTEREXAMPLE PROVEN: Noncontiguous compaction resulted in stale read "v1_mid" (expected "v2_new"). r1 (seq 20) masked newer compacted version mCompact (seq 30) because mCompact was placed before r1 in the flat slice!
+  --- FAIL: TestCounterexample_NoncontiguousCompactionViolatesOrder (0.02s)
+  FAIL
+  ```
+- **Root Cause**: In a single flat slice architecture where `Manager.Get` iterates backwards, replacing noncontiguous inputs by inserting the merged table at the first input's position places the output before unselected intermediate tables, inverting relative version order.
+- **Proposed Fix (Awaiting Authorization)**: Formally codify invariant `INV-COMPACT-1` (compaction inputs in a flat slice must be contiguous), and enforce in `replaceCompactedReaders` that `inputs` form a contiguous sub-slice of `current`.
+- **Status**: REPRODUCED / COUNTEREXAMPLE VERIFIED / AWAITING AUTHORIZATION BEFORE OUT-OF-SCOPE REPAIR.
+- **Evidence Path**: [`research/debug/E-005/repro.md`](../debug/E-005/repro.md), [`research/debug/E-005/failing_counterexample.log`](../debug/E-005/failing_counterexample.log), [`lsmengine/noncontiguous_compaction_counterexample_test.go`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/noncontiguous_compaction_counterexample_test.go).
+- **Commit**: Pending authorization
+
 
 
