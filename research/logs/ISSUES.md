@@ -221,8 +221,9 @@ Format:
 - **Proposed Architectural Options**:
   - *Option A*: Defensive reader drop (`if m.isClosed { reader.Close(); os.Remove(...); return }`) in `flushToDisk`.
   - *Option B*: Coordinated flush drain via `m.flushWg sync.WaitGroup` in `Manager.Close()` ensuring zero data loss for committed frozen memtables.
-- **Status**: IDENTIFIED & REPRODUCED (BLOCKED — Awaiting External Reviewer Decision).
-- **Evidence Path**: [`research/debug/E-007/repro.md`](../debug/E-007/repro.md), [`research/debug/E-007/failing_repro.log`](../debug/E-007/failing_repro.log), [`research/debug/E-007/wsl_failing_repro.log`](../debug/E-007/wsl_failing_repro.log).
+- **Status**: FIXED & VERIFIED (Sub-phase I1.3.7b).
+- **Resolution**: Implemented 4-phase deadlock-free drain protocol in `Manager.Close()` using `EngineState` (`EngineOpen`, `EngineClosing`, `EngineClosed`), `m.flushWg sync.WaitGroup`, and `m.flushErr error`. In-flight flushes are drained outside `m.Mu` without holding locks, published readers are safely closed on shutdown, and post-shutdown operations are rejected with `ErrClosed`. Verified by 6 deterministic tests (Cases A–F) in `lsmengine/flush_shutdown_test.go` on Windows native and WSL2 with `-race` (0 data races).
+- **Evidence Path**: [`research/debug/E-007/repro.md`](../debug/E-007/repro.md), [`research/debug/E-007/failing_repro.log`](../debug/E-007/failing_repro.log), [`research/debug/E-007/wsl_failing_repro.log`](../debug/E-007/wsl_failing_repro.log), [`research/debug/E-007/after.log`](../debug/E-007/after.log), [`research/debug/E-007/wsl_after.log`](../debug/E-007/wsl_after.log).
 
 ---
 

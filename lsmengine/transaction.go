@@ -55,6 +55,12 @@ func (t *Transaction) Delete(key string) error {
 func (t *Transaction) Commit() error {
 	t.Man.Mu.Lock()
 
+	if t.Man.state != EngineOpen {
+		t.Man.Mu.Unlock()
+		t.Abort()
+		return ErrClosed
+	}
+
 	for key := range t.WriteSet {
 		// Use internal unexported latestValueLocked since t.Man.Mu is already locked
 		latestSeqNo, err := t.Man.latestValueLocked([]byte(key))

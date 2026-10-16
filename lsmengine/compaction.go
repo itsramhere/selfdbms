@@ -75,7 +75,7 @@ func (m *Manager) CompactAll() error {
 	defer m.compactionMu.Unlock()
 
 	m.Mu.Lock()
-	if m.isClosed {
+	if m.isClosed || m.state != EngineOpen {
 		m.Mu.Unlock()
 		return errors.New("compaction aborted: engine is closed")
 	}
@@ -209,7 +209,7 @@ func (m *Manager) CompactAll() error {
 
 	// Protected identity-preserving publication under write lock
 	m.Mu.Lock()
-	if m.isClosed {
+	if m.isClosed || m.state != EngineOpen {
 		m.Mu.Unlock()
 		newReader.Close()
 		os.Remove(newFilename)

@@ -13,11 +13,22 @@ import (
 	"time"
 )
 
+type EngineState int
+
+const (
+	EngineOpen EngineState = iota
+	EngineClosing
+	EngineClosed
+)
+
 type Manager struct {
 	CurrentSeqNo                atomic.Uint64
 	Mu                          *sync.RWMutex
 	compactionMu                sync.Mutex
 	isClosed                    bool
+	state                       EngineState
+	flushWg                     sync.WaitGroup
+	flushErr                    error
 	Mem                         *Memtable
 	Log                         *Wal
 	Frozenmem                   []*Memtable
@@ -26,10 +37,12 @@ type Manager struct {
 	duringCompactionMergeHook   func()
 	duringPointReadHook         func()
 	beforeFlushPublishHook      func()
+	flushBuildHook              func() error
 }
 
 var ErrNotFound = errors.New("key not found")
 var ErrKeyDeleted = errors.New("key has been deleted")
+var ErrClosed = errors.New("engine is closed")
 
 func CreateManager() *Manager {
 	man := new(Manager)
@@ -63,6 +76,11 @@ func (m *Manager) Get(key string, readTs uint64) (string, error) {
 	byteKey := []byte(key)
 	m.Mu.RLock()
 	defer m.Mu.RUnlock()
+
+	if m.state == EngineClosed {
+		return "", ErrClosed
+	}
+
 	sol, err := m.Mem.Get(byteKey, readTs)
 	if err != nil {
 		if err == ErrKeyDeleted {
@@ -118,22 +136,33 @@ func (m *Manager) Close() error {
 	defer m.compactionMu.Unlock()
 
 	m.Mu.Lock()
-	defer m.Mu.Unlock()
-
-	if m.isClosed {
+	if m.state != EngineOpen {
+		m.Mu.Unlock()
 		return nil
 	}
+	m.state = EngineClosing
 	m.isClosed = true
+	m.Mu.Unlock()
+
+	// Drain in-flight flushes outside m.Mu to prevent self-deadlock
+	m.flushWg.Wait()
+
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+
+	m.state = EngineClosed
 
 	for _, reader := range m.ActiveSSreaders {
-		reader.Close()
+		if reader != nil {
+			reader.Close()
+		}
 	}
 	m.ActiveSSreaders = nil
 
 	if m.Log != nil && m.Log.File != nil {
 		m.Log.File.Close()
 	}
-	return nil
+	return m.flushErr
 }
 
 func (m *Manager) LatestValue(userKey []byte) (uint64, error) {
@@ -194,6 +223,11 @@ func (m *Manager) latestValueLocked(userKey []byte) (uint64, error) {
 
 func (m *Manager) checkAndTriggerFlush() {
 	m.Mu.Lock()
+	if m.state != EngineOpen {
+		m.Mu.Unlock()
+		return
+	}
+
 	// 64MB threshold
 	if m.Mem.SizeBytes < 64*1024*1024 {
 		m.Mu.Unlock()
@@ -217,20 +251,42 @@ func (m *Manager) checkAndTriggerFlush() {
 	}
 
 	// Rotate WAL (Simplified)
-	m.Log.File.Close()
-	m.Log, _ = NewWal(fmt.Sprintf("wal_%d.log", time.Now().UnixNano()))
+	if m.Log != nil && m.Log.File != nil {
+		m.Log.File.Close()
+		m.Log, _ = NewWal(fmt.Sprintf("wal_%d.log", time.Now().UnixNano()))
+	}
 
+	m.flushWg.Add(1)
 	m.Mu.Unlock()
 
 	// Spawn the background worker
-	go m.flushToDisk(frozen)
+	go func() {
+		defer m.flushWg.Done()
+		m.flushToDisk(frozen)
+	}()
 }
 
 func (m *Manager) flushToDisk(mem *Memtable) {
+	if m.flushBuildHook != nil {
+		if err := m.flushBuildHook(); err != nil {
+			m.Mu.Lock()
+			if m.flushErr == nil {
+				m.flushErr = err
+			}
+			m.Mu.Unlock()
+			return
+		}
+	}
+
 	filename := fmt.Sprintf("data_%d.sst", time.Now().UnixNano())
 	file, err := os.Create(filename)
 	if err != nil {
-		return // In production, log this fatal error
+		m.Mu.Lock()
+		if m.flushErr == nil {
+			m.flushErr = err
+		}
+		m.Mu.Unlock()
+		return
 	}
 
 	builder := &SSTableBuilder{
@@ -245,10 +301,24 @@ func (m *Manager) flushToDisk(mem *Memtable) {
 		curr = curr.Forward[0]
 	}
 
-	builder.Close()
+	if err := builder.Close(); err != nil {
+		os.Remove(filename)
+		m.Mu.Lock()
+		if m.flushErr == nil {
+			m.flushErr = err
+		}
+		m.Mu.Unlock()
+		return
+	}
 
 	reader, err := NewSSTableReader(filename)
 	if err != nil {
+		os.Remove(filename)
+		m.Mu.Lock()
+		if m.flushErr == nil {
+			m.flushErr = err
+		}
+		m.Mu.Unlock()
 		return
 	}
 
@@ -259,6 +329,13 @@ func (m *Manager) flushToDisk(mem *Memtable) {
 	// Swap the newly built SSTable into the read path and remove the frozen memtable
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
+
+	// Prevent publication into an engine that is already fully CLOSED
+	if m.state == EngineClosed {
+		reader.Close()
+		os.Remove(filename)
+		return
+	}
 
 	m.ActiveSSreaders = append(m.ActiveSSreaders, reader)
 

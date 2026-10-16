@@ -1,0 +1,14 @@
+=== RUN   TestFlushShutdown_CaseA_InflightFlushWhileCloseBegins
+--- PASS: TestFlushShutdown_CaseA_InflightFlushWhileCloseBegins (0.01s)
+=== RUN   TestFlushShutdown_CaseB_CloseBeforeQueuedFlushExecution
+--- PASS: TestFlushShutdown_CaseB_CloseBeforeQueuedFlushExecution (0.02s)
+=== RUN   TestFlushShutdown_CaseC_FlushFailsWhileShutdownDraining
+--- PASS: TestFlushShutdown_CaseC_FlushFailsWhileShutdownDraining (0.00s)
+=== RUN   TestFlushShutdown_CaseD_ConcurrentOrRepeatedClose
+--- PASS: TestFlushShutdown_CaseD_ConcurrentOrRepeatedClose (0.00s)
+=== RUN   TestFlushShutdown_CaseE_PostShutdownOperationRejection
+--- PASS: TestFlushShutdown_CaseE_PostShutdownOperationRejection (0.00s)
+=== RUN   TestFlushShutdown_CaseF_CompactionAndFlushActiveDuringShutdown
+--- PASS: TestFlushShutdown_CaseF_CompactionAndFlushActiveDuringShutdown (0.02s)
+PASS
+ok  	owndbms/lsmengine	0.933s
