@@ -5,7 +5,7 @@
 **Governing Sub-phase:** I1.3.7 (I1.3.7a through I1.3.7e)  
 **Architecture:** Approach A (Manager-wide Mutex Baseline)  
 **Git Branch:** `research/reader-compactor-sync`  
-**Current HEAD Commit:** `4370f5e`  
+**Current HEAD Commit:** `7b791f9`  
 **Prior Approved Milestone:** CP1.3a (`d30f658`, `90e05c6`)  
 **Status:** COMPLETE — STOPPED FOR EXTERNAL REVIEWER DECISION  
 
