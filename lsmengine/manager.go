@@ -25,6 +25,7 @@ type Manager struct {
 	beforeCompactionPublishHook func()
 	duringCompactionMergeHook   func()
 	duringPointReadHook         func()
+	beforeFlushPublishHook      func()
 }
 
 var ErrNotFound = errors.New("key not found")
@@ -249,6 +250,10 @@ func (m *Manager) flushToDisk(mem *Memtable) {
 	reader, err := NewSSTableReader(filename)
 	if err != nil {
 		return
+	}
+
+	if m.beforeFlushPublishHook != nil {
+		m.beforeFlushPublishHook()
 	}
 
 	// Swap the newly built SSTable into the read path and remove the frozen memtable

@@ -20,6 +20,10 @@ func replaceCompactedReaders(current []*SSTableReader, inputs []*SSTableReader, 
 		return current, nil
 	}
 
+	if newReader == nil {
+		return nil, errors.New("compaction aborted: nil replacement reader")
+	}
+
 	// 1. Ensure each input reader appears exactly once (no duplicates) and is non-nil
 	inputSet := make(map[*SSTableReader]bool, len(inputs))
 	for _, r := range inputs {
@@ -58,9 +62,7 @@ func replaceCompactedReaders(current []*SSTableReader, inputs []*SSTableReader, 
 	// 5. Construct updated reader set:
 	// New reader is published at index 0, followed by all concurrently flushed readers.
 	updated := make([]*SSTableReader, 0, len(current)-len(inputs)+1)
-	if newReader != nil {
-		updated = append(updated, newReader)
-	}
+	updated = append(updated, newReader)
 	updated = append(updated, current[len(inputs):]...)
 
 	return updated, nil

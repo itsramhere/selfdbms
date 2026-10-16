@@ -83,19 +83,20 @@ To ensure safe reclamation, we explicitly distinguish between slice membership a
       ▼                                              │ (Unmodified)
 [Compacting Lease] (holds borrowed reference)        │
       │                                              │
-      │ Merge completes; m.Mu.Lock()                 │
+      │ Merge completes; requests m.Mu.Lock()        │
+      ▼                                              │
+  [Draining] (in-flight RLock() point reads drain)   │
+      │                                              │
+      │ All prior RLock() point reads release;       │
+      │ exclusive m.Mu.Lock() acquired               │
       ▼                                              │
   [Replaced] ─── (replaceCompactedReaders fails) ────┘
       │
       │ Removed from m.ActiveSSreaders under m.Mu.Lock()
-      │ (No new queries can borrow this reader)
+      │ (No subsequent queries can borrow this reader)
+      │ m.Mu.Unlock()
       ▼
-   [Drained]
-      │
-      │ All prior in-flight RLock() queries completed
-      │ Compaction iterators closed
-      ▼
-   [Closed]  ── r.Close()
+   [Closed]  ── Compaction iterators closed, then r.Close()
       │
       ▼
   [Unlinked] ── os.Remove(r.File.Name())
@@ -107,10 +108,10 @@ To ensure safe reclamation, we explicitly distinguish between slice membership a
 ### Definitions:
 1. **Active**: The reader resides in `m.ActiveSSreaders`. New point reads (`Get`) and conflict checks (`latestValueLocked`) can discover and borrow it.
 2. **Compacting Lease**: The reader is actively being read by the compaction merge routine outside `m.Mu`.
-3. **Replaced**: The reader has been removed from `m.ActiveSSreaders` under exclusive write lock (`m.Mu.Lock()`). No future operations can discover it.
-4. **Drained**: All concurrent readers that discovered the reader *prior* to replacement have completed their lookups and released their locks.
-5. **Closed**: The underlying OS file descriptor is closed (`r.File.Close()`).
-6. **Unlinked**: The physical file is removed from disk (`os.Remove`).
+3. **Draining**: Compaction has completed its merge and requested `m.Mu.Lock()`. In-flight `m.Mu.RLock()` point reads drain and complete before the exclusive lock is granted.
+4. **Replaced**: Exclusive `m.Mu.Lock()` is acquired. The reader is removed from `m.ActiveSSreaders` via `replaceCompactedReaders`. No subsequent queries can discover it.
+5. **Closed**: Compaction iterators are closed, and `r.Close()` closes the underlying OS file descriptor.
+6. **Unlinked**: The physical file is safely removed from disk (`os.Remove`).
 
 ---
 

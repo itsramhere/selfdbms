@@ -4,7 +4,7 @@
 **Milestone:** Checkpoint CP1.3 (Reader Lifetime, Concurrency Hazards & Safe Retirement)  
 **Date:** 2026-10-16  
 **Git Branch:** `research/reader-compactor-sync`  
-**Latest Commit:** Pending commit (`I1.3.5 / CP1.3`)  
+**Latest Commit:** `40c9a3d` (`I1.3: Complete reader lifetime validation, resolve E-006, and deliver Checkpoint CP1.3`)  
 **Operating System Tested:** Windows 11 amd64 (NTFS) & WSL2 Ubuntu (Linux 5.15 amd64)  
 **Go Version:** `go1.27.1`  
 

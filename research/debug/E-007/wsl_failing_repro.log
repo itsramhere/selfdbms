@@ -1,0 +1,6 @@
+=== RUN   TestFlushShutdown_InFlightFlushPublishesAfterClose
+    flush_shutdown_test.go:83: DEFECT E-007 REPRODUCED: In-flight flush published 1 reader(s) into closed Manager! Leaked reader: data_1792164184729197924.sst
+--- FAIL: TestFlushShutdown_InFlightFlushPublishesAfterClose (0.02s)
+FAIL
+FAIL	owndbms/lsmengine	0.044s
+FAIL

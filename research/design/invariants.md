@@ -85,6 +85,7 @@ This document codifies the exact correctness, lifetime, and safety invariants of
 
 ### INV-COMPACT-1: Compaction Input Contiguity and Chronological Precedence
 - **Statement**: Under the flat reader slice architecture (`m.ActiveSSreaders []*SSTableReader`) and first-matching-reader lookup (`Manager.Get`), SSTable compaction inputs must preserve the chronological precedence of all surviving readers. Compaction input selection must be strictly restricted to a contiguous prefix `[0..k]` of `m.ActiveSSreaders`. Noncontiguous input selection is strictly prohibited, as replacing noncontiguous inputs with a single merged table inverts relative reader order and causes older surviving intermediate readers to mask newer compacted updates (Issue E-005).
+- **Scope Qualification**: This limitation applies specifically to this engine's flat-slice chronological search order where point lookups terminate on the first encountered match. It is not an impossibility theorem for LSM-trees in general; partitioned multi-level architectures (such as LevelDB/RocksDB L1+ levels) support arbitrary range compactions through disjoint key ranges or multi-way version-aware merges.
 - **Current Status**: **Adopted and Enforced (Sub-phase I1.3.0a, Issue E-005)**.
 - **Evidence / Justification**: Proved via counterexample in `TestCounterexample_NoncontiguousCompactionViolatesOrder` (`E-005/repro.md`). Defensively enforced in `replaceCompactedReaders`, which validates that input readers appear without duplicates, form a strictly contiguous prefix starting at index 0 matching the current full-prefix policy, and preserves all concurrently appended flushes in chronological order.
 
@@ -120,6 +121,7 @@ Under Approach A, synchronization relies entirely on `Manager.Mu (*sync.RWMutex)
    - Strict hierarchical order: `m.compactionMu` (Mutex) $\to$ `Manager.Mu` (Exclusive or Shared) $\to$ `Wal.mu` (Mutex).
    - `m.compactionMu` is never held while requesting another lock, except `Manager.Mu`.
    - `Wal.mu` is never held while requesting `Manager.Mu` or `m.compactionMu`.
+   - *Scope Qualification*: This lock hierarchy reduces lock inversion risks across the identified execution paths (`Transaction.Commit`, `CompactAll`, `Manager.Get`, `Manager.Close`), but does not mathematically eliminate all conceivable deadlocks across unanalyzed asynchronous routines.
 4. **Compaction & Reader Lifetime Protocol (Verified Sub-phase I1.3)**:
    - Compaction merges a contiguous prefix snapshot $S_c \subseteq \text{ActiveSSreaders}$ starting at index 0 (`INV-COMPACT-1`).
    - Compactions are serialized across their entire lifetime via `m.compactionMu`, eliminating overlapping compaction races (`E-006`).

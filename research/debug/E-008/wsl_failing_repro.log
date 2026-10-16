@@ -1,0 +1,6 @@
+=== RUN   TestFlushOrdering_ConcurrentFlushesViolateOrder
+    flush_ordering_test.go:107: DEFECT E-008 REPRODUCED: Manager.Get returned stale value "v1_old" (expected "v2_new"). Out-of-order flushes corrupted reader chronological order!
+--- FAIL: TestFlushOrdering_ConcurrentFlushesViolateOrder (0.03s)
+FAIL
+FAIL	owndbms/lsmengine	0.055s
+FAIL

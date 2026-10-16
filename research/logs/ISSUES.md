@@ -195,6 +195,65 @@ Format:
 - **Evidence Path**: [`lsmengine/reader_lifetime_test.go`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/reader_lifetime_test.go).
 - **Commit**: `f8eea7e`
 
+---
+
+### E-007: Background Flush Publication into Closed Manager & File Descriptor Leak
+
+- **ID**: `E-007`
+- **Detected**: 2026-10-16, baseline Approach A, Windows 11 amd64 & WSL2 Linux
+- **Sub-phase**: I1.3.6b (Audit background flush versus Manager.Close)
+- **Severity**: Lifecycle / Resource Leak / Shutdown Invariant (P1)
+- **Symptom**: An in-flight background `flushToDisk` goroutine publishes a newly opened `SSTableReader` into `m.ActiveSSreaders` after `Manager.Close()` has completed. This leaves an unclosed file handle open on Windows NTFS (blocking cleanup) and corrupts the state of the closed manager. Committed data in `Frozenmem` can also be lost if shutdown terminates before background flush completes.
+- **Minimal Reproduction**:
+  ```powershell
+  go test -v ./lsmengine -run TestFlushShutdown_InFlightFlushPublishesAfterClose
+  ```
+- **Expected / Actual**:
+  - *Expected*: No readers published into a closed manager; all background flushes drained or safely cancelled before `Close()` returns; zero open file handles leaked.
+  - *Actual*: Flush appends `reader` to `m.ActiveSSreaders` after `Close()` set `ActiveSSreaders = nil`; file handle remains open indefinitely.
+- **Trace / Log**:
+  ```
+  === RUN   TestFlushShutdown_InFlightFlushPublishesAfterClose
+      flush_shutdown_test.go:83: DEFECT E-007 REPRODUCED: In-flight flush published 1 reader(s) into closed Manager! Leaked reader: data_1792164148154987600.sst
+  --- FAIL: TestFlushShutdown_InFlightFlushPublishesAfterClose (0.01s)
+  ```
+- **Root Cause**: `flushToDisk()` lacks an `isClosed` check under `m.Mu.Lock()`, and `Manager.Close()` lacks a drain/coordination mechanism (such as `sync.WaitGroup`) to ensure in-flight flushes complete before reader teardown.
+- **Proposed Architectural Options**:
+  - *Option A*: Defensive reader drop (`if m.isClosed { reader.Close(); os.Remove(...); return }`) in `flushToDisk`.
+  - *Option B*: Coordinated flush drain via `m.flushWg sync.WaitGroup` in `Manager.Close()` ensuring zero data loss for committed frozen memtables.
+- **Status**: IDENTIFIED & REPRODUCED (BLOCKED — Awaiting External Reviewer Decision).
+- **Evidence Path**: [`research/debug/E-007/repro.md`](../debug/E-007/repro.md), [`research/debug/E-007/failing_repro.log`](../debug/E-007/failing_repro.log), [`research/debug/E-007/wsl_failing_repro.log`](../debug/E-007/wsl_failing_repro.log).
+
+---
+
+### E-008: Concurrent Memtable Flushes Publish Out-of-Order, Corrupting Chronological Reader Order
+
+- **ID**: `E-008`
+- **Detected**: 2026-10-16, baseline Approach A, Windows 11 amd64 & WSL2 Linux
+- **Sub-phase**: I1.3.6c (Verify flush publication ordering)
+- **Severity**: Correctness / Ordering Invariant Violation / Stale Read (P0/P1)
+- **Symptom**: When multiple Memtables flush concurrently, if an older flush ($F_1$) completes publication after a newer flush ($F_2$), $F_1$ is appended after $F_2$ in `m.ActiveSSreaders`. Because `Manager.Get()` iterates in reverse order assuming newer tables are at higher indices (`INV-ORDER-1`), it reads older data from $F_1$, masking newer committed data in $F_2$ and returning stale results.
+- **Minimal Reproduction**:
+  ```powershell
+  go test -v ./lsmengine -run TestFlushOrdering_ConcurrentFlushesViolateOrder
+  ```
+- **Expected / Actual**:
+  - *Expected*: `Manager.Get("key1", 100)` returns latest committed version `"v2_new"` (seq 20).
+  - *Actual*: `Manager.Get` returns stale version `"v1_old"` (seq 10).
+- **Trace / Log**:
+  ```
+  === RUN   TestFlushOrdering_ConcurrentFlushesViolateOrder
+      flush_ordering_test.go:107: DEFECT E-008 REPRODUCED: Manager.Get returned stale value "v1_old" (expected "v2_new"). Out-of-order flushes corrupted reader chronological order!
+  --- FAIL: TestFlushOrdering_ConcurrentFlushesViolateOrder (0.01s)
+  ```
+- **Root Cause**: Unsynchronized concurrent `flushToDisk` workers appending blindly to `m.ActiveSSreaders` without preserving creation sequence order.
+- **Proposed Architectural Options**:
+  - *Option 1*: Serialized flush worker or dedicated `flushMu sync.Mutex` enforcing FIFO flush completion.
+  - *Option 2*: Multi-threaded flush builder with sequence-ordered publication queue.
+  - *Option 3*: Approach B level/generation architecture with explicit sequence ranges.
+- **Status**: IDENTIFIED & REPRODUCED (BLOCKED — Awaiting External Reviewer Decision).
+- **Evidence Path**: [`research/debug/E-008/repro.md`](../debug/E-008/repro.md), [`research/debug/E-008/failing_repro.log`](../debug/E-008/failing_repro.log), [`research/debug/E-008/wsl_failing_repro.log`](../debug/E-008/wsl_failing_repro.log).
+
 
 
 
