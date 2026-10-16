@@ -4,7 +4,7 @@
 **Milestone:** Checkpoint CP1.3a (Defensive Publication and Shutdown Verification)  
 **Date:** 2026-10-16  
 **Git Branch:** `research/reader-compactor-sync`  
-**Latest Commit:** `05094b0` (`I1.3.6: Validate compacted output, audit flush vs shutdown (E-007) and flush ordering (E-008), deliver Checkpoint CP1.3a`)  
+**Latest Commit:** `d30f658` (`I1.3.6: Validate compacted output, audit flush vs shutdown (E-007) and flush ordering (E-008), deliver Checkpoint CP1.3a`)  
 **Operating Systems Tested:** Windows 11 amd64 (NTFS) & WSL2 Ubuntu (Linux 5.15 amd64)  
 **Go Versions:** `go1.26.3 windows/amd64` (Windows host) & `go1.27.1 linux/amd64` (WSL2 snap)  
 **Current Status:** **BLOCKED — AWAITING REVIEWER DECISION ON ISSUES E-007 AND E-008**  
