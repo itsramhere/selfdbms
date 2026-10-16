@@ -40,6 +40,7 @@ type Manager struct {
 	beforeCompactionPublishHook func()
 	duringCompactionMergeHook   func()
 	duringPointReadHook         func()
+	duringMemtableReadHook      func()
 	beforeFlushPublishHook      func()
 	flushBuildHook              func() error
 	walRotationHook             func() error
@@ -87,6 +88,10 @@ func (m *Manager) Get(key string, readTs uint64) (string, error) {
 
 	if m.state == EngineClosed {
 		return "", ErrClosed
+	}
+
+	if m.duringMemtableReadHook != nil {
+		m.duringMemtableReadHook()
 	}
 
 	sol, err := m.Mem.Get(byteKey, readTs)
