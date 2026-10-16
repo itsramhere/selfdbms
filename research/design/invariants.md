@@ -81,3 +81,26 @@ This document codifies the exact correctness, lifetime, and safety invariants of
 - **Statement**: Replaying the WAL from disk restores all committed transactions up to the last successful `Sync()`.
 - **Current Status**: **Unproven / Incomplete across Rotations**.
 - **Evidence / Justification**: `RecoverFromWAL` recovers transactions from a single specified file path. However, `checkAndTriggerFlush` rotates WALs to `wal_<timestamp>.log` without tracking active WAL manifests. Replay across multiple rotated logs is unhandled.
+
+---
+
+## 5. Approach A: Baseline RWMutex Protocol Specification (I1.1)
+
+Under Approach A, synchronization relies entirely on `Manager.Mu (*sync.RWMutex)` protecting all engine state and file descriptor lifetimes:
+
+### Protocol Rules:
+1. **Point Reader Scope (`Manager.Get`)**:
+   - Must hold `m.Mu.RLock()` across the entire multi-tier lookup: active `Mem`, `Frozenmem`, and `ActiveSSreaders`.
+   - The open physical file descriptors (`sst.File`) remain valid for the duration of the read because any retirement/compaction publication requires `m.Mu.Lock()`, which blocks until all concurrent `RLock()` holders release the mutex.
+2. **Commit Scope (`Transaction.Commit`)**:
+   - Must hold `m.Mu.Lock()` across conflict validation, WAL append, and Memtable insertion.
+   - Internal conflict lookup MUST use lock-free or caller-locked helpers (`latestValueLocked`) without attempting nested `RLock()` or `Lock()` on `m.Mu`.
+3. **Lock Order Rule**:
+   - Strict hierarchical order: `Manager.Mu` (Exclusive or Shared) $\to$ `Wal.mu` (Mutex).
+   - `Wal.mu` is never held while requesting `Manager.Mu`.
+4. **Compaction Publication Protocol (Future I1.2 Specification)**:
+   - Compaction merges a snapshot `S_c \subseteq \text{ActiveSSreaders}`.
+   - Under `m.Mu.Lock()`, publication must compute:
+     $$\text{ActiveSSreaders}_{\text{new}} = (\text{ActiveSSreaders}_{\text{current}} \setminus S_c) \cup \{ R_{\text{new}} \}$$
+     preserving any SSTables concurrently published by `flushToDisk`.
+   - Iterators used during merge must be closed before unlinking old files to prevent Windows `ERROR_SHARING_VIOLATION`.
