@@ -273,10 +273,31 @@ func (m *Manager) flushLoop() {
 		m.flushQueueMu.Unlock()
 
 		m.flushToDisk(mem)
+
+		// Option A (Fail-stop): Halt worker immediately upon encountering any fatal flush error.
+		// Halting prevents subsequent generations from being published to ActiveSSreaders
+		// while an older Memtable remains in Frozenmem, preserving strict chronological
+		// precedence (INV-ORDER-1, INV-MVCC-6). All remaining queued Memtables remain in Frozenmem.
+		m.Mu.RLock()
+		err := m.flushErr
+		m.Mu.RUnlock()
+		if err != nil {
+			return
+		}
 	}
 }
 
+// FlushErr returns the fatal background flush error, if any has occurred.
+func (m *Manager) FlushErr() error {
+	m.Mu.RLock()
+	defer m.Mu.RUnlock()
+	return m.flushErr
+}
+
 func (m *Manager) enqueueFlushLocked(mem *Memtable) {
+	if m.flushErr != nil {
+		return
+	}
 	m.initFlushWorkerLocked()
 	m.flushQueueMu.Lock()
 	m.flushQueue = append(m.flushQueue, mem)
@@ -289,7 +310,7 @@ func (m *Manager) enqueueFlushLocked(mem *Memtable) {
 func (m *Manager) EnqueueFlush(mem *Memtable) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
-	if m.state != EngineOpen {
+	if m.state != EngineOpen || m.flushErr != nil {
 		return
 	}
 	m.enqueueFlushLocked(mem)
@@ -301,6 +322,9 @@ func (m *Manager) TriggerFlush() error {
 	defer m.Mu.Unlock()
 	if m.state != EngineOpen {
 		return ErrClosed
+	}
+	if m.flushErr != nil {
+		return m.flushErr
 	}
 	if m.Mem == nil || (m.Mem.SizeBytes == 0 && m.Mem.SK.headNode.Forward[0] == nil) {
 		return nil
@@ -350,7 +374,7 @@ func (m *Manager) TriggerFlush() error {
 
 func (m *Manager) checkAndTriggerFlush() {
 	m.Mu.Lock()
-	if m.state != EngineOpen {
+	if m.state != EngineOpen || m.flushErr != nil {
 		m.Mu.Unlock()
 		return
 	}

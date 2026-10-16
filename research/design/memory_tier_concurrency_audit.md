@@ -112,9 +112,11 @@ stateDiagram-v2
 ### 5.1 Invariants Preserved:
 1. **INV-SYNC-1 (SkipList Mutation Safety)**: Every call to `m.Mem.Put` is serialized under `m.Mu.Lock()`.
 2. **INV-MUTABLE-1 (Frozen Memtable Immutability)**: A Memtable transitioned to `m.Frozenmem` is permanently sealed; no goroutine may ever call `.Put()` on it.
-3. **INV-HANDOFF-1 (Zero-Loss Memory-to-Disk Handoff)**:
-   $$\forall k, \quad k \in \text{Frozenmem} \cup \text{ActiveSSreaders}$$
-   During SSTable publication in `flushToDisk`, the new `SSTableReader` is appended to `m.ActiveSSreaders` before (or in the same critical section as) removing `mem` from `m.Frozenmem`. A reader holding `m.Mu.RLock()` will find $k$ either in `m.Frozenmem` (if looking before the swap) or in `m.ActiveSSreaders` (if looking during or after the swap). There is no intermediate state where $k$ is omitted.
+3. **INV-HANDOFF-1 (Continuous Key Version Visibility Across Storage Tiers)**:
+   $$\forall k, \quad k \in \text{m.Mem} \cup \text{m.Frozenmem} \cup \text{m.ActiveSSreaders}$$
+   During SSTable publication in `flushToDisk`, the new `SSTableReader` is appended to `m.ActiveSSreaders` within the exact same critical section under `m.Mu.Lock()` as removing `mem` from `m.Frozenmem`. A reader holding `m.Mu.RLock()` will find $k$ either in `m.Frozenmem` (if looking before the swap) or in `m.ActiveSSreaders` (if looking during or after the swap). There is no intermediate state where $k$ is omitted.
+4. **INV-FLUSH-FAIL-1 (Fail-Stop Flush Pipeline Precedence)**: If a flush fails, `flushLoop` halts immediately upon observing `m.flushErr != nil`, preserving all unflushed Memtables in `Frozenmem` in strict chronological order and preventing out-of-order publication to `ActiveSSreaders`.
+
 
 ---
 

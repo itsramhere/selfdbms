@@ -1,0 +1,30 @@
+=== RUN   TestFailedFlush_E010_Resolved_StaleReadPrevented
+--- PASS: TestFailedFlush_E010_Resolved_StaleReadPrevented (0.05s)
+=== RUN   TestFailedFlush_E010_Resolved_TombstoneResurrectionPrevented
+--- PASS: TestFailedFlush_E010_Resolved_TombstoneResurrectionPrevented (0.01s)
+=== RUN   TestFailedFlush_E010_Resolved_StaleDeletionMaskingPrevented
+--- PASS: TestFailedFlush_E010_Resolved_StaleDeletionMaskingPrevented (0.01s)
+=== RUN   TestFailedFlush_E010_Resolved_ThreeGenerationsPreserved
+--- PASS: TestFailedFlush_E010_Resolved_ThreeGenerationsPreserved (0.01s)
+=== RUN   TestFailedFlush_E010_Resolved_ActiveMemtablePrecedence
+--- PASS: TestFailedFlush_E010_Resolved_ActiveMemtablePrecedence (0.01s)
+=== RUN   TestFailedFlush_E010_Resolved_NoPartialPublication
+--- PASS: TestFailedFlush_E010_Resolved_NoPartialPublication (0.00s)
+=== RUN   TestFailedFlush_E010_Resolved_WriteConflictDetection
+--- PASS: TestFailedFlush_E010_Resolved_WriteConflictDetection (0.01s)
+=== RUN   TestFailedFlush_E010_Resolved_ErrorReportingOnClose
+--- PASS: TestFailedFlush_E010_Resolved_ErrorReportingOnClose (0.00s)
+=== RUN   TestFailedFlush_Interaction_SubsequentQueuedFlushes
+--- PASS: TestFailedFlush_Interaction_SubsequentQueuedFlushes (0.01s)
+=== RUN   TestFailedFlush_Interaction_ConcurrentReads
+--- PASS: TestFailedFlush_Interaction_ConcurrentReads (0.01s)
+=== RUN   TestFailedFlush_Interaction_ConcurrentCommits
+--- PASS: TestFailedFlush_Interaction_ConcurrentCommits (0.12s)
+=== RUN   TestFailedFlush_Interaction_Compaction
+--- PASS: TestFailedFlush_Interaction_Compaction (0.06s)
+=== RUN   TestFailedFlush_Interaction_RepeatedShutdownCalls
+--- PASS: TestFailedFlush_Interaction_RepeatedShutdownCalls (0.01s)
+=== RUN   TestFailedFlush_Interaction_MultipleFailedFlushes
+--- PASS: TestFailedFlush_Interaction_MultipleFailedFlushes (0.01s)
+PASS
+ok  	owndbms/lsmengine	1.325s

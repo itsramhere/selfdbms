@@ -2,17 +2,20 @@ package lsmengine
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// TestFailedFlush_E010_StaleReadRepro verifies that when an older flush F0 fails
-// while a newer flush F1 succeeds, Manager.Get returns the stale value from F0
-// because Frozenmem is checked before ActiveSSreaders.
-func TestFailedFlush_E010_StaleReadRepro(t *testing.T) {
+// TestFailedFlush_E010_Resolved_StaleReadPrevented verifies that under Option A (fail-stop),
+// when an older flush F0 fails, the worker halts immediately and does not publish F1 to
+// ActiveSSreaders. Both F0 and F1 remain safely in Frozenmem in strict chronological order,
+// so Manager.Get at S2 returns the latest value "new", completely preventing stale reads.
+func TestFailedFlush_E010_Resolved_StaleReadPrevented(t *testing.T) {
 	tempDir := t.TempDir()
 	origWd, err := os.Getwd()
 	if err != nil {
@@ -34,12 +37,10 @@ func TestFailedFlush_E010_StaleReadRepro(t *testing.T) {
 	man.flushBuildHook = func() error {
 		idx := flushIndex.Add(1)
 		if idx == 1 {
-			// F0 hook
 			close(f0Started)
 			<-f0AllowFail
 			return errors.New("simulated I/O failure on F0 SSTable build")
 		}
-		// Subsequent flushes succeed
 		return nil
 	}
 
@@ -69,7 +70,7 @@ func TestFailedFlush_E010_StaleReadRepro(t *testing.T) {
 	s2 := tx2.AllocatedSeqNo
 	oracle.record("k1", s2, "new", false)
 
-	// 4. Freeze newer Memtable as F1
+	// 4. Freeze newer Memtable as F1 (enqueued while F0 is in-flight)
 	if err := man.TriggerFlush(); err != nil {
 		t.Fatalf("TriggerFlush F1 failed: %v", err)
 	}
@@ -77,55 +78,57 @@ func TestFailedFlush_E010_StaleReadRepro(t *testing.T) {
 	// 5. Allow F0 to fail
 	close(f0AllowFail)
 
-	// 6. Wait for F1 to be published into ActiveSSreaders
+	// 6. Under Option A (fail-stop), wait for the flush error to be recorded
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		man.Mu.RLock()
-		rCount := len(man.ActiveSSreaders)
-		man.Mu.RUnlock()
-		if rCount == 1 {
+		if man.FlushErr() != nil {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for F1 SSTable publication")
+			t.Fatal("timed out waiting for flush worker to report error")
 		}
 		runtime.Gosched()
 	}
 
-	// Verify state: F0 retained in Frozenmem, F1 published to ActiveSSreaders
+	// Verify fail-stop state:
+	// - Zero SSTables published to ActiveSSreaders
+	// - Both F0 and F1 preserved in Frozenmem in chronological order
 	man.Mu.RLock()
 	frozenCount := len(man.Frozenmem)
 	readerCount := len(man.ActiveSSreaders)
 	man.Mu.RUnlock()
 
-	if frozenCount != 1 || readerCount != 1 {
-		t.Fatalf("unexpected state: Frozenmem count=%d (expected 1), ActiveSSreaders count=%d (expected 1)",
-			frozenCount, readerCount)
+	if readerCount != 0 {
+		t.Fatalf("fail-stop invariant violated: expected 0 ActiveSSreaders, got %d", readerCount)
+	}
+	if frozenCount != 2 {
+		t.Fatalf("expected 2 Frozenmem retained in order, got %d", frozenCount)
 	}
 
-	// 7. Read at timestamps before and after S2
-	// At s1: both oracle and engine should return "old"
+	// 7. Verify reads at timestamps s1 and s2 against ReferenceOracle
 	valS1, err := man.Get("k1", s1)
 	if err != nil {
-		t.Errorf("Get at s1 failed: %v", err)
+		t.Fatalf("Get at s1 failed: %v", err)
 	}
 	oracleS1, _ := oracle.get("k1", s1)
 	if valS1 != oracleS1 {
-		t.Errorf("Get at s1 returned %q, expected %q", valS1, oracleS1)
+		t.Fatalf("Get at s1 returned %q, expected %q", valS1, oracleS1)
 	}
 
-	// At s2: oracle expects "new", but engine returns "old" from Frozenmem[0]!
 	valS2, err := man.Get("k1", s2)
+	if err != nil {
+		t.Fatalf("Get at s2 failed: %v", err)
+	}
 	oracleS2, _ := oracle.get("k1", s2)
 	if valS2 != oracleS2 {
-		t.Errorf("DEFECT E-010 REPRODUCED: Manager.Get returned stale value %q (expected %q). Failed flush F0 in Frozenmem masked newer SSTable F1!", valS2, oracleS2)
+		t.Fatalf("E-010 defect persists: Get at s2 returned %q, expected %q", valS2, oracleS2)
 	}
 }
 
-// TestFailedFlush_E010_TombstoneResurrectionRepro verifies that when F0 contains a Put
-// and F1 contains a newer Delete (tombstone), the failure of F0 causes the deleted key
-// to be resurrected because F0 in Frozenmem shadows the tombstone in ActiveSSreaders.
-func TestFailedFlush_E010_TombstoneResurrectionRepro(t *testing.T) {
+// TestFailedFlush_E010_Resolved_TombstoneResurrectionPrevented verifies that when F0 contains
+// a Put and F1 contains a newer Delete, fail-stop keeps both in Frozenmem so that reading
+// at S2 returns ErrKeyDeleted, preventing tombstone resurrection.
+func TestFailedFlush_E010_Resolved_TombstoneResurrectionPrevented(t *testing.T) {
 	tempDir := t.TempDir()
 	origWd, err := os.Getwd()
 	if err != nil {
@@ -183,34 +186,27 @@ func TestFailedFlush_E010_TombstoneResurrectionRepro(t *testing.T) {
 
 	close(f0AllowFail)
 
-	// Wait for F1 to publish
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		man.Mu.RLock()
-		rCount := len(man.ActiveSSreaders)
-		man.Mu.RUnlock()
-		if rCount == 1 {
+		if man.FlushErr() != nil {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for F1 SSTable publication")
+			t.Fatal("timed out waiting for flush error")
 		}
 		runtime.Gosched()
 	}
 
-	// Read at s2: oracle expects ErrKeyDeleted, but engine returns "val_to_delete" from F0!
-	valS2, err := man.Get("k2", s2)
-	oracleVal, oracleErr := oracle.get("k2", s2)
+	// Read at s2: must return ErrKeyDeleted matching reference oracle
+	_, err = man.Get("k2", s2)
 	if !errors.Is(err, ErrKeyDeleted) {
-		t.Errorf("DEFECT E-010 REPRODUCED: Manager.Get returned resurrected value %q (error %v, expected ErrKeyDeleted %v). Older Put in failed flush F0 masked newer Tombstone in SSTable F1! (oracle=%q, err=%v)",
-			valS2, err, ErrKeyDeleted, oracleVal, oracleErr)
+		t.Fatalf("tombstone resurrection defect persists: expected ErrKeyDeleted, got err=%v", err)
 	}
 }
 
-// TestFailedFlush_E010_StaleDeletionMaskingRepro verifies that when F0 contains a tombstone
-// and F1 contains a newer Put, the failure of F0 causes the resurrected key to appear
-// deleted because F0 in Frozenmem shadows the newer Put in ActiveSSreaders.
-func TestFailedFlush_E010_StaleDeletionMaskingRepro(t *testing.T) {
+// TestFailedFlush_E010_Resolved_StaleDeletionMaskingPrevented verifies that when F0 contains
+// a tombstone and F1 contains a newer Put, fail-stop ensures reading at S2 returns the new Put.
+func TestFailedFlush_E010_Resolved_StaleDeletionMaskingPrevented(t *testing.T) {
 	tempDir := t.TempDir()
 	origWd, err := os.Getwd()
 	if err != nil {
@@ -270,30 +266,29 @@ func TestFailedFlush_E010_StaleDeletionMaskingRepro(t *testing.T) {
 
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		man.Mu.RLock()
-		rCount := len(man.ActiveSSreaders)
-		man.Mu.RUnlock()
-		if rCount == 1 {
+		if man.FlushErr() != nil {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for F1 SSTable publication")
+			t.Fatal("timed out waiting for flush error")
 		}
 		runtime.Gosched()
 	}
 
-	// Read at s2: oracle expects "reborn_at_s2", but engine returns ErrKeyDeleted from F0!
+	// Read at s2: must return "reborn_at_s2" matching reference oracle
 	valS2, err := man.Get("k3", s2)
+	if err != nil {
+		t.Fatalf("Get at s2 returned error: %v", err)
+	}
 	oracleVal, _ := oracle.get("k3", s2)
 	if valS2 != oracleVal {
-		t.Errorf("DEFECT E-010 REPRODUCED: Manager.Get returned error %v, val %q (expected %q). Older Tombstone in failed flush F0 masked newer Put in SSTable F1!",
-			err, valS2, oracleVal)
+		t.Fatalf("stale deletion masking defect persists: expected %q, got %q", oracleVal, valS2)
 	}
 }
 
-// TestFailedFlush_E010_ThreeGenerationsRepro verifies behavior across 3 frozen generations:
-// F0 (fails), F1 (succeeds), F2 (succeeds).
-func TestFailedFlush_E010_ThreeGenerationsRepro(t *testing.T) {
+// TestFailedFlush_E010_Resolved_ThreeGenerationsPreserved verifies correct newest-generation
+// precedence across 3 frozen generations under fail-stop.
+func TestFailedFlush_E010_Resolved_ThreeGenerationsPreserved(t *testing.T) {
 	tempDir := t.TempDir()
 	origWd, err := os.Getwd()
 	if err != nil {
@@ -347,33 +342,31 @@ func TestFailedFlush_E010_ThreeGenerationsRepro(t *testing.T) {
 
 	close(f0AllowFail)
 
-	// Wait for F1 and F2 to publish (2 readers)
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		man.Mu.RLock()
-		rCount := len(man.ActiveSSreaders)
-		man.Mu.RUnlock()
-		if rCount == 2 {
+		if man.FlushErr() != nil {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for F1 and F2 SSTable publication")
+			t.Fatal("timed out waiting for flush error")
 		}
 		runtime.Gosched()
 	}
 
-	// Read at s2: oracle expects "v2", but engine returns "v0" from F0!
-	valS2, _ := man.Get("k4", s2)
+	// Read at s2: must return "v2" from F2
+	valS2, err := man.Get("k4", s2)
+	if err != nil {
+		t.Fatalf("Get at s2 failed: %v", err)
+	}
 	oracleVal, _ := oracle.get("k4", s2)
 	if valS2 != oracleVal {
-		t.Errorf("DEFECT E-010 REPRODUCED: Manager.Get returned %q (expected %q) across 3 generations! Failed flush F0 masked SSTables F1 and F2.",
-			valS2, oracleVal)
+		t.Fatalf("three-generation precedence defect persists: expected %q, got %q", oracleVal, valS2)
 	}
 }
 
-// TestFailedFlush_E010_ActiveMemtablePrecedence verifies that a newer value in the active
-// Memtable correctly takes precedence over an older failed flush in Frozenmem.
-func TestFailedFlush_E010_ActiveMemtablePrecedence(t *testing.T) {
+// TestFailedFlush_E010_Resolved_ActiveMemtablePrecedence verifies that active Memtable
+// writes take precedence over failed frozen Memtables.
+func TestFailedFlush_E010_Resolved_ActiveMemtablePrecedence(t *testing.T) {
 	tempDir := t.TempDir()
 	origWd, err := os.Getwd()
 	if err != nil {
@@ -401,7 +394,6 @@ func TestFailedFlush_E010_ActiveMemtablePrecedence(t *testing.T) {
 		return nil
 	}
 
-	// F0 has k5 = "v0"
 	tx0 := man.Begin()
 	tx0.Put("k5", "v0")
 	_ = tx0.Commit()
@@ -410,13 +402,9 @@ func TestFailedFlush_E010_ActiveMemtablePrecedence(t *testing.T) {
 
 	close(f0AllowFail)
 
-	// Wait for F0 to finish failing
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		man.Mu.RLock()
-		fErr := man.flushErr
-		man.Mu.RUnlock()
-		if fErr != nil {
+		if man.FlushErr() != nil {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -425,13 +413,11 @@ func TestFailedFlush_E010_ActiveMemtablePrecedence(t *testing.T) {
 		runtime.Gosched()
 	}
 
-	// Write k5 = "v_active" into active Memtable
 	tx1 := man.Begin()
 	tx1.Put("k5", "v_active")
 	_ = tx1.Commit()
 	s1 := tx1.AllocatedSeqNo
 
-	// Read k5: active Memtable is checked before Frozenmem, so it should return "v_active"
 	val, err := man.Get("k5", s1)
 	if err != nil {
 		t.Fatalf("Get k5 failed: %v", err)
@@ -441,9 +427,8 @@ func TestFailedFlush_E010_ActiveMemtablePrecedence(t *testing.T) {
 	}
 }
 
-// TestFailedFlush_E010_NoPartialPublication verifies that when an SSTable build fails,
-// no partial or corrupted SSTable is published to ActiveSSreaders and the temp file is cleaned up.
-func TestFailedFlush_E010_NoPartialPublication(t *testing.T) {
+// TestFailedFlush_E010_Resolved_NoPartialPublication verifies no corrupt reader is published.
+func TestFailedFlush_E010_Resolved_NoPartialPublication(t *testing.T) {
 	tempDir := t.TempDir()
 	origWd, err := os.Getwd()
 	if err != nil {
@@ -469,10 +454,7 @@ func TestFailedFlush_E010_NoPartialPublication(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		man.Mu.RLock()
-		fErr := man.flushErr
-		man.Mu.RUnlock()
-		if fErr != nil {
+		if man.FlushErr() != nil {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -494,10 +476,9 @@ func TestFailedFlush_E010_NoPartialPublication(t *testing.T) {
 	}
 }
 
-// TestFailedFlush_E010_WriteConflictDetectionFailure verifies that write-write conflict
-// detection fails when F0 fails and F1 succeeds because latestValueLocked returns the
-// older sequence number from F0 in Frozenmem rather than the newer sequence number in SSTable F1.
-func TestFailedFlush_E010_WriteConflictDetectionFailure(t *testing.T) {
+// TestFailedFlush_E010_Resolved_WriteConflictDetection verifies that write-write conflict
+// detection correctly observes the newest version in Frozenmem under fail-stop.
+func TestFailedFlush_E010_Resolved_WriteConflictDetection(t *testing.T) {
 	tempDir := t.TempDir()
 	origWd, err := os.Getwd()
 	if err != nil {
@@ -542,43 +523,35 @@ func TestFailedFlush_E010_WriteConflictDetectionFailure(t *testing.T) {
 	if err := tx2.Commit(); err != nil {
 		t.Fatalf("tx2 commit failed: %v", err)
 	}
-	s2 := tx2.AllocatedSeqNo
 
 	_ = man.TriggerFlush()
 	close(f0AllowFail)
 
-	// Wait for F1 to publish to ActiveSSreaders
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		man.Mu.RLock()
-		rCount := len(man.ActiveSSreaders)
-		man.Mu.RUnlock()
-		if rCount == 1 {
+		if man.FlushErr() != nil {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for F1 SSTable publication")
+			t.Fatal("timed out waiting for flush error")
 		}
 		runtime.Gosched()
 	}
 
-	// 3. Begin a concurrent transaction T3 that read at S1 (before S2 committed)
-	// T3 attempts to write to k8 and commit.
-	// Since k8 was committed at S2 > S1, T3 should detect a write-write conflict and abort!
+	// 3. Begin a transaction T3 at S1 attempting to write k8
+	// T3 must detect conflict against S2 (which is in Frozenmem[1]) and abort!
 	t3 := man.Begin()
 	t3.ReadTs = s1
 	t3.Put("k8", "t3_conflict")
 	commitErr := t3.Commit()
 
 	if commitErr == nil {
-		t.Errorf("DEFECT E-010 REPRODUCED: Transaction committed write on k8 without detecting write-write conflict against SSTable F1 (seq S2=%d)! latestValueLocked returned seq S1=%d from failed flush F0 in Frozenmem.",
-			s2, s1)
+		t.Fatalf("write-write conflict defect persists: transaction at S1 committed without detecting conflict against S2!")
 	}
 }
 
-// TestFailedFlush_E010_ErrorReportingOnClose verifies that Manager.Close() surfaces
-// the background flush failure.
-func TestFailedFlush_E010_ErrorReportingOnClose(t *testing.T) {
+// TestFailedFlush_E010_Resolved_ErrorReportingOnClose verifies Close() surfaces flushErr.
+func TestFailedFlush_E010_Resolved_ErrorReportingOnClose(t *testing.T) {
 	tempDir := t.TempDir()
 	origWd, err := os.Getwd()
 	if err != nil {
@@ -607,5 +580,349 @@ func TestFailedFlush_E010_ErrorReportingOnClose(t *testing.T) {
 	}
 	if !errors.Is(closeErr, expectedErr) {
 		t.Fatalf("expected close error %v, got %v", expectedErr, closeErr)
+	}
+}
+
+// TestFailedFlush_Interaction_SubsequentQueuedFlushes verifies that all flushes queued
+// after a failed flush remain safely in Frozenmem and are not dropped.
+func TestFailedFlush_Interaction_SubsequentQueuedFlushes(t *testing.T) {
+	tempDir := t.TempDir()
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working dir: %v", err)
+	}
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("failed to chdir to tempDir: %v", err)
+	}
+	defer os.Chdir(origWd)
+
+	man := CreateManager()
+	defer func() { _ = man.Close() }()
+
+	f0Started := make(chan struct{})
+	f0AllowFail := make(chan struct{})
+
+	var flushIndex atomic.Int32
+	man.flushBuildHook = func() error {
+		idx := flushIndex.Add(1)
+		if idx == 1 {
+			close(f0Started)
+			<-f0AllowFail
+			return errors.New("disk failure on F0")
+		}
+		return nil
+	}
+
+	// Write and freeze 3 flushes
+	for i := 0; i < 3; i++ {
+		tx := man.Begin()
+		tx.Put(fmt.Sprintf("key_%d", i), fmt.Sprintf("val_%d", i))
+		_ = tx.Commit()
+		_ = man.TriggerFlush()
+		if i == 0 {
+			<-f0Started
+		}
+	}
+
+	close(f0AllowFail)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if man.FlushErr() != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for flush error")
+		}
+		runtime.Gosched()
+	}
+
+	// All 3 memtables must remain in Frozenmem
+	man.Mu.RLock()
+	frozenCount := len(man.Frozenmem)
+	readerCount := len(man.ActiveSSreaders)
+	man.Mu.RUnlock()
+
+	if readerCount != 0 {
+		t.Fatalf("expected 0 readers published, got %d", readerCount)
+	}
+	if frozenCount != 3 {
+		t.Fatalf("expected 3 memtables preserved in Frozenmem, got %d", frozenCount)
+	}
+
+	// All values must be queryable
+	for i := 0; i < 3; i++ {
+		val, err := man.Get(fmt.Sprintf("key_%d", i), 1000)
+		if err != nil {
+			t.Fatalf("Get key_%d failed: %v", i, err)
+		}
+		if val != fmt.Sprintf("val_%d", i) {
+			t.Fatalf("expected val_%d, got %q", i, val)
+		}
+	}
+}
+
+// TestFailedFlush_Interaction_ConcurrentReads verifies concurrent point reads
+// while a flush fails.
+func TestFailedFlush_Interaction_ConcurrentReads(t *testing.T) {
+	tempDir := t.TempDir()
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working dir: %v", err)
+	}
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("failed to chdir to tempDir: %v", err)
+	}
+	defer os.Chdir(origWd)
+
+	man := CreateManager()
+	defer func() { _ = man.Close() }()
+
+	tx := man.Begin()
+	tx.Put("read_key", "read_val")
+	_ = tx.Commit()
+
+	man.flushBuildHook = func() error {
+		return errors.New("controlled failure")
+	}
+	_ = man.TriggerFlush()
+
+	var wg sync.WaitGroup
+	for g := 0; g < 10; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 100; i++ {
+				val, err := man.Get("read_key", 1000)
+				if err != nil || val != "read_val" {
+					t.Errorf("concurrent read failed: val=%q, err=%v", val, err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// TestFailedFlush_Interaction_ConcurrentCommits verifies transactions can continue
+// committing to active Memtable and WAL while flush error is surfaced.
+func TestFailedFlush_Interaction_ConcurrentCommits(t *testing.T) {
+	tempDir := t.TempDir()
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working dir: %v", err)
+	}
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("failed to chdir to tempDir: %v", err)
+	}
+	defer os.Chdir(origWd)
+
+	man := CreateManager()
+	defer func() { _ = man.Close() }()
+
+	man.flushBuildHook = func() error {
+		return errors.New("controlled failure")
+	}
+
+	tx0 := man.Begin()
+	tx0.Put("init_key", "val")
+	_ = tx0.Commit()
+	_ = man.TriggerFlush()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if man.FlushErr() != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for flush error")
+		}
+		runtime.Gosched()
+	}
+
+	// Concurrent commits
+	var wg sync.WaitGroup
+	for g := 0; g < 5; g++ {
+		wg.Add(1)
+		go func(gid int) {
+			defer wg.Done()
+			for i := 0; i < 20; i++ {
+				tx := man.Begin()
+				tx.Put(fmt.Sprintf("g_%d_key_%d", gid, i), "val")
+				if err := tx.Commit(); err != nil {
+					t.Errorf("commit failed: %v", err)
+					return
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+}
+
+// TestFailedFlush_Interaction_Compaction verifies compaction behaves correctly
+// on pre-existing SSTables when a flush failure occurs.
+func TestFailedFlush_Interaction_Compaction(t *testing.T) {
+	tempDir := t.TempDir()
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working dir: %v", err)
+	}
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("failed to chdir to tempDir: %v", err)
+	}
+	defer os.Chdir(origWd)
+
+	man := CreateManager()
+	defer func() { _ = man.Close() }()
+
+	// Successfully create 2 SSTables
+	for gen := 0; gen < 2; gen++ {
+		tx := man.Begin()
+		tx.Put(fmt.Sprintf("k_sst_%d", gen), fmt.Sprintf("v_sst_%d", gen))
+		_ = tx.Commit()
+		_ = man.TriggerFlush()
+
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			man.Mu.RLock()
+			rCount := len(man.ActiveSSreaders)
+			man.Mu.RUnlock()
+			if rCount == gen+1 {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for SSTable gen %d", gen)
+			}
+			runtime.Gosched()
+		}
+	}
+
+	// Now inject failure on 3rd flush
+	man.flushBuildHook = func() error {
+		return errors.New("simulated error on 3rd flush")
+	}
+
+	tx3 := man.Begin()
+	tx3.Put("k_fail", "v_fail")
+	_ = tx3.Commit()
+	_ = man.TriggerFlush()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if man.FlushErr() != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for flush error")
+		}
+		runtime.Gosched()
+	}
+
+	// Compact pre-existing SSTables
+	if err := man.CompactAll(); err != nil {
+		t.Fatalf("CompactAll failed: %v", err)
+	}
+
+	// Verify reading both compacted SSTable keys and failed Frozenmem key
+	v0, err := man.Get("k_sst_0", 1000)
+	if err != nil || v0 != "v_sst_0" {
+		t.Fatalf("failed to read k_sst_0: v=%q, err=%v", v0, err)
+	}
+	v1, err := man.Get("k_sst_1", 1000)
+	if err != nil || v1 != "v_sst_1" {
+		t.Fatalf("failed to read k_sst_1: v=%q, err=%v", v1, err)
+	}
+	vFail, err := man.Get("k_fail", 1000)
+	if err != nil || vFail != "v_fail" {
+		t.Fatalf("failed to read k_fail from Frozenmem: v=%q, err=%v", vFail, err)
+	}
+}
+
+// TestFailedFlush_Interaction_RepeatedShutdownCalls verifies repeated Close() calls
+// return the same flush error without panic or resource leak.
+func TestFailedFlush_Interaction_RepeatedShutdownCalls(t *testing.T) {
+	tempDir := t.TempDir()
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working dir: %v", err)
+	}
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("failed to chdir to tempDir: %v", err)
+	}
+	defer os.Chdir(origWd)
+
+	man := CreateManager()
+	man.flushBuildHook = func() error {
+		return errors.New("controlled failure")
+	}
+
+	tx := man.Begin()
+	tx.Put("key", "val")
+	_ = tx.Commit()
+	_ = man.TriggerFlush()
+
+	err1 := man.Close()
+	if err1 == nil {
+		t.Fatalf("expected error on first Close(), got nil")
+	}
+
+	err2 := man.Close()
+	if !errors.Is(err2, err1) {
+		t.Fatalf("expected same error on second Close(), got %v", err2)
+	}
+
+	err3 := man.Close()
+	if !errors.Is(err3, err1) {
+		t.Fatalf("expected same error on third Close(), got %v", err3)
+	}
+}
+
+// TestFailedFlush_Interaction_MultipleFailedFlushes verifies TriggerFlush rejects
+// flushes once flushErr is active.
+func TestFailedFlush_Interaction_MultipleFailedFlushes(t *testing.T) {
+	tempDir := t.TempDir()
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working dir: %v", err)
+	}
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("failed to chdir to tempDir: %v", err)
+	}
+	defer os.Chdir(origWd)
+
+	man := CreateManager()
+	defer func() { _ = man.Close() }()
+
+	expectedErr := errors.New("controlled failure")
+	man.flushBuildHook = func() error {
+		return expectedErr
+	}
+
+	tx := man.Begin()
+	tx.Put("key1", "val1")
+	_ = tx.Commit()
+	_ = man.TriggerFlush()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if man.FlushErr() != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for flush error")
+		}
+		runtime.Gosched()
+	}
+
+	// TriggerFlush should return flush error immediately
+	tx2 := man.Begin()
+	tx2.Put("key2", "val2")
+	_ = tx2.Commit()
+	flushErr := man.TriggerFlush()
+	if flushErr == nil {
+		t.Fatalf("expected TriggerFlush to fail after flushErr, got nil")
+	}
+	if !errors.Is(flushErr, expectedErr) {
+		t.Fatalf("expected error %v, got %v", expectedErr, flushErr)
 	}
 }

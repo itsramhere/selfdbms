@@ -109,15 +109,25 @@ In Sub-phase I1.3.8d, error handling was hardened so that if SSTable constructio
 - Retaining a failed Memtable in `m.Frozenmem` preserves **in-memory data visibility** for active transactions and point reads during the current process lifetime.
 - It **DOES NOT** guarantee durability after process termination. If the process is halted, killed, or crashes, volatile RAM state is lost.
 - Post-termination durability depends exclusively on WAL disk records. If a flush failed and the corresponding WAL segment is subsequently deleted, overwritten, or unlinked, durability is permanently compromised.
-- Under current logic, the old WAL file descriptor is closed upon rotation, but the file remains on disk. A robust crash-recovery mechanism must treat un-flushed Memtables as requiring WAL replay upon restart.
+### 5.3 Snapshot Isolation vs Point-Read Version Selection Boundary
+Reference-oracle tests (such as `TestCrossTierOrdering_ReferenceModelOracle` and `TestFailedFlush_E010_*`) validate point-read version selection at discrete read timestamps ($T_{\text{read}}$) across multiple memory and storage tiers.
+**Important Boundary Qualification**:
+- These tests establish that the storage engine correctly selects the latest visible version $\le T_{\text{read}}$ for individual point lookups.
+- They **DO NOT** constitute a formal proof of full multi-key snapshot isolation or serializability across concurrent long-running multi-statement transactions.
+- True ACID snapshot isolation across arbitrary multi-key transactions requires transaction workspace buffering, repeatable reads across concurrent compactions, and predicate or range locks, which are beyond the single-key version-selection scope evaluated here.
+
+### 5.4 Durability and Crash Recovery Claims Boundary
+- **No Blanket Zero-Data-Loss or Crash-Consistency Claims**: While in-memory handoff (`INV-HANDOFF-1`) eliminates window gaps between `Frozenmem` and `ActiveSSreaders` during running process lifetime, post-crash consistency depends on durable disk state.
+- Because `RecoverFromWAL` does not replay multiple rotated WAL segments (`RISK-002`), an ungraceful crash or power failure while unflushed Memtables reside in RAM can result in data loss unless multi-WAL replay is implemented.
 
 ---
 
 ## 6. Open Architectural Risks Catalog for Checkpoint CP1
 
-| Risk ID | Subsystem | Severity | Description | Current Mitigation | Future Mitigation Required |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **`RISK-001`** | Admission / Memory | High | Unbounded queue slice can exhaust host RAM under sustained write load exceeding disk flush bandwidth. | Zero blocking under locks; queue drains cleanly on shutdown. | Introduce non-blocking write-stall admission control before acquiring `Manager.Mu`. |
-| **`RISK-002`** | Recovery / WAL | Medium | `RecoverFromWAL` only replays a single specified log file; does not discover or sequence multiple rotated `wal_*.log` files. | WAL files are preserved on disk without premature unlinking. | Implement directory-wide WAL segment discovery, ordering, and multi-segment replay. |
-| **`RISK-003`** | Durability / Crash | Medium | Retaining failed Memtables in `Frozenmem` protects process RAM only; crash loses unwritten SSTables unless replayed from WAL. | Failed Memtables stay in RAM; incomplete SSTables unlinked immediately. | Add explicit crash recovery test suite simulating power loss across rotated WALs. |
-| **`RISK-004`** | Flush Failure State | Medium | If flush $F_0$ fails while $F_1$ succeeds, $F_0$ remains in `Frozenmem` while $F_1$ publishes to `ActiveSSreaders`, which could invert cross-tier precedence. | Worker logs `m.flushErr` and surfaces on `Close()`. | Halt or stall subsequent flush worker tasks if a preceding flush encounters fatal disk I/O error. |
+| Risk ID | Subsystem | Severity | Status | Description | Current Mitigation | Future Mitigation Required |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **`RISK-001`** | Admission / Memory | High | **OPEN** | Unbounded queue slice can exhaust host RAM under sustained write load exceeding disk flush bandwidth. | Non-blocking enqueue under `flushQueueMu`; queue drains cleanly on normal shutdown. | Introduce non-blocking write-stall admission control before acquiring `Manager.Mu`. |
+| **`RISK-002`** | Recovery / WAL | Medium | **OPEN** | `RecoverFromWAL` only replays a single specified log file; does not discover or sequence multiple rotated `wal_*.log` files after crash. | Rotated WAL files are preserved on disk without premature unlinking. | Implement directory-wide WAL segment discovery, ordering, and multi-segment replay. |
+| **`RISK-003`** | Durability / Crash | Medium | **OPEN** | Retaining failed Memtables in `Frozenmem` protects process RAM only; crash loses unwritten SSTables unless replayed from WAL. | Failed Memtables stay queryable in RAM; incomplete SSTables unlinked immediately. | Add explicit crash recovery test suite simulating power loss across rotated WALs. |
+| **`RISK-004`** | Flush Failure Precedence | Critical | **RESOLVED** | Older failed flush $F_0$ remaining in `Frozenmem` while newer flush $F_1$ publishes to disk inverts tier precedence, causing stale reads and tombstone resurrection (`E-010`). | **Resolved via Option A Fail-Stop (D-017)**: Flush worker halts immediately upon fatal error (`m.flushErr != nil`); suppresses subsequent publications; retains unflushed Memtables in `Frozenmem` in strict chronological order. | None for in-memory precedence. Crash recovery after fail-stop relies on multi-WAL replay (`RISK-002`). |
+
