@@ -1,0 +1,12 @@
+﻿=== RUN   TestE005_NoncontiguousCompactionSafelyRejected
+    noncontiguous_compaction_counterexample_test.go:68: Noncontiguous inputs [r0, r2] safely rejected: compaction aborted: input readers are not strictly contiguous
+    noncontiguous_compaction_counterexample_test.go:83: Non-prefix inputs [r1, r2] safely rejected: compaction aborted: inputs must form a prefix starting at index 0
+    noncontiguous_compaction_counterexample_test.go:95: Duplicate inputs [r0, r0] safely rejected: compaction aborted: duplicate input reader
+    noncontiguous_compaction_counterexample_test.go:106: Nil replacement reader safely rejected: compaction aborted: nil replacement reader
+--- PASS: TestE005_NoncontiguousCompactionSafelyRejected (0.03s)
+=== RUN   TestE005_ValidPrefixCompactionAndMVCCCorrectness
+    noncontiguous_compaction_counterexample_test.go:180: Valid prefix compaction published: [mCompact, r2]
+    noncontiguous_compaction_counterexample_test.go:239: All MVCC visibility assertions passed across [mCompact, r2]
+--- PASS: TestE005_ValidPrefixCompactionAndMVCCCorrectness (0.03s)
+PASS
+ok  	owndbms/lsmengine	1.430s

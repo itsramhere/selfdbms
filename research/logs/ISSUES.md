@@ -167,10 +167,16 @@ Format:
   FAIL
   ```
 - **Root Cause**: In a single flat slice architecture where `Manager.Get` iterates backwards, replacing noncontiguous inputs by inserting the merged table at the first input's position places the output before unselected intermediate tables, inverting relative version order.
-- **Proposed Fix (Awaiting Authorization)**: Formally codify invariant `INV-COMPACT-1` (compaction inputs in a flat slice must be contiguous), and enforce in `replaceCompactedReaders` that `inputs` form a contiguous sub-slice of `current`.
-- **Status**: REPRODUCED / COUNTEREXAMPLE VERIFIED / AWAITING AUTHORIZATION BEFORE OUT-OF-SCOPE REPAIR.
-- **Evidence Path**: [`research/debug/E-005/repro.md`](../debug/E-005/repro.md), [`research/debug/E-005/failing_counterexample.log`](../debug/E-005/failing_counterexample.log), [`lsmengine/noncontiguous_compaction_counterexample_test.go`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/noncontiguous_compaction_counterexample_test.go).
-- **Commit**: Pending authorization
+- **Implemented Fix**: Codified invariant `INV-COMPACT-1` (compaction inputs must be contiguous). In `replaceCompactedReaders`, added strict defensive validation ensuring:
+  1. All inputs are active and present in `current`.
+  2. No duplicate or nil inputs.
+  3. Inputs form a strictly contiguous prefix starting at index 0 of `current`.
+  4. Invalid inputs immediately abort with error without mutating `current`.
+  5. Any concurrently flushed SSTables appended after the compacted prefix are preserved.
+- **Status**: FIXED / VERIFIED (Sub-phase I1.3.0a).
+- **Evidence Path**: [`research/debug/E-005/repro.md`](../debug/E-005/repro.md), [`research/debug/E-005/failing_counterexample.log`](../debug/E-005/failing_counterexample.log), [`research/debug/E-005/after.log`](../debug/E-005/after.log), [`research/debug/E-005/diff.patch`](../debug/E-005/diff.patch), [`lsmengine/noncontiguous_compaction_counterexample_test.go`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/noncontiguous_compaction_counterexample_test.go).
+- **Commit**: Sub-phase I1.3.0a
+
 
 
 

@@ -83,6 +83,11 @@ This document codifies the exact correctness, lifetime, and safety invariants of
 - **Current Status**: **Required for Manager.Get; Guaranteed by flushToDisk and protected publication in I1.2.2**.
 - **Evidence / Justification**: Point reads (`Manager.Get`) iterate backwards from `len-1` down to 0 and terminate on the first visible version. Audit test `TestManagerGet_OrderingAudit` demonstrated that inverting `ActiveSSreaders` causes older versions to mask newer visible versions. Therefore, compaction publication must replace compacted inputs in-place to preserve chronological sequence.
 
+### INV-COMPACT-1: Chronological Contiguity of Compaction Inputs
+- **Statement**: Under the present first-matching-reader lookup architecture (`Manager.Get` reverse scan over a single flat reader slice), SSTable compaction inputs must strictly preserve the chronological precedence of surviving readers. Compaction input selection must be restricted to a contiguous sub-slice of `m.ActiveSSreaders`. Under the current `CompactAll` policy, inputs must be the complete active reader prefix captured at compaction start (`m.ActiveSSreaders[0..k]`), starting from index 0. Noncontiguous input selection is strictly prohibited as it inverts relative chronological order between the merged output and intermediate uncompacted readers.
+- **Current Status**: **Guaranteed by CompactAll prefix capture and defensive validation in replaceCompactedReaders (Sub-phase I1.3.0a)**.
+- **Evidence / Justification**: Documented in Issue E-005. If noncontiguous inputs (e.g. $[R_0, R_2]$ skipping $R_1$) are merged into $M$ and published in `m.ActiveSSreaders`, $M$ is placed at $R_0$'s position `[M, R_1]`. The reverse traversal in `Manager.Get` visits $R_1$ before $M$, causing older committed versions in $R_1$ to mask newer visible versions from $M$, producing stale reads and breaking snapshot isolation. Proven by counterexample in `research/debug/E-005/repro.md` and verified by regression test `TestE005_NoncontiguousCompactionSafelyRejected`.
+
 ---
 
 ## 4. Durability & Recovery Invariants
