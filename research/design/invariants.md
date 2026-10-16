@@ -21,9 +21,9 @@ This document codifies the exact correctness, lifetime, and safety invariants of
 - **Evidence / Justification**: Resolved by extracting unexported `latestValueLocked` on `Manager`. `Transaction.Commit` invokes `latestValueLocked` directly while holding `t.Man.Mu.Lock()`, eliminating the recursive mutex acquisition hazard. Public `LatestValue` acquires its own lock. Verified by `TestWriteWriteConflict`.
 
 ### INV-SYNC-3: Lock Acquisition Hierarchy
-- **Statement**: If multiple mutexes are acquired, they must always follow the strict order: `m.compactionMu -> Manager.Mu -> Wal.mu`.
-- **Current Status**: **Verified**.
-- **Evidence / Justification**: In `Transaction.Commit`, `t.Man.Mu.Lock()` is held before calling `t.Man.Log.Append`, which acquires `w.mu.Lock()`. In `CompactAll`, `m.compactionMu.Lock()` is held before acquiring `m.Mu.Lock()`. In `Manager.Close`, `m.compactionMu.Lock()` is acquired before `m.Mu.Lock()`. No call path ever acquires locks in reverse order.
+- **Statement**: If multiple mutexes are acquired, they must always follow the strict order: `m.compactionMu -> Manager.Mu -> m.flushQueueMu -> Wal.mu`.
+- **Current Status**: **Verified (Sub-phases I1.3.3 & I1.3.8b)**.
+- **Evidence / Justification**: In `Transaction.Commit`, `t.Man.Mu.Lock()` is held before calling `t.Man.Log.Append`, which acquires `w.mu.Lock()`. In `CompactAll`, `m.compactionMu.Lock()` is held before acquiring `m.Mu.Lock()`. In `Manager.Close`, `m.compactionMu.Lock()` is acquired before `m.Mu.Lock()`. In `enqueueFlushLocked`, `m.flushQueueMu.Lock()` is acquired while holding `m.Mu.Lock()`. No call path ever acquires locks in reverse order, and `m.flushQueueMu` is never held while requesting `m.Mu`. Verified by 66 passing tests on Windows and WSL2 `-race`.
 
 ---
 
@@ -138,6 +138,12 @@ Under Approach A, synchronization relies entirely on `Manager.Mu (*sync.RWMutex)
 
 ### INV-LIFETIME-5: Coordinated Flush Shutdown Drain & FIFO Publication Ordering
 - **Statement**: Memtables must be flushed and published into `m.ActiveSSreaders` strictly in chronological order of their creation ($F_0 \to F_1 \to F_2$), and engine shutdown (`Manager.Close`) must coordinate with all in-flight and queued flushes via a deadlock-free drain protocol (`EngineOpen -> EngineClosing -> EngineClosed`). Background flushes must never publish into a closed manager or leak file handles, and pending mutations must drain before final reader and WAL teardown.
-- **Current Status**: **Adopted and Enforced (Sub-phases I1.3.7b & I1.3.7c, Issues E-007 and E-008)**.
-- **Evidence / Justification**: Implemented in `lsmengine/manager.go` via dedicated FIFO worker `m.flushChan chan *Memtable`, atomic `sstableFileSeq`, 4-phase deadlock-free drain protocol (`m.flushWg`), and post-close mutation rejection (`ErrClosed`). Verified by 6 shutdown tests (`flush_shutdown_test.go`), 6 ordering tests (`flush_ordering_test.go`), and 6 combined validation tests (`combined_lifecycle_validation_test.go`) on Windows native and WSL2 with `-race` (zero data races).
+- **Current Status**: **Adopted and Enforced (Sub-phases I1.3.7b, I1.3.7c, & I1.3.8b, Issues E-007, E-008, E-009)**.
+- **Evidence / Justification**: Implemented in `lsmengine/manager.go` via dedicated FIFO worker, unbounded `flushQueue` slice with `flushQueueCond`, atomic `sstableFileSeq`, 4-phase deadlock-free drain protocol (`m.flushWg`), and post-close mutation rejection (`ErrClosed`). Verified by 9 shutdown tests (`flush_shutdown_test.go`), 6 ordering tests (`flush_ordering_test.go`), 5 flush admission tests (`flush_deadlock_repro_test.go`), and 6 combined validation tests (`combined_lifecycle_validation_test.go`) on Windows native and WSL2 with `-race` (zero data races).
+
+### INV-QUEUE-1: Unbounded Flush Admission & Circular Wait Freedom
+- **Statement**: Enqueueing a frozen Memtable under `Manager.Mu.Lock()` must never block on queue capacity or worker progress. The pending flush queue must decouple write admission from disk I/O latency, completely eliminating circular wait deadlocks with `Manager.Mu` (Issue E-009). The background flush worker must dequeue tasks in exact generation order, and pending Memtables must remain continuously queryable in `m.Frozenmem` until SSTable publication.
+- **Current Status**: **Adopted and Enforced (Sub-phase I1.3.8b, Issue E-009)**.
+- **Evidence / Justification**: Implemented in `lsmengine/manager.go` via `m.flushQueue []*Memtable`, `m.flushQueueMu sync.Mutex`, and `m.flushQueueCond *sync.Cond` (D-015). Enqueueing is an $O(1)$ non-blocking slice append under `m.flushQueueMu`. Worker acquires `m.Mu.Lock()` exclusively during SSTable publication and `Frozenmem` retirement. Verified by 5 comprehensive tests (resolved 65-item deadlock, 128-item saturation without stall, concurrent publication with point reads, shutdown during saturated queue, and continuous key visibility) in `lsmengine/flush_deadlock_repro_test.go` on Windows native and WSL2 with `-race` (zero data races).
+
 

@@ -62,6 +62,18 @@
 | **Combined: Flush + Compact + Close** | `TestCombinedValidation_FlushCompactionAndShutdownConcurrent` | `lsmengine/combined_lifecycle_validation_test.go:259` | *N/A* (Added I1.3.7d) | *N/A* | **PASS (0.04s)** | Yes | Proves 3-way concurrency among flush, compaction, and shutdown is deadlock-free. |
 | **Combined: Cross-Tier Transitions** | `TestCombinedValidation_CrossTierVersionAndTombstoneTransitions` | `lsmengine/combined_lifecycle_validation_test.go:362` | *N/A* (Added I1.3.7d) | *N/A* | **PASS (0.02s)** | Yes | Proves version and tombstone visibility across active, frozen, flushed, and compacted tiers. |
 | **Combined: Clean Handle Release** | `TestCombinedValidation_CleanHandleReleaseAndReopen` | `lsmengine/combined_lifecycle_validation_test.go:490` | *N/A* (Added I1.3.7d) | *N/A* | **PASS (0.01s)** | No | Proves late flushes cannot revive closed manager and all handles are released on Windows NTFS. |
+| **Admission: Deadlock Resolved** | `TestFlushDeadlock_E009_Resolved_NoDeadlockOnQueueSaturation` | `lsmengine/flush_deadlock_repro_test.go:18` | *N/A* (Added I1.3.8b) | *N/A* | **PASS (0.44s)** | No | Proves unbounded flush queue eliminates circular wait deadlock with Manager.Mu (E-009). |
+| **Admission: 128 Saturated** | `TestFlushAdmission_QueueSaturated128Items` | `lsmengine/flush_deadlock_repro_test.go:121` | *N/A* (Added I1.3.8b) | *N/A* | **PASS (0.77s)** | No | Proves 128 flushes enqueued rapidly do not stall and finish in exact generation order. |
+| **Admission: Concurrent Pub** | `TestFlushAdmission_WorkerPublicationDuringAdmission` | `lsmengine/flush_deadlock_repro_test.go:188` | *N/A* (Added I1.3.8b) | *N/A* | **PASS (0.28s)** | No | Proves background worker publications interleave safely with ongoing admissions and point reads. |
+| **Admission: Saturated Close** | `TestFlushAdmission_ShutdownDuringSaturatedQueue` | `lsmengine/flush_deadlock_repro_test.go:254` | *N/A* (Added I1.3.8b) | *N/A* | **PASS (0.53s)** | No | Proves Close() during saturated queue drains all items cleanly before final teardown. |
+| **Admission: Key Visibility** | `TestFlushAdmission_KeyVisibilityAcrossLifecycle` | `lsmengine/flush_deadlock_repro_test.go:343` | *N/A* (Added I1.3.8b) | *N/A* | **PASS (0.02s)** | No | Proves keys remain continuously visible across Mem -> Frozen -> In-Flight -> SSTable tiers. |
+| **Close: Concurrent Callers** | `TestFlushShutdown_CaseG_MultipleConcurrentCloseCallers` | `lsmengine/flush_shutdown_test.go:379` | *N/A* (Added I1.3.8c) | *N/A* | **PASS (0.05s)** | No | Proves 10 concurrent Close() callers execute teardown once and receive identical nil error. |
+| **Close: Error Propagation** | `TestFlushShutdown_CaseH_ConcurrentCloseWithErrorPropagation` | `lsmengine/flush_shutdown_test.go:440` | *N/A* (Added I1.3.8c) | *N/A* | **PASS (0.00s)** | No | Proves flush errors propagate identically to all concurrent Close() callers. |
+| **Close: Concurrent Txns** | `TestFlushShutdown_CaseI_CloseConcurrentWithTransactions` | `lsmengine/flush_shutdown_test.go:484` | *N/A* (Added I1.3.8c) | *N/A* | **PASS (0.02s)** | No | Proves transactions committing during Close() either commit or abort cleanly with ErrClosed. |
+| **Failure: Disk Full Build** | `TestFlushFailure_DiskFullDuringSSTableBuild` | `lsmengine/flush_error_propagation_test.go:17` | *N/A* (Added I1.3.8d) | *N/A* | **PASS (0.01s)** | No | Proves disk full during build retains Memtable in Frozenmem and surfaces error to Close(). |
+| **Failure: Incomplete Unlink** | `TestFlushFailure_IncompleteFileUnlinkedOnError` | `lsmengine/flush_error_propagation_test.go:81` | *N/A* (Added I1.3.8d) | *N/A* | **PASS (0.18s)** | No | Proves incomplete SSTable files are unlinked on error, preventing leaked partial files. |
+| **Failure: WAL Rotation** | `TestWALRotationFailure_PreservesDurabilityAndSurfacesError` | `lsmengine/flush_error_propagation_test.go:124` | *N/A* (Added I1.3.8d) | *N/A* | **PASS (0.00s)** | No | Proves WAL rotation failure preserves active Memtable, retains old WAL, and surfaces error. |
+| **Failure: WAL Commit Error** | `TestTransactionCommit_WALFailureAbortsTransaction` | `lsmengine/flush_error_propagation_test.go:183` | *N/A* (Added I1.3.8d) | *N/A* | **PASS (0.00s)** | No | Proves WAL failure during commit cleanly aborts without panicking or leaking to Memtable. |
 | **Flush / Swap** | `forceSyncFlush` | `lsmengine/cross_tier_conflict_test.go:9` | Verified | Verified | **PASS** | No | Synchronous flush hook verified in all cross-tier and compaction tests. |
 | **Compaction** | `CompactAll` | `lsmengine/compaction.go:50` | Untested | Untested | **PASS** | Yes | Full k-way merge and deduplication verified in concurrency test suite. |
 | **Concurrent Read + Compaction** | `TestCompactionPublication_ConcurrentFlush*` | `lsmengine/compaction_concurrency_test.go` | Untested | Untested | **PASS** | Yes | Reader-compactor overlap verified under Approach A RWMutex. |
@@ -76,15 +88,17 @@
 ---
 
 ## 2. Summary of Findings
-1. **Existing Test Pass Rate**: 44/44 passing on Windows native (2.26s), 44/44 passing under WSL2 `go test -race` with zero data races (5.25s).
+1. **Existing Test Pass Rate**: 56/56 unit tests (66 total runnable tests) passing on Windows native (5.06s), 56/56 unit tests passing under WSL2 `go test -race` with zero data races (11.37s).
 2. **Safe Reader Retirement (Approach A)**: Verified under full compaction serialization (`compactionMu`) and shutdown coordination (`isClosed`). Overlapping compactions, shutdown races, and read-versus-retirement races are completely eliminated without leaks.
 3. **Filesystem Cleanup (Windows NTFS & Linux)**: Verified close-before-delete, zero handle leaks, and automatic cleanup of aborted compaction temp files across both Windows and WSL2.
 4. **Compaction Ordering Safeguards (INV-COMPACT-1 / E-005)**: Noncontiguous and non-prefix compaction inputs are defensively rejected with zero state mutation, preventing stale read hazards in `Manager.Get` (Sub-phase I1.3.0a complete).
 5. **Flush Shutdown Drain (INV-LIFETIME-5 / E-007)**: Verified 4-phase deadlock-free drain protocol (`EngineOpen -> EngineClosing -> EngineClosed`). In-flight flushes drain to completion outside `m.Mu`, zero open handles leaked, and post-close mutations are rejected with `ErrClosed`.
-6. **Chronological Flush Ordering (INV-ORDER-1 / E-008)**: Verified dedicated managed FIFO flush worker (`m.flushChan`). Multiple frozen Memtables process strictly in arrival order, ensuring newest table is always appended at the tail of `m.ActiveSSreaders`, mathematically eliminating stale reads.
-7. **Concurrency Matrix**: Full 6-way concurrency matrix (Read+Flush, Write+Flush, Concurrent Flush requests, Flush+Compaction+Shutdown, Cross-tier version transitions, Clean Windows NTFS handle release) verified with zero data races.
-5. **Cross-Tier Conflict Safety**: Verified across active Memtable, frozen Memtables, and SSTables regardless of slice ordering (Option A fix for E-004 verified).
-6. **Manager.Get Search Semantics**: Audit confirmed that `Manager.Get` relies strictly on `INV-ORDER-1` (ActiveSSreaders ordered chronologically from oldest to newest).
+6. **Chronological Flush Ordering (INV-ORDER-1 / E-008)**: Verified dedicated managed FIFO flush worker. Multiple frozen Memtables process strictly in arrival order, ensuring newest table is always appended at the tail of `m.ActiveSSreaders`, mathematically eliminating stale reads.
+7. **Unbounded Flush Admission & Deadlock Freedom (INV-QUEUE-1 / E-009)**: Verified unbounded FIFO task queue with dedicated `flushQueueMu sync.Mutex` and `flushQueueCond *sync.Cond` (D-015). Enqueueing under `m.Mu.Lock()` is non-blocking, completely eliminating capacity-bound circular wait deadlocks.
+8. **Concurrent Close Hardening**: Verified multi-caller `Close()` invocations. Teardown executes once and only once, and all concurrent callers receive identical errors.
+9. **Failure Injection & WAL Durability**: Verified simulated disk-full build failures, SSTable unlinking, atomic WAL rotation failure recovery, and transaction abort on WAL append failure.
+10. **Concurrency Matrix**: Full concurrency matrix across read, write, flush, compaction, and shutdown verified with zero data races and zero deadlocks.
+
 
 
 

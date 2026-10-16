@@ -25,13 +25,15 @@
 
 ## 2. Lock Hierarchy & Mutex Ownership
 
-There are two distinct mutexes in the engine:
-1. `Manager.Mu (*sync.RWMutex)`: Guards access to `Mem`, `Frozenmem`, `ActiveSSreaders`, `Log`, and write sequencing.
-2. `Wal.mu (sync.Mutex)`: Guards file writes and `Sync()` calls to the WAL file descriptor.
+There are four distinct synchronization primitives in the engine:
+1. `m.compactionMu (sync.Mutex)`: Serializes background compactions and coordinates atomic engine shutdown.
+2. `Manager.Mu (*sync.RWMutex)`: Guards access to `Mem`, `Frozenmem`, `ActiveSSreaders`, `Log`, and write sequencing.
+3. `m.flushQueueMu (sync.Mutex)`: Guards enqueueing, dequeueing, and condition signaling for the unbounded FIFO flush queue.
+4. `Wal.mu (sync.Mutex)`: Guards file writes and `Sync()` calls to the WAL file descriptor.
 
 ```
 Lock Hierarchy Rule:
-Manager.Mu (Exclusive Lock) ──► Wal.mu (Mutex Lock)
+m.compactionMu ──► Manager.Mu (Exclusive or Shared) ──► m.flushQueueMu ──► Wal.mu
 ```
 
 ### Mutex State Matrix
@@ -41,11 +43,13 @@ Manager.Mu (Exclusive Lock) ──► Wal.mu (Mutex Lock)
 | `Manager.Get` | Reader | `m.Mu.RLock()` | Entire read (Memtable + Frozen + Disk I/O across SSTables) | `m.Mem`, `m.Frozenmem`, `m.ActiveSSreaders` |
 | `Transaction.Commit` | Writer | `m.Mu.Lock()` | Write-write check, WAL append, Memtable put | `m.Mu`, `m.CurrentSeqNo`, `m.Mem`, `m.Log` |
 | `Wal.Append` | Writer | `w.mu.Lock()` | Byte encoding, checksum, `File.Write`, `File.Sync` | `w.File` |
-| `checkAndTriggerFlush` | Writer | `m.Mu.Lock()` | Memtable size check, rotation to frozen, WAL swap | `m.Mem`, `m.Frozenmem`, `m.Log` |
-| `flushToDisk` (publish) | Background Flush | `m.Mu.Lock()` | SSTable reader slice append, frozen slice remove | `m.ActiveSSreaders`, `m.Frozenmem` |
-| `CompactAll` (snapshot) | Compactor | `m.Mu.Lock()` | Shallow copy `ActiveSSreaders`, collect file names | `m.ActiveSSreaders` |
-| `CompactAll` (publish) | Compactor | `m.Mu.Lock()` | Replace `m.ActiveSSreaders = []*SSTableReader{newReader}` | `m.ActiveSSreaders` |
-| `Manager.Close` | Closer | `m.Mu.Lock()` | Closes readers and WAL file | `m.ActiveSSreaders`, `m.Log` |
+| `checkAndTriggerFlush` | Writer | `m.Mu.Lock()`, then `m.flushQueueMu.Lock()` | Memtable size check, rotation to frozen, WAL swap, queue append | `m.Mem`, `m.Frozenmem`, `m.Log`, `m.flushQueue` |
+| `flushLoop` (pop) | Flush Worker | `m.flushQueueMu.Lock()` | Pop FIFO task, wait on `flushQueueCond` | `m.flushQueue` |
+| `flushToDisk` (publish) | Flush Worker | `m.Mu.Lock()` | SSTable reader slice append, frozen slice remove | `m.ActiveSSreaders`, `m.Frozenmem` |
+| `CompactAll` (lifecycle) | Compactor | `m.compactionMu.Lock()` | Entire compaction lifecycle (snapshot through file deletion) | Active reader lease serialization |
+| `CompactAll` (snapshot) | Compactor | `m.Mu.Lock()` | Shallow copy contiguous prefix `ActiveSSreaders`, collect file names | `m.ActiveSSreaders` |
+| `CompactAll` (publish) | Compactor | `m.Mu.Lock()` | Prefix in-place replacement via `replaceCompactedReaders` | `m.ActiveSSreaders` |
+| `Manager.Close` | Closer | `m.compactionMu.Lock()`, then `m.Mu.Lock()`, then `m.flushQueueMu.Lock()` | 4-phase drain protocol, reader closing, WAL close | `m.ActiveSSreaders`, `m.Log`, `m.flushQueue` |
 
 ---
 
@@ -123,4 +127,7 @@ sequenceDiagram
    In baseline, an in-flight `flushToDisk` could publish a new reader into `m.ActiveSSreaders` after `Manager.Close()` set `ActiveSSreaders = nil`, leaking an open file descriptor on Windows NTFS. Resolved in I1.3.7b via a 4-phase deadlock-free drain protocol: `Manager.Close()` transitions engine state to `EngineClosing`, closes `m.flushChan`, drains `m.flushWg.Wait()` outside `m.Mu` without holding locks, and transitions to `EngineClosed`. All completed tables are cleanly closed, post-shutdown operations return `ErrClosed`, and zero file handles are leaked on Windows NTFS.
 6. **Concurrent Flush Out-of-Order Publication (RESOLVED in I1.3.7c, Issue E-008)**:
    In baseline, uncoordinated `flushToDisk` goroutines could complete out-of-order, placing an older SSTable after a newer SSTable in `m.ActiveSSreaders` and corrupting reverse iteration in `Manager.Get`. Resolved in I1.3.7c via a dedicated managed FIFO flush worker (`m.flushChan`). Memtables are enqueued under `m.Mu.Lock()` at the instant of freezing in exact chronological order. The single background worker processes and appends SSTables to `m.ActiveSSreaders` strictly in arrival order, guaranteeing `INV-ORDER-1` and eliminating stale reads.
+7. **Flush Queue Deadlock on Channel Saturation (RESOLVED in I1.3.8b, Issue E-009)**:
+   In I1.3.7c, `enqueueFlushLocked` sent into a bounded channel (`make(chan *Memtable, 64)`) while holding `Manager.Mu.Lock()`. Under write load exceeding disk flush bandwidth, 64 tasks saturated the channel buffer; any subsequent enqueue blocked while holding `Manager.Mu.Lock()`. Meanwhile, the flush worker finished building an SSTable and blocked attempting to acquire `Manager.Mu.Lock()` to publish, resulting in an unrecoverable circular wait deadlock. Resolved in I1.3.8b via an unbounded internal FIFO task queue slice protected by `m.flushQueueMu sync.Mutex` and `m.flushQueueCond *sync.Cond` (Decision D-015). Enqueueing under `Manager.Mu.Lock()` is an instantaneous $O(1)$ non-blocking slice append, completely eliminating lock contention and circular wait while preserving exact generation ordering and continuous key visibility in `Frozenmem`.
+
 
