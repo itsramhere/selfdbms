@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"math"
 	"os"
 )
 
@@ -162,6 +163,80 @@ func (sst *SSTableReader) Get(userKey []byte, readTs uint64) ([]byte, error) {
 	}
 
 	return nil, ErrNotFound
+}
+
+func (sst *SSTableReader) LatestValue(userKey []byte) (uint64, error) {
+	if len(sst.Index) == 0 {
+		return 0, ErrNotFound
+	}
+
+	seekKey := EncodeInternalKey(userKey, math.MaxUint64, true)
+
+	low := 0
+	high := len(sst.Index) - 1
+	var targetOffset uint32
+	foundBlock := false
+
+	for low <= high {
+		mid := low + (high-low)/2
+		cmp := CompareInternalKeys(sst.Index[mid].Key, seekKey)
+
+		if cmp == 0 {
+			targetOffset = sst.Index[mid].Offset
+			foundBlock = true
+			break
+		} else if cmp < 0 {
+			targetOffset = sst.Index[mid].Offset
+			foundBlock = true
+			low = mid + 1
+		} else {
+			high = mid - 1
+		}
+	}
+
+	if !foundBlock {
+		targetOffset = 0
+	}
+
+	blockLength := sst.DataEndOffset - int64(targetOffset)
+	sr := io.NewSectionReader(sst.File, int64(targetOffset), blockLength)
+
+	for {
+		var keyLen uint16
+		if err := binary.Read(sr, binary.LittleEndian, &keyLen); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return 0, err
+		}
+
+		diskKey := make([]byte, keyLen)
+		if _, err := io.ReadFull(sr, diskKey); err != nil {
+			return 0, err
+		}
+
+		var valLen uint32
+		if err := binary.Read(sr, binary.LittleEndian, &valLen); err != nil {
+			return 0, err
+		}
+
+		diskVal := make([]byte, valLen)
+		if _, err := io.ReadFull(sr, diskVal); err != nil {
+			return 0, err
+		}
+
+		diskUserKey, diskSeqNo, _ := DecodeInternalKey(diskKey)
+
+		if bytes.Equal(diskUserKey, userKey) {
+			return diskSeqNo, nil
+		}
+
+		if bytes.Compare(diskUserKey, userKey) > 0 {
+			break
+		}
+	}
+
+	return 0, ErrNotFound
 }
 
 func (sst *SSTableReader) Close() error {

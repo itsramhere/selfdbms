@@ -68,6 +68,11 @@ This document codifies the exact correctness, lifetime, and safety invariants of
 - **Current Status**: **Verified (conditional on lock safety)**.
 - **Evidence / Justification**: `Manager.Get` executes checks in order: `m.Mem.Get` -> `m.Frozenmem` reverse loop -> `m.ActiveSSreaders` reverse loop. A match at an earlier tier terminates the search.
 
+### INV-MVCC-5: Cross-Tier Conflict Detection Safety
+- **Statement**: For every key in a committing transaction's write set, conflict validation must inspect the latest committed sequence number across all tiers (Active Memtable $\to$ Frozen Memtables $\to$ Active SSTables) including both Puts and Tombstones. If any visible version has $Seq > T_{\text{read}}$, the transaction must abort.
+- **Current Status**: **Verified (Sub-phase I1.1b)**.
+- **Evidence / Justification**: Implemented in `latestValueLocked` via `m.ActiveSSreaders[i].LatestValue(userKey)`. Verified by deterministic tests in `lsmengine/cross_tier_conflict_test.go` (`TestCrossTierWriteConflict_FlushedSSTable`, `TestCrossTierWriteConflict_FlushedTombstone`, `TestCrossTierWriteConflict_NonConflicting`).
+
 ---
 
 ## 4. Durability & Recovery Invariants

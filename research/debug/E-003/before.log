@@ -1,0 +1,11 @@
+=== RUN   TestCrossTierWriteConflict_FlushedSSTable
+    cross_tier_conflict_test.go:72: DEFECT REPRODUCED: T1 committed without detecting conflict with SSTable-resident version!
+--- FAIL: TestCrossTierWriteConflict_FlushedSSTable (0.09s)
+=== RUN   TestCrossTierWriteConflict_FlushedTombstone
+    cross_tier_conflict_test.go:128: DEFECT REPRODUCED: T1 committed without detecting conflict with SSTable tombstone!
+--- FAIL: TestCrossTierWriteConflict_FlushedTombstone (0.09s)
+=== RUN   TestCrossTierWriteConflict_NonConflicting
+--- PASS: TestCrossTierWriteConflict_NonConflicting (0.02s)
+FAIL
+FAIL	owndbms/lsmengine	1.281s
+FAIL

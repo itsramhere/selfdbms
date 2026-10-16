@@ -111,8 +111,8 @@ sequenceDiagram
 
 ## 4. Key Architectural Divergences and Concurrency Flaws
 
-1. **Self-Deadlock on `Transaction.Commit` (RESOLVED in I1.1a)**:
-   In baseline, `Transaction.Commit` acquired `t.Man.Mu.Lock()` and subsequently called `t.Man.LatestValue(key)` which attempted to acquire `m.Mu.RLock()`. In Go, `sync.RWMutex` is not re-entrant; an active writer attempting to acquire a read lock deadlocks itself indefinitely. Resolved in sub-phase I1.1a by extracting internal unexported `latestValueLocked(userKey)` which assumes `m.Mu` is already held.
+1. **Self-Deadlock on `Transaction.Commit` & Cross-Tier Conflict Detection (RESOLVED in I1.1a & I1.1b)**:
+   In baseline, `Transaction.Commit` acquired `t.Man.Mu.Lock()` and subsequently called `t.Man.LatestValue(key)` which attempted to acquire `m.Mu.RLock()`, causing deterministic self-deadlock. Resolved in I1.1a by extracting internal helper `latestValueLocked(userKey)` which assumes `m.Mu` is already held. In I1.1b, `latestValueLocked` was extended to inspect `m.ActiveSSreaders[i].LatestValue(userKey)` in reverse order, resolving a critical defect where flushed mutations and tombstones bypassed conflict detection.
 2. **Data Loss via Compaction Overwrite**:
    `CompactAll` captures `readersToCompact := m.ActiveSSreaders` and releases `m.Mu`. If a flush completes during compaction, it appends a new SSTable to `m.ActiveSSreaders`. When compaction finishes, it blindly replaces `m.ActiveSSreaders = []*SSTableReader{newReader}`, permanently erasing the newly flushed SSTable from the read path.
 3. **Uncoordinated SSTable File Deletion on Windows**:

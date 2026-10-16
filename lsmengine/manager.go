@@ -139,6 +139,17 @@ func (m *Manager) latestValueLocked(userKey []byte) (uint64, error) {
 		}
 	}
 
+	for i := len(m.ActiveSSreaders) - 1; i >= 0; i-- {
+		seq, err := m.ActiveSSreaders[i].LatestValue(userKey)
+		if err == nil {
+			return seq, nil
+		} else if errors.Is(err, ErrNotFound) {
+			continue
+		} else if err != nil {
+			return 0, err
+		}
+	}
+
 	return 0, ErrNotFound
 }
 

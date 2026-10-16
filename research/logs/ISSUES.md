@@ -44,7 +44,7 @@ Format:
 - **Status**: Fixed (Sub-phase I1.1a).
 - **Residual Risk**: `CompactAll` publication and file retirement logic remains uncoordinated (scheduled for future sub-phases I1.2/I1.3).
 - **Evidence Path**: [`research/debug/E-001/after.log`](../debug/E-001/after.log), [`research/debug/E-001/diff.patch`](../debug/E-001/diff.patch), [`research/debug/E-001/repro.md`](../debug/E-001/repro.md)
-- **Commit**: Pending I1.1a commit
+- **Commit**: `85775ba`
 
 ---
 
@@ -67,4 +67,40 @@ Format:
 - **Validation**: `wsl bash -lc "cd /mnt/c/Users/ramst/Documents/Projects/selfdbms && /snap/bin/go test -race -v ./lsmengine"` executes with 0 race warnings.
 - **Status**: Resolved (via WSL2 test execution).
 - **Residual Risk**: Automated CI or scripts running purely in PowerShell on native Windows cannot run `-race` unless invoked through WSL2.
-- **Commit**: Pending I1.1a commit
+- **Commit**: `85775ba`
+
+---
+
+### E-003: Cross-Tier Write Conflict Detection Failure After Memtable Flush
+
+- **ID**: `E-003`
+- **Detected**: 2026-10-16, commit `4ca8787`, baseline Approach A, Windows 11 amd64
+- **Sub-phase**: I1.1b
+- **Severity**: Correctness / Data Integrity (P0 Blocker)
+- **Symptom**: When a conflicting transaction's committed version (Put or Delete) is flushed from Memtable to an SSTable, concurrent uncommitted transactions fail to detect the write-write conflict and commit successfully, silently overwriting or resurrecting the key.
+- **Minimal Reproduction**:
+  ```powershell
+  go test -v ./lsmengine -run TestCrossTierWriteConflict
+  ```
+- **Expected / Actual**:
+  - *Expected*: Transaction aborts with `"Write-write conflict detected. Transaction aborted."`.
+  - *Actual*: Transaction committed without detecting conflict with SSTable-resident version.
+- **Trace / Log**:
+  ```
+  === RUN   TestCrossTierWriteConflict_FlushedSSTable
+      cross_tier_conflict_test.go:72: DEFECT REPRODUCED: T1 committed without detecting conflict with SSTable-resident version!
+  --- FAIL: TestCrossTierWriteConflict_FlushedSSTable (0.09s)
+  ```
+- **Hypotheses Considered**:
+  1. *Compaction deduplication error*: Rejected. Compaction was not involved; issue occurs on single flush.
+  2. *Missing tier inspection in `latestValueLocked`*: Confirmed. `latestValueLocked` only inspected `m.Mem` and `m.Frozenmem`, returning `ErrNotFound` as soon as the key reached an SSTable.
+- **Actual Root Cause**: Conflict detection logic in `latestValueLocked` was not cross-tier; it omitted `m.ActiveSSreaders`.
+- **Fix**: Implemented `LatestValue(userKey []byte) (uint64, error)` on `SSTableReader` using index seek `EncodeInternalKey(userKey, math.MaxUint64, true)`. Updated `latestValueLocked` to scan `m.ActiveSSreaders` in reverse order (`len(m.ActiveSSreaders)-1` down to 0) if absent from memory tiers.
+- **Regression Test**: `TestCrossTierWriteConflict_FlushedSSTable`, `TestCrossTierWriteConflict_FlushedTombstone`, `TestCrossTierWriteConflict_NonConflicting` in `lsmengine/cross_tier_conflict_test.go`.
+- **Validation**:
+  - Windows Native: 8/8 tests PASS (1.27s).
+  - WSL2 Linux: 8/8 tests PASS under `-race` with 0 race warnings (1.71s, repeated 3x).
+- **Status**: Fixed (Sub-phase I1.1b).
+- **Residual Risk**: If SSTables are merged by `CompactAll`, `CompactAll`'s publication path must preserve all active tables and not overwrite concurrently flushed tables (addressed in I1.2).
+- **Evidence Path**: [`research/debug/E-003/before.log`](../debug/E-003/before.log), [`research/debug/E-003/after.log`](../debug/E-003/after.log), [`research/debug/E-003/diff.patch`](../debug/E-003/diff.patch), [`research/debug/E-003/repro.md`](../debug/E-003/repro.md)
+- **Commit**: Pending I1.1b commit
