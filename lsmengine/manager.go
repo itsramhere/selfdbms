@@ -42,6 +42,7 @@ type Manager struct {
 	duringPointReadHook         func()
 	beforeFlushPublishHook      func()
 	flushBuildHook              func() error
+	walRotationHook             func() error
 }
 
 var sstableFileSeq atomic.Uint64
@@ -290,14 +291,37 @@ func (m *Manager) EnqueueFlush(mem *Memtable) {
 }
 
 // TriggerFlush freezes the active Memtable and enqueues it to the background FIFO flush worker.
-func (m *Manager) TriggerFlush() {
+func (m *Manager) TriggerFlush() error {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	if m.state != EngineOpen {
-		return
+		return ErrClosed
 	}
 	if m.Mem == nil || (m.Mem.SizeBytes == 0 && m.Mem.SK.headNode.Forward[0] == nil) {
-		return
+		return nil
+	}
+
+	// Rotate WAL first before altering in-memory state
+	if m.Log != nil && m.Log.File != nil {
+		if m.walRotationHook != nil {
+			if err := m.walRotationHook(); err != nil {
+				if m.flushErr == nil {
+					m.flushErr = fmt.Errorf("wal rotation failed: %w", err)
+				}
+				return fmt.Errorf("wal rotation failed: %w", err)
+			}
+		}
+
+		newWalPath := fmt.Sprintf("wal_%d.log", time.Now().UnixNano())
+		newWal, err := NewWal(newWalPath)
+		if err != nil {
+			if m.flushErr == nil {
+				m.flushErr = fmt.Errorf("wal rotation failed: %w", err)
+			}
+			return fmt.Errorf("wal rotation failed: %w", err)
+		}
+		m.Log.File.Close()
+		m.Log = newWal
 	}
 
 	frozen := m.Mem
@@ -315,12 +339,8 @@ func (m *Manager) TriggerFlush() {
 		SizeBytes: 0,
 	}
 
-	if m.Log != nil && m.Log.File != nil {
-		m.Log.File.Close()
-		m.Log, _ = NewWal(fmt.Sprintf("wal_%d.log", time.Now().UnixNano()))
-	}
-
 	m.enqueueFlushLocked(frozen)
+	return nil
 }
 
 func (m *Manager) checkAndTriggerFlush() {
@@ -336,6 +356,31 @@ func (m *Manager) checkAndTriggerFlush() {
 		return
 	}
 
+	// Rotate WAL first before altering in-memory state
+	if m.Log != nil && m.Log.File != nil {
+		if m.walRotationHook != nil {
+			if err := m.walRotationHook(); err != nil {
+				if m.flushErr == nil {
+					m.flushErr = fmt.Errorf("wal rotation failed: %w", err)
+				}
+				m.Mu.Unlock()
+				return
+			}
+		}
+
+		newWalPath := fmt.Sprintf("wal_%d.log", time.Now().UnixNano())
+		newWal, err := NewWal(newWalPath)
+		if err != nil {
+			if m.flushErr == nil {
+				m.flushErr = fmt.Errorf("wal rotation failed: %w", err)
+			}
+			m.Mu.Unlock()
+			return
+		}
+		m.Log.File.Close()
+		m.Log = newWal
+	}
+
 	frozen := m.Mem
 	m.Frozenmem = append(m.Frozenmem, frozen)
 
@@ -344,18 +389,12 @@ func (m *Manager) checkAndTriggerFlush() {
 		headNode: &Node{
 			Forward: make([]*Node, 32),
 		},
-		maxLevel:     32, // or whatever your default is
+		maxLevel:     32,
 		currentLevel: 1,
 	}
 	m.Mem = &Memtable{
 		SK:        sk,
 		SizeBytes: 0,
-	}
-
-	// Rotate WAL (Simplified)
-	if m.Log != nil && m.Log.File != nil {
-		m.Log.File.Close()
-		m.Log, _ = NewWal(fmt.Sprintf("wal_%d.log", time.Now().UnixNano()))
 	}
 
 	m.enqueueFlushLocked(frozen)

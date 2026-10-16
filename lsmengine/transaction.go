@@ -72,6 +72,11 @@ func (t *Transaction) Commit() error {
 		}
 	}
 
+	if t.Man.Log == nil || t.Man.Log.File == nil {
+		t.Man.Mu.Unlock()
+		return errors.New("wal is unavailable")
+	}
+
 	t.Man.CurrentSeqNo.Add(1)
 	t.AllocatedSeqNo = t.Man.CurrentSeqNo.Load()
 

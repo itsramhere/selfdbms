@@ -271,3 +271,34 @@ Under this protocol:
   - Update `checkAndTriggerFlush()` to enqueue to `flushChan` under `m.Mu.Lock()`.
   - Convert `TestFlushOrdering_ConcurrentFlushesViolateOrder` to an assertive PASS.
   - Add multi-flush tests (3+ frozen tables, interleaved compactions, delete/put sequences).
+
+
+---
+
+## 8. Failure Path & WAL Error Propagation Semantics (Sub-phase I1.3.8d)
+
+During Sub-phase I1.3.8d, all failure paths across SSTable construction, Memtable rotation, WAL rotation, and transaction commits were audited and verified under failure injection:
+
+1. **Flush Worker Failure Semantics (`flushToDisk`)**:
+   - **Disk Full / Builder Failure**: If `os.Create`, `builder.Add`, or `builder.Close` returns an error:
+     - Any partially written SSTable file is unlinked immediately (`os.Remove(filename)`), preventing orphaned file accumulation.
+     - The error is captured in `m.flushErr` under `m.Mu.Lock()`.
+     - **Non-Loss Invariant**: The failing Memtable is **never removed** from `m.Frozenmem`. All keys remain queryable in memory via `Manager.Get` and `Manager.LatestValue`.
+     - `Manager.Close()` surfaces `m.flushErr` to the operator.
+   - **Reader Open Failure**: If `NewSSTableReader(filename)` fails:
+     - The SSTable file is unlinked, `m.flushErr` is recorded, and the Memtable remains in `m.Frozenmem`.
+
+2. **WAL File Rotation Failure Semantics**:
+   - In baseline, `m.Log.File.Close()` was executed blindly and `m.Log, _ = NewWal(...)` ignored errors, causing nil pointer dereference panics on subsequent commits if WAL creation failed.
+   - **Hardened Atomic Rotation**:
+     - `NewWal(newWalPath)` is called **prior** to closing the existing WAL and prior to resetting `m.Mem`.
+     - If `NewWal` fails:
+       - The existing WAL file descriptor remains open and healthy.
+       - The active Memtable `m.Mem` is retained without disruption.
+       - `m.flushErr` is recorded under `m.Mu.Lock()`.
+       - `TriggerFlush()` and `checkAndTriggerFlush()` abort the rotation.
+       - Zero durability loss occurs; active transactions continue writing to the existing WAL.
+
+3. **Transaction Commit WAL Error Semantics**:
+   - `Transaction.Commit` validates `t.Man.Log != nil && t.Man.Log.File != nil` before writing.
+   - If WAL append fails, the transaction immediately releases `t.Man.Mu`, aborts pending writes, and returns the error without applying mutations to `m.Mem`.
