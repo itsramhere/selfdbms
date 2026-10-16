@@ -21,7 +21,49 @@ const (
 	EngineClosed
 )
 
+type SyncMode int
+
+const (
+	// SyncModeApproachA represents the Manager-wide RWMutex baseline (Approach A).
+	// Reader-compactor synchronization relies entirely on Manager.Mu (*sync.RWMutex),
+	// serialized compaction lifetimes (compactionMu), and safe reader retirement.
+	SyncModeApproachA SyncMode = iota
+
+	// SyncModeApproachB represents atomic pointer reader snapshot swap (Approach B).
+	// NOTE: NOT YET IMPLEMENTED. Explicit requests return ErrUnsupportedSyncMode.
+	SyncModeApproachB
+)
+
+func (m SyncMode) String() string {
+	switch m {
+	case SyncModeApproachA:
+		return "ApproachA_RWMutexBaseline"
+	case SyncModeApproachB:
+		return "ApproachB_ReaderSnapshot"
+	default:
+		return "Unknown"
+	}
+}
+
+var ErrNotFound = errors.New("key not found")
+var ErrKeyDeleted = errors.New("key has been deleted")
+var ErrClosed = errors.New("engine is closed")
+var ErrUnsupportedSyncMode = errors.New("unsupported synchronization mode: Approach B is not implemented")
+
+type Config struct {
+	Mode    SyncMode
+	WalPath string
+}
+
+func DefaultConfig() Config {
+	return Config{
+		Mode:    SyncModeApproachA,
+		WalPath: "wal.log",
+	}
+}
+
 type Manager struct {
+	syncMode                    SyncMode
 	CurrentSeqNo                atomic.Uint64
 	Mu                          *sync.RWMutex
 	compactionMu                sync.Mutex
@@ -48,12 +90,21 @@ type Manager struct {
 
 var sstableFileSeq atomic.Uint64
 
-var ErrNotFound = errors.New("key not found")
-var ErrKeyDeleted = errors.New("key has been deleted")
-var ErrClosed = errors.New("engine is closed")
+func CreateManagerWithConfig(cfg Config) (*Manager, error) {
+	if cfg.Mode == SyncModeApproachB {
+		return nil, ErrUnsupportedSyncMode
+	}
+	if cfg.Mode != SyncModeApproachA {
+		return nil, fmt.Errorf("unknown synchronization mode: %v", cfg.Mode)
+	}
 
-func CreateManager() *Manager {
+	walPath := cfg.WalPath
+	if walPath == "" {
+		walPath = "wal.log"
+	}
+
 	man := new(Manager)
+	man.syncMode = cfg.Mode
 	man.CurrentSeqNo.Store(0)
 	man.Mu = &sync.RWMutex{}
 
@@ -68,9 +119,19 @@ func CreateManager() *Manager {
 		SizeBytes: 0,
 	}
 
-	man.Log, _ = NewWal("wal.log")
+	man.Log, _ = NewWal(walPath)
 	man.initFlushWorkerLocked()
+	return man, nil
+}
+
+func CreateManager() *Manager {
+	man, _ := CreateManagerWithConfig(DefaultConfig())
 	return man
+}
+
+// SyncMode returns the active synchronization strategy configured on the manager.
+func (m *Manager) SyncMode() SyncMode {
+	return m.syncMode
 }
 
 func (m *Manager) Begin() *Transaction {
