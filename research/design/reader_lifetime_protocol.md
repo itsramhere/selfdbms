@@ -151,3 +151,32 @@ To resolve background flush races (`E-007`) and out-of-order publication (`E-008
      - **Phase 3**: Call `m.flushWg.Wait()` outside `m.Mu`. The FIFO flush worker drains and finishes building and publishing all queued Memtables without lock contention.
      - **Phase 4**: Acquire `m.Mu.Lock()`, transition `m.state = EngineClosed`, cleanly close all readers in `m.ActiveSSreaders`, close WAL, release `m.Mu.Unlock()`, and release `m.compactionMu.Unlock()`.
    - Result: Zero data loss for committed frozen memtables, zero leaking open file handles on Windows NTFS, and zero deadlocks.
+
+
+---
+
+## 6. Concurrent Close Semantics & Unbounded Flush Admission Protocol (Sub-phase I1.3.8)
+
+Audit of `Manager.Close()` under concurrent invocation and hardening against Issue E-009:
+
+1. **Multi-Caller Concurrency & Atomic Teardown**:
+   - `Manager.Close()` acquires `m.compactionMu.Lock()` as its first action. This strictly serializes concurrent invocations of `Close()`.
+   - The first caller transitions `m.state` from `EngineOpen` to `EngineClosing`, initiates flush queue drain, waits on `m.flushWg.Wait()`, transitions to `EngineClosed`, closes all readers, closes the WAL, and records any error in `m.flushErr`.
+   - Any concurrent or subsequent caller waits on `m.compactionMu.Lock()`, acquires `m.Mu.Lock()`, observes `m.state != EngineOpen`, and returns `m.flushErr`.
+   - **Guarantees**:
+     - Teardown executes **once and only once**.
+     - All concurrent callers receive a **consistent error** (`m.flushErr`) rather than subsequent callers receiving `nil`.
+     - Callers return only after the engine is completely closed.
+
+2. **Interactions with In-Flight Transactions & Compactions**:
+   - **Compactions**: `CompactAll` holds `m.compactionMu.Lock()` during merge. `Close()` waits for any running compaction to complete its publication and reader retirement before beginning teardown.
+   - **Transactions**: `Transaction.Commit` acquires `m.Mu.Lock()`. If commit is active, `Close()` waits for it to complete. Any transaction attempting to commit after `Close()` initiates observes `m.state != EngineOpen` and immediately aborts with `ErrClosed`.
+
+3. **Unbounded FIFO Admission & Lock Hierarchy**:
+   - Issue E-009 proved that holding `m.Mu.Lock()` while sending to a bounded channel whose worker requires `m.Mu.Lock()` creates an inescapable circular wait.
+   - Replacing the bounded channel with an unbounded queue slice (`flushQueue`) protected by `flushQueueMu sync.Mutex` and `flushQueueCond *sync.Cond` satisfies:
+     $$\text{Enqueue: } O(1) \text{ non-blocking slice append under } m.\text{flushQueueMu}$$
+   - **Strict Lock Hierarchy**:
+     $$\mathbf{m.compactionMu} \longrightarrow \mathbf{m.Mu} \longrightarrow \mathbf{m.flushQueueMu} \longrightarrow \mathbf{m.Log.mu}$$
+   - No code path ever acquires `m.Mu` while holding `flushQueueMu`. The worker acquires `flushQueueMu` exclusively to pop tasks, releases it before building SSTables, and acquires `m.Mu.Lock()` only during publication.
+   - Publication into `EngineClosed` is impossible: `m.flushWg.Wait()` completes in Phase 3 before `EngineClosed` is set in Phase 4, and `flushToDisk` verifies `m.state != EngineClosed` before appending to `m.ActiveSSreaders`.

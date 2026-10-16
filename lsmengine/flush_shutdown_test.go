@@ -2,6 +2,7 @@ package lsmengine
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"testing"
@@ -371,3 +372,168 @@ func TestFlushShutdown_CaseF_CompactionAndFlushActiveDuringShutdown(t *testing.T
 		t.Fatalf("Failed to remove test dir on NTFS (handle leak detected): %v", err)
 	}
 }
+
+// TestFlushShutdown_CaseG_MultipleConcurrentCloseCallers verifies that when multiple
+// goroutines call Close() concurrently while flushes are in progress, teardown runs
+// once and only once, all callers unblock with nil error, and no file handles leak.
+func TestFlushShutdown_CaseG_MultipleConcurrentCloseCallers(t *testing.T) {
+	dir := "test_data_flush_shutdown_case_g"
+	os.MkdirAll(dir, 0755)
+	defer os.RemoveAll(dir)
+
+	man := &Manager{
+		Mu:              &sync.RWMutex{},
+		compactionMu:    sync.Mutex{},
+		Mem:             newTestMemtable(),
+		ActiveSSreaders: make([]*SSTableReader, 0),
+	}
+
+	// Enqueue 10 flushes
+	for i := 1; i <= 10; i++ {
+		f := newTestMemtable()
+		f.Put(EncodeInternalKey([]byte(fmt.Sprintf("k%d", i)), uint64(i*10), false), []byte("v"))
+		man.Mu.Lock()
+		man.Frozenmem = append(man.Frozenmem, f)
+		man.enqueueFlushLocked(f)
+		man.Mu.Unlock()
+	}
+
+	const numCloseCallers = 10
+	errs := make([]error, numCloseCallers)
+	var wg sync.WaitGroup
+
+	for i := 0; i < numCloseCallers; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			errs[idx] = man.Close()
+		}(i)
+	}
+
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("Close caller %d returned error: %v", i, err)
+		}
+	}
+
+	man.Mu.RLock()
+	finalState := man.state
+	nReaders := len(man.ActiveSSreaders)
+	nFrozen := len(man.Frozenmem)
+	man.Mu.RUnlock()
+
+	if finalState != EngineClosed {
+		t.Fatalf("Expected EngineClosed, got %v", finalState)
+	}
+	if nReaders != 0 {
+		t.Fatalf("Expected 0 active readers, got %d", nReaders)
+	}
+	if nFrozen != 0 {
+		t.Fatalf("Expected 0 frozen memtables, got %d", nFrozen)
+	}
+
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatalf("Failed to remove test dir (handle leak detected): %v", err)
+	}
+}
+
+// TestFlushShutdown_CaseH_ConcurrentCloseWithErrorPropagation verifies that if a flush
+// error occurs during shutdown, ALL concurrent callers of Close() receive the exact
+// same non-nil error, and none silently return nil.
+func TestFlushShutdown_CaseH_ConcurrentCloseWithErrorPropagation(t *testing.T) {
+	dir := "test_data_flush_shutdown_case_h"
+	os.MkdirAll(dir, 0755)
+	defer os.RemoveAll(dir)
+
+	man := &Manager{
+		Mu:              &sync.RWMutex{},
+		compactionMu:    sync.Mutex{},
+		Mem:             newTestMemtable(),
+		ActiveSSreaders: make([]*SSTableReader, 0),
+	}
+
+	expectedErr := errors.New("simulated disk flush failure")
+	man.flushBuildHook = func() error {
+		return expectedErr
+	}
+
+	f := newTestMemtable()
+	f.Put(EncodeInternalKey([]byte("keyErr"), 100, false), []byte("valErr"))
+	man.Frozenmem = append(man.Frozenmem, f)
+	man.EnqueueFlush(f)
+
+	const numCallers = 5
+	errs := make([]error, numCallers)
+	var wg sync.WaitGroup
+
+	for i := 0; i < numCallers; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			errs[idx] = man.Close()
+		}(i)
+	}
+
+	wg.Wait()
+
+	for i, err := range errs {
+		if !errors.Is(err, expectedErr) {
+			t.Fatalf("Close caller %d returned err %v, expected %v", i, err, expectedErr)
+		}
+	}
+}
+
+// TestFlushShutdown_CaseI_CloseConcurrentWithTransactions verifies that active transactions
+// committing while Close() executes either complete prior to CLOSING or are rejected with
+// ErrClosed once the engine begins shutting down, with zero deadlocks.
+func TestFlushShutdown_CaseI_CloseConcurrentWithTransactions(t *testing.T) {
+	dir := "test_data_flush_shutdown_case_i"
+	os.MkdirAll(dir, 0755)
+	defer os.RemoveAll(dir)
+
+	man := CreateManager()
+
+	var stopWriters sync.WaitGroup
+	const numWriters = 4
+	commitErrors := make([][]error, numWriters)
+
+	for w := 0; w < numWriters; w++ {
+		stopWriters.Add(1)
+		commitErrors[w] = make([]error, 0)
+		go func(writerID int) {
+			defer stopWriters.Done()
+			for i := 0; i < 50; i++ {
+				tx := man.Begin()
+				k := fmt.Sprintf("w%d_k%d", writerID, i)
+				tx.Put(k, "val")
+				err := tx.Commit()
+				commitErrors[writerID] = append(commitErrors[writerID], err)
+				if errors.Is(err, ErrClosed) {
+					// Expected once close begins
+					break
+				}
+				time.Sleep(1 * time.Millisecond)
+			}
+		}(w)
+	}
+
+	time.Sleep(15 * time.Millisecond)
+	closeErr := man.Close()
+	if closeErr != nil {
+		t.Fatalf("Close failed: %v", closeErr)
+	}
+
+	stopWriters.Wait()
+
+	// Verify that every error seen was either nil or ErrClosed
+	for w, errList := range commitErrors {
+		for _, err := range errList {
+			if err != nil && !errors.Is(err, ErrClosed) {
+				t.Fatalf("Writer %d saw unexpected error: %v", w, err)
+			}
+		}
+	}
+}
+

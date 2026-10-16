@@ -144,8 +144,9 @@ func (m *Manager) Close() error {
 
 	m.Mu.Lock()
 	if m.state != EngineOpen {
+		err := m.flushErr
 		m.Mu.Unlock()
-		return nil
+		return err
 	}
 	m.state = EngineClosing
 	m.isClosed = true
@@ -167,13 +168,17 @@ func (m *Manager) Close() error {
 
 	for _, reader := range m.ActiveSSreaders {
 		if reader != nil {
-			reader.Close()
+			if err := reader.Close(); err != nil && m.flushErr == nil {
+				m.flushErr = err
+			}
 		}
 	}
 	m.ActiveSSreaders = nil
 
 	if m.Log != nil && m.Log.File != nil {
-		m.Log.File.Close()
+		if err := m.Log.File.Close(); err != nil && m.flushErr == nil {
+			m.flushErr = err
+		}
 	}
 	return m.flushErr
 }
