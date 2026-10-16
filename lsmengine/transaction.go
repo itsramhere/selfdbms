@@ -56,8 +56,8 @@ func (t *Transaction) Commit() error {
 	t.Man.Mu.Lock()
 
 	for key := range t.WriteSet {
-		// Changed to use the tiered Manager LatestValue
-		latestSeqNo, err := t.Man.LatestValue([]byte(key))
+		// Use internal unexported latestValueLocked since t.Man.Mu is already locked
+		latestSeqNo, err := t.Man.latestValueLocked([]byte(key))
 
 		if err == nil && latestSeqNo > t.ReadTs {
 			t.Man.Mu.Unlock()

@@ -127,3 +127,43 @@ func TestWALRecovery(t *testing.T) {
 		t.Errorf("Expected wal_val_25 after recovery, got %q, err %v", val, err)
 	}
 }
+
+func TestWriteWriteConflict(t *testing.T) {
+	os.MkdirAll("test_data_conflict", 0755)
+	defer os.RemoveAll("test_data_conflict")
+
+	os.Chdir("test_data_conflict")
+	defer os.Chdir("..")
+
+	man := CreateManager()
+	defer man.Close()
+
+	// txn1 starts before any writes (ReadTs = 0)
+	txn1 := man.Begin()
+
+	// txn2 starts and commits a write to key "conflict_key"
+	txn2 := man.Begin()
+	txn2.Put("conflict_key", "val_from_txn2")
+	if err := txn2.Commit(); err != nil {
+		t.Fatalf("txn2 commit failed: %v", err)
+	}
+
+	// txn1 tries to overwrite "conflict_key", whose latest sequence number is now > txn1.ReadTs
+	txn1.Put("conflict_key", "val_from_txn1")
+	err := txn1.Commit()
+	if err == nil {
+		t.Fatalf("Expected write-write conflict error for txn1, but got nil")
+	}
+	expectedErr := "Write-write conflict detected. Transaction aborted."
+	if err.Error() != expectedErr {
+		t.Errorf("Expected %q, got %q", expectedErr, err.Error())
+	}
+
+	// Verify reading "conflict_key" still returns txn2's value
+	txnRead := man.Begin()
+	v, err := txnRead.Get("conflict_key")
+	if err != nil || v != "val_from_txn2" {
+		t.Errorf("Expected 'val_from_txn2', got %q, err %v", v, err)
+	}
+}
+

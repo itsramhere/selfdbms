@@ -119,6 +119,10 @@ func (m *Manager) Close() error {
 func (m *Manager) LatestValue(userKey []byte) (uint64, error) {
 	m.Mu.RLock()
 	defer m.Mu.RUnlock()
+	return m.latestValueLocked(userKey)
+}
+
+func (m *Manager) latestValueLocked(userKey []byte) (uint64, error) {
 	seq, err := m.Mem.LatestValue(userKey)
 	if err == nil {
 		return seq, nil

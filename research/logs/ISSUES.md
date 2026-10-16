@@ -36,10 +36,15 @@ Format:
 - **Hypotheses Considered**:
   1. *Contention with background flush*: Rejected. Test is strictly single-threaded; no flush was triggered.
   2. *Recursive locking on non-reentrant sync.RWMutex*: Confirmed. `Transaction.Commit` acquires `t.Man.Mu.Lock()` on line 56, and then calls `t.Man.LatestValue()` on line 60, which attempts to acquire `m.Mu.RLock()`. In Go, `sync.RWMutex` is not re-entrant; an active writer attempting to acquire `RLock()` blocks indefinitely.
-- **Actual Root Cause**: Recursive read lock acquisition while holding exclusive write lock on `m.Mu`.
-- **Status**: Open (deferred to Phase I1 per Phase I0 operating rules: no feature changes during baseline audit).
-- **Residual Risk**: 3 of 4 unit tests (`TestBasicPutGet`, `TestDeleteAndTombstone`, `TestWALRecovery`) and all write benchmarks are blocked until this deadlock is resolved in Phase I1.
-- **Evidence Path**: [`research/debug/E-001/before.log`](../debug/E-001/before.log)
+- **Fix**: Extracted internal helper `m.latestValueLocked(userKey)` in `lsmengine/manager.go` which assumes `m.Mu` is already held. Updated `Transaction.Commit` in `lsmengine/transaction.go` to call `latestValueLocked` directly. Public `LatestValue` continues to acquire `m.Mu.RLock()` and delegates to `latestValueLocked`.
+- **Regression Test**: `TestBasicPutGet`, `TestDeleteAndTombstone`, `TestWALRecovery`, and newly added `TestWriteWriteConflict` in `lsmengine/engine_test.go`.
+- **Validation**: 
+  - Windows Native: `go test -v ./lsmengine` (5/5 PASS, 0.97s).
+  - WSL2 Linux: `/snap/bin/go test -race -v ./lsmengine` (5/5 PASS, 0 race warnings, 1.46s).
+- **Status**: Fixed (Sub-phase I1.1a).
+- **Residual Risk**: `CompactAll` publication and file retirement logic remains uncoordinated (scheduled for future sub-phases I1.2/I1.3).
+- **Evidence Path**: [`research/debug/E-001/after.log`](../debug/E-001/after.log), [`research/debug/E-001/diff.patch`](../debug/E-001/diff.patch), [`research/debug/E-001/repro.md`](../debug/E-001/repro.md)
+- **Commit**: Pending I1.1a commit
 
 ---
 
@@ -49,14 +54,17 @@ Format:
 - **Detected**: 2026-10-16, commit `08d3189`, Windows 11 amd64
 - **Sub-phase**: I0.4
 - **Severity**: Environment / Benchmark / Tooling
-- **Symptom**: Executing `go test -race` fails immediately with `go: -race requires cgo; enable cgo by setting CGO_ENABLED=1`.
+- **Symptom**: Executing `go test -race` fails immediately on Windows with `go: -race requires cgo; enable cgo by setting CGO_ENABLED=1`.
 - **Minimal Reproduction**:
   ```powershell
   go test -race ./lsmengine
   ```
 - **Expected / Actual**:
   - *Expected*: Tests execute with thread sanitizer instrumentation.
-  - *Actual*: Tool fails because no C compiler (`gcc` or `clang`) is available in host PATH.
+  - *Actual*: Tool fails because no C compiler (`gcc` or `clang`) is available in host Windows PATH.
 - **Actual Root Cause**: Host Windows environment lacks a C compiler required by Go's CGO runtime for the race detector.
-- **Status**: Open (documented environment constraint).
-- **Residual Risk**: Automated data race checking via `-race` cannot be executed locally until a C toolchain (e.g. MinGW-w64 or LLVM/Clang) is installed or provided.
+- **Resolution**: Resolved via Decision 3. WSL2 Ubuntu Linux environment provides Go 1.27.1 and GCC (`/usr/bin/gcc`), enabling native `-race` execution against the codebase mounted at `/mnt/c/Users/ramst/Documents/Projects/selfdbms` without altering the Windows host toolchain.
+- **Validation**: `wsl bash -lc "cd /mnt/c/Users/ramst/Documents/Projects/selfdbms && /snap/bin/go test -race -v ./lsmengine"` executes with 0 race warnings.
+- **Status**: Resolved (via WSL2 test execution).
+- **Residual Risk**: Automated CI or scripts running purely in PowerShell on native Windows cannot run `-race` unless invoked through WSL2.
+- **Commit**: Pending I1.1a commit

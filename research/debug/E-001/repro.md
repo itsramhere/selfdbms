@@ -21,7 +21,22 @@ After 5 seconds, the Go test runner alarm fires and outputs a panic stack trace 
 4. `Manager.LatestValue` executes `m.Mu.RLock()` (`manager.go:120`).
 5. Since the calling goroutine already holds an exclusive lock (`Lock()`) on `m.Mu`, attempting to acquire `RLock()` causes a recursive lock acquisition. In Go's `sync.RWMutex`, this immediately blocks waiting for the write lock to be released, producing a self-deadlock.
 
-## Planned Resolution (Phase I1)
-In Phase I1, either:
-- Create an internal unexported lookup helper `latestValueLocked(userKey []byte)` that does not acquire `m.Mu.RLock()`, or
-- Directly query `m.Mem.LatestValue` and `m.Frozenmem` within `Transaction.Commit` where `t.Man.Mu` is already held.
+## Resolution Implemented (Sub-phase I1.1a)
+Extracted unexported helper `latestValueLocked(userKey []byte) (uint64, error)` in `lsmengine/manager.go` that traverses `m.Mem` and `m.Frozenmem` assuming the caller already holds `Manager.Mu`.
+Public method `Manager.LatestValue` acquires `m.Mu.RLock()`, calls `latestValueLocked`, and unlocks.
+`Transaction.Commit` in `lsmengine/transaction.go` now calls `t.Man.latestValueLocked([]byte(key))` directly under its already-held `t.Man.Mu.Lock()`, completely removing recursive mutex acquisition.
+
+## Validation & Evidence
+1. **Windows Native (`go test -v ./lsmengine`)**:
+   - `TestSkipListLevelDistribution`: PASS (0.00s)
+   - `TestBasicPutGet`: PASS (0.05s)
+   - `TestDeleteAndTombstone`: PASS (0.01s)
+   - `TestWALRecovery`: PASS (0.09s)
+   - `TestWriteWriteConflict`: PASS (0.00s)
+2. **WSL2 Linux amd64 (`go test -race -v ./lsmengine`)**:
+   - All 5 tests PASS with 0 race warnings in 1.459s.
+3. **Artifacts**:
+   - Failing trace: [`before.log`](before.log)
+   - Passing log: [`after.log`](after.log)
+   - Code patch: [`diff.patch`](diff.patch)
+
