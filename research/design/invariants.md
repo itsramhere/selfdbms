@@ -17,13 +17,13 @@ This document codifies the exact correctness, lifetime, and safety invariants of
 
 ### INV-SYNC-2: Re-entrant Lock Freedom
 - **Statement**: No call path shall attempt to acquire an `RLock` or `Lock` on `Manager.Mu` while already holding a lock on the same mutex within the same goroutine.
-- **Current Status**: **VIOLATED (CRITICAL)**.
-- **Evidence / Justification**: In `Transaction.Commit` ([`lsmengine/transaction.go:56-60`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/transaction.go#L56-L60)), `t.Man.Mu.Lock()` is acquired. Line 60 then invokes `t.Man.LatestValue(key)`, which attempts to acquire `m.Mu.RLock()` ([`lsmengine/manager.go:120`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/manager.go#L120)). Go's `sync.RWMutex` does not support re-entrant read locking while an exclusive write lock is active, causing immediate, deterministic self-deadlock.
+- **Current Status**: **Verified (Sub-phase I1.1a, Issue E-001)**.
+- **Evidence / Justification**: Resolved by extracting unexported `latestValueLocked` on `Manager`. `Transaction.Commit` invokes `latestValueLocked` directly while holding `t.Man.Mu.Lock()`, eliminating the recursive mutex acquisition hazard. Public `LatestValue` acquires its own lock. Verified by `TestWriteWriteConflict`.
 
 ### INV-SYNC-3: Lock Acquisition Hierarchy
-- **Statement**: If multiple mutexes are acquired, they must always follow the strict order: `Manager.Mu -> Wal.mu`.
+- **Statement**: If multiple mutexes are acquired, they must always follow the strict order: `m.compactionMu -> Manager.Mu -> Wal.mu`.
 - **Current Status**: **Verified**.
-- **Evidence / Justification**: In `Transaction.Commit`, `t.Man.Mu.Lock()` is held before calling `t.Man.Log.Append`, which acquires `w.mu.Lock()`. No call path acquires `Wal.mu` and then attempts to acquire `Manager.Mu`.
+- **Evidence / Justification**: In `Transaction.Commit`, `t.Man.Mu.Lock()` is held before calling `t.Man.Log.Append`, which acquires `w.mu.Lock()`. In `CompactAll`, `m.compactionMu.Lock()` is held before acquiring `m.Mu.Lock()`. In `Manager.Close`, `m.compactionMu.Lock()` is acquired before `m.Mu.Lock()`. No call path ever acquires locks in reverse order.
 
 ---
 
@@ -31,18 +31,18 @@ This document codifies the exact correctness, lifetime, and safety invariants of
 
 ### INV-LIFETIME-1: Pin-Protected Reader Access
 - **Statement**: An `SSTableReader` file descriptor shall never be closed or unlinked while any reader goroutine is executing I/O against it.
-- **Current Status**: **Unproven / Fragile in Baseline**.
-- **Evidence / Justification**: In the baseline implementation, `Manager.Get` holds `m.Mu.RLock()` for the entire duration of `SSTableReader.Get()`. `CompactAll` acquires `m.Mu.Lock()` to overwrite `m.ActiveSSreaders`, which waits for in-flight `RLock()` holders to exit before replacing the slice. However, `r.Close()` and `os.Remove(r.File.Name())` in `CompactAll` execute without reference counting or explicit reader tracking. Under proposed Approach B (immutable snapshots without manager RLock), this invariant is completely unprotected without a pinning protocol.
+- **Current Status**: **Verified under Approach A (Sub-phase I1.3)**.
+- **Evidence / Justification**: In Approach A, `Manager.Get` holds `m.Mu.RLock()` for the entire point lookup across `m.ActiveSSreaders`. Reader retirement in `CompactAll` and `Manager.Close` requires exclusive `m.Mu.Lock()`, which blocks until all concurrent point readers exit. Compactions are serialized by `m.compactionMu`. Verified by `TestReaderLifetime_CaseC_ReadDuringRetirement`.
 
 ### INV-LIFETIME-2: Safe Reader Retirement & Deletion
-- **Statement**: An SSTable file shall only be unlinked from the filesystem after all active readers have released it and no new readers can discover it.
-- **Current Status**: **VIOLATED on Windows**.
-- **Evidence / Justification**: In `CompactAll` ([`lsmengine/compaction.go:114`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/compaction.go#L114)), `os.Remove(r.File.Name())` is invoked immediately after `r.Close()`. However, `iterators` also hold open file handles to the same files ([`lsmengine/compaction.go:28`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/compaction.go#L28)). On Windows NTFS, if an iterator or external handle remains open, `os.Remove` fails with an access violation error.
+- **Statement**: An SSTable file shall only be unlinked from the filesystem after all active readers and iterators have released it and no new readers can discover it.
+- **Current Status**: **Verified on Windows NTFS & Linux (Sub-phase I1.3.4)**.
+- **Evidence / Justification**: `CompactAll` closes all SSTable iterators and retired reader file handles before invoking `os.Remove`. Verified by `TestFilesystem_CloseBeforeDelete`, with zero `ERROR_SHARING_VIOLATION` errors on Windows NTFS.
 
 ### INV-LIFETIME-3: Non-Destructive Compaction Publication
 - **Statement**: Compaction publication must atomically retire only the subset of SSTables that participated in the compaction; it must never discard concurrently flushed SSTables.
-- **Current Status**: **VIOLATED (DATA LOSS HAZARD)**.
-- **Evidence / Justification**: In `CompactAll` ([`lsmengine/compaction.go:106`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/compaction.go#L106)), the active reader set is unconditionally overwritten: `m.ActiveSSreaders = []*SSTableReader{newReader}`. If `flushToDisk()` completes during the compaction merge and appends a newly flushed SSTable to `m.ActiveSSreaders`, that newly flushed SSTable is overwritten and permanently lost from the active read path.
+- **Current Status**: **Verified (Sub-phases I1.2.2 & I1.3.6a)**.
+- **Evidence / Justification**: Implemented in `replaceCompactedReaders` under `m.Mu.Lock()` with strict contiguous-prefix validation (`INV-COMPACT-1`) and non-nil replacement reader rejection (`D-010`). Any SSTables concurrently appended by the flush worker are preserved at their exact relative indices. Verified by `TestCompactionPublication_ConcurrentFlushOverlap` and `TestCompactionPublication_ValidReplacementSucceeds`.
 
 ---
 
@@ -80,8 +80,8 @@ This document codifies the exact correctness, lifetime, and safety invariants of
 
 ### INV-ORDER-1: Chronological Ordering of ActiveSSreaders
 - **Statement**: Elements in `m.ActiveSSreaders` must be ordered chronologically by creation timestamp/generation, from oldest at index 0 to newest at index `len-1`.
-- **Current Status**: **Required for Manager.Get; Guaranteed by flushToDisk and protected publication in I1.2.2**.
-- **Evidence / Justification**: Point reads (`Manager.Get`) iterate backwards from `len-1` down to 0 and terminate on the first visible version. Audit test `TestManagerGet_OrderingAudit` demonstrated that inverting `ActiveSSreaders` causes older versions to mask newer visible versions. Therefore, compaction publication must replace compacted inputs in-place to preserve chronological sequence.
+- **Current Status**: **Verified and Guaranteed (Sub-phases I1.2.2, I1.3.0a, & I1.3.7c, Issues E-005 and E-008)**.
+- **Evidence / Justification**: Point reads (`Manager.Get`) iterate backwards from `len-1` down to 0 and terminate on the first visible version. Guaranteed by: (1) dedicated managed FIFO flush worker (`m.flushChan`) ensuring older Memtables are built and appended before newer Memtables, and (2) `replaceCompactedReaders` contiguous-prefix replacement preserving chronological ordering of concurrently flushed readers. Verified by `TestFlushOrdering_Case1_TwoFlushesWithReversedTiming` through `Case6` and `TestCombinedValidation_CrossTierVersionAndTombstoneTransitions`.
 
 ### INV-COMPACT-1: Compaction Input Contiguity and Chronological Precedence
 - **Statement**: Under the flat reader slice architecture (`m.ActiveSSreaders []*SSTableReader`) and first-matching-reader lookup (`Manager.Get`), SSTable compaction inputs must preserve the chronological precedence of all surviving readers. Compaction input selection must be strictly restricted to a contiguous prefix `[0..k]` of `m.ActiveSSreaders`. Noncontiguous input selection is strictly prohibited, as replacing noncontiguous inputs with a single merged table inverts relative reader order and causes older surviving intermediate readers to mask newer compacted updates (Issue E-005).
@@ -135,4 +135,9 @@ Under Approach A, synchronization relies entirely on `Manager.Mu (*sync.RWMutex)
 - **Statement**: Only one compaction routine may execute against active SSTable readers at any time. Compaction lifetimes must be serialized from reader acquisition through file unlinking via `m.compactionMu`. Engine shutdown (`Manager.Close`) must coordinate with `m.compactionMu` and set `isClosed = true`, ensuring active reader descriptors are never invalidated while in-flight compaction merges are reading them.
 - **Current Status**: **Adopted and Enforced (Sub-phase I1.3.3, Issue E-006)**.
 - **Evidence / Justification**: Implemented in `lsmengine/compaction.go` and `lsmengine/manager.go` via `m.compactionMu` and `m.isClosed`. Verified by `TestReaderLifetime_CaseA_OverlappingCompactions`, `TestReaderLifetime_CaseB_ShutdownDuringCompaction`, and `TestFilesystem_CloseBeforeDelete`.
+
+### INV-LIFETIME-5: Coordinated Flush Shutdown Drain & FIFO Publication Ordering
+- **Statement**: Memtables must be flushed and published into `m.ActiveSSreaders` strictly in chronological order of their creation ($F_0 \to F_1 \to F_2$), and engine shutdown (`Manager.Close`) must coordinate with all in-flight and queued flushes via a deadlock-free drain protocol (`EngineOpen -> EngineClosing -> EngineClosed`). Background flushes must never publish into a closed manager or leak file handles, and pending mutations must drain before final reader and WAL teardown.
+- **Current Status**: **Adopted and Enforced (Sub-phases I1.3.7b & I1.3.7c, Issues E-007 and E-008)**.
+- **Evidence / Justification**: Implemented in `lsmengine/manager.go` via dedicated FIFO worker `m.flushChan chan *Memtable`, atomic `sstableFileSeq`, 4-phase deadlock-free drain protocol (`m.flushWg`), and post-close mutation rejection (`ErrClosed`). Verified by 6 shutdown tests (`flush_shutdown_test.go`), 6 ordering tests (`flush_ordering_test.go`), and 6 combined validation tests (`combined_lifecycle_validation_test.go`) on Windows native and WSL2 with `-race` (zero data races).
 

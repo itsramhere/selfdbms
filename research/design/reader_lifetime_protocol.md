@@ -130,3 +130,24 @@ To satisfy the reviewer's requirements without introducing Approach B snapshots 
    - In Approach A, readers do not maintain individual reference counters.
    - Protection relies on `m.Mu.RLock()` held by readers and `m.Mu.Lock()` held by publication.
    - `r.Close()` and `os.Remove()` occur only after `replaceCompactedReaders` succeeds and `m.Mu.Unlock()` is reached.
+
+---
+
+## 5. Flush Worker Lifecycle & 4-Phase Shutdown Drain Protocol (Sub-phase I1.3.7)
+
+To resolve background flush races (`E-007`) and out-of-order publication (`E-008`):
+
+1. **Dedicated FIFO Flush Worker (`m.flushChan chan *Memtable`)**:
+   - At the instant of freezing, `checkAndTriggerFlush()` enqueues the frozen Memtable into `m.flushChan` under `m.Mu.Lock()`.
+   - A single background goroutine `flushLoop()` consumes `m.flushChan` strictly in FIFO order.
+   - The worker builds the SSTable outside `m.Mu`, then acquires a brief `m.Mu.Lock()` to append the new reader to the tail of `m.ActiveSSreaders` and remove the memtable from `m.Frozenmem`.
+   - Chronological ordering `INV-ORDER-1` is mathematically guaranteed ($F_0 \to F_1 \to F_2$).
+
+2. **Deadlock-Free 4-Phase Shutdown Drain**:
+   - Holding `m.Mu.Lock()` while waiting for workers on `m.flushWg.Wait()` produces immediate self-deadlock because workers require `m.Mu.Lock()` to publish.
+   - The 4-phase drain protocol solves this deadlock:
+     - **Phase 1**: Acquire `m.compactionMu.Lock()` (serializes with compactions).
+     - **Phase 2**: Acquire `m.Mu.Lock()`, transition `m.state = EngineClosing`, `close(m.flushChan)`, and release `m.Mu.Unlock()`.
+     - **Phase 3**: Call `m.flushWg.Wait()` outside `m.Mu`. The FIFO flush worker drains and finishes building and publishing all queued Memtables without lock contention.
+     - **Phase 4**: Acquire `m.Mu.Lock()`, transition `m.state = EngineClosed`, cleanly close all readers in `m.ActiveSSreaders`, close WAL, release `m.Mu.Unlock()`, and release `m.compactionMu.Unlock()`.
+   - Result: Zero data loss for committed frozen memtables, zero leaking open file handles on Windows NTFS, and zero deadlocks.
