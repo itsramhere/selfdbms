@@ -15,14 +15,16 @@ Captured during **Sub-phase I0.1** (Baseline reconnaissance):
 | :--- | :--- |
 | **Base Git Commit** | `08d3189069294e8168ebb5234a3bef1d37f1d649` |
 | **Research Branch** | `research/reader-compactor-sync` |
-| **Go Version** | `go version go1.26.3 windows/amd64` |
-| **Target GOOS / GOARCH** | `windows` / `amd64` |
+| **Windows Go Version** | `go version go1.26.3 windows/amd64` |
+| **WSL2 Go Version** | `go version go1.27.1 linux/amd64` (`/snap/bin/go`) |
 | **Host Operating System** | Microsoft Windows 11 Home Single Language (Version 10.0.26200, Build 26200, 64-bit) |
+| **Linux Subsystem** | WSL2 Ubuntu 24.04 LTS (Linux 5.15.167.4-microsoft-standard-WSL2 x86_64) |
 | **CPU Model** | AMD Ryzen 7 7445HS w/ Radeon 740M Graphics (6 physical cores, 12 logical processors) |
 | **Primary Storage Device** | SAMSUNG MZVL8512HFLU-00BH1 (NVMe / PCIe, 512 GB) |
-| **Filesystem Type** | NTFS (Drive `C:`, Block size 4096 bytes) |
+| **Filesystem Type** | Windows NTFS (native) & Plan 9 / 9P (WSL2 `/mnt/c` mount) |
 | **Go Module Name** | `owndbms` (defined in `go.mod`) |
 | **Direct / Indirect Deps** | `go.etcd.io/bbolt v1.5.0`, `golang.org/x/sys v0.45.0` |
+
 
 ---
 

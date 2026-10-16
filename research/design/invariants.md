@@ -162,5 +162,11 @@ Under Approach A, synchronization relies entirely on `Manager.Mu (*sync.RWMutex)
 - **Current Status**: **Adopted and Enforced (Sub-phase I1.4.7c, Issue E-010, Decision D-017)**.
 - **Evidence / Justification**: Implemented in `lsmengine/manager.go`. When `m.flushErr != nil`, `flushLoop` halts without dequeuing further tasks, and `TriggerFlush`, `EnqueueFlush`, and `checkAndTriggerFlush` reject further flush operations. Verified by 14 deterministic regression tests in `lsmengine/failed_flush_precedence_test.go` on Windows native (1.33s) and WSL2 with `-race` (1.66s, zero data races).
 
+### INV-APPROACH-A: Explicit Synchronization-Mode Baseline Selection
+- **Statement**: The storage engine shall provide an explicit, strongly typed synchronization-mode configuration interface (`SyncModeApproachA` vs `SyncModeApproachB`) via `Config` and `CreateManagerWithConfig(cfg)`. Default initialization via `CreateManager()` must configure `SyncModeApproachA` ("ApproachA_RWMutexBaseline") with 100% backward compatibility for all existing callers. Explicit requests for `SyncModeApproachB` must be safely rejected at runtime with `ErrUnsupportedSyncMode` until Phase I2 implementation begins.
+- **Current Status**: **Adopted and Enforced (Sub-phase I1.5.2, Decision D-018)**.
+- **Evidence / Justification**: Implemented in `lsmengine/manager.go` via `SyncMode`, `Config`, `DefaultConfig`, `CreateManagerWithConfig`, and `(m *Manager) SyncMode()`. Verified by 5 comprehensive unit tests in `lsmengine/mode_selection_test.go` on Windows 11 NTFS native and WSL2 Linux with `-race` (zero data races).
+
+
 
 
