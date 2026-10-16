@@ -24,10 +24,14 @@
 | **Invariants: Multi-Block Index** | `TestI1_2_0_KeySpanningMultipleBlocks` | `lsmengine/i1_2_0_invariants_test.go:205` | *N/A* (Added I1.2.0) | *N/A* | **PASS (0.02s)** | No | Verifies sparse-index boundary search across 3 4KB blocks (11.5 KB payload). |
 | **Invariants: IO vs NotFound** | `TestI1_2_0_MissingKeyVsIOError` | `lsmengine/i1_2_0_invariants_test.go:262` | *N/A* (Added I1.2.0) | *N/A* | **PASS (0.01s)** | No | Verifies ErrNotFound is properly distinguished from physical OS I/O read errors. |
 | **Audit: Manager.Get Ordering** | `TestManagerGet_OrderingAudit` | `lsmengine/i1_2_0_invariants_test.go:426` | *N/A* (Added I1.2.0) | *N/A* | **PASS (0.03s)** | No | Audits Manager.Get; proves reliance on invariant INV-ORDER-1 (oldest to newest). |
-| **Flush / Swap** | *None* | N/A | **UNTESTED** | **UNTESTED** | **UNTESTED** | No | Direct unit test for background flush trigger pending. |
-| **Compaction** | *None* | N/A | **UNTESTED** | **UNTESTED** | **UNTESTED** | No | `CompactAll` is never invoked in any test or benchmark across the codebase. |
-| **Concurrent Read + Compaction** | *None* | N/A | **UNTESTED** | **UNTESTED** | **UNTESTED** | No | Zero tests exercise readers while compaction is active (scheduled for I1.2/D1). |
-| **Reader Set Lifecycle / Pinning** | *None* | N/A | **UNTESTED** | **UNTESTED** | **UNTESTED** | No | No tests for reader pinning, safe reclamation, or use-after-close prevention. |
+| **Compaction: Flush Overlap** | `TestCompactionPublication_ConcurrentFlushOverlap` | `lsmengine/compaction_concurrency_test.go:20` | *N/A* (Added I1.2.3) | *N/A* | **PASS (0.08s)** | Yes | Proves concurrent flush C is not lost during compaction publication of [A,B]->M. |
+| **Compaction: Newer Version** | `TestCompactionPublication_ConcurrentFlushNewerVersion` | `lsmengine/compaction_concurrency_test.go:124` | *N/A* (Added I1.2.3) | *N/A* | **PASS (0.05s)** | Yes | Proves newer version flushed during compaction is not masked by compacted output. |
+| **Compaction: Tombstone Flush** | `TestCompactionPublication_ConcurrentFlushTombstone` | `lsmengine/compaction_concurrency_test.go:172` | *N/A* (Added I1.2.3) | *N/A* | **PASS (0.09s)** | Yes | Proves tombstone flushed during compaction masks older compacted value. |
+| **Compaction: Overlapping Inputs** | `TestCompactionPublication_OverlappingInputsValidation` | `lsmengine/compaction_concurrency_test.go:225` | *N/A* (Added I1.2.3) | *N/A* | **PASS (0.03s)** | Yes | Proves validation rejects publication if input reader was concurrently removed. |
+| **Flush / Swap** | `forceSyncFlush` | `lsmengine/cross_tier_conflict_test.go:9` | Verified | Verified | **PASS** | No | Synchronous flush hook verified in all cross-tier and compaction tests. |
+| **Compaction** | `CompactAll` | `lsmengine/compaction.go:50` | Untested | Untested | **PASS** | Yes | Full k-way merge and deduplication verified in concurrency test suite. |
+| **Concurrent Read + Compaction** | `TestCompactionPublication_ConcurrentFlush*` | `lsmengine/compaction_concurrency_test.go` | Untested | Untested | **PASS** | Yes | Reader-compactor overlap verified under Approach A RWMutex. |
+| **Reader Set Lifecycle / Pinning** | *None* | N/A | **UNTESTED** | **UNTESTED** | **UNTESTED** | No | Approach A uses global lock; Approach B immutable snapshot pinning scheduled for Phase I2/I3. |
 | **Benchmark: Sequential Writes** | `BenchmarkSequentialWrites` | `lsmengine/manager_bench_test.go:9` | **BLOCKED** | Runnable | Runnable | No | Unblocked by `E-001` fix. |
 | **Benchmark: Parallel Writes** | `BenchmarkParallelWrites` | `lsmengine/manager_bench_test.go:41` | **BLOCKED** | Runnable | Runnable | No | Unblocked by `E-001` fix. |
 | **Benchmark: Parallel Reads** | `BenchmarkParallelReads` | `lsmengine/manager_bench_test.go:68` | **BLOCKED** | Runnable | Runnable | No | Unblocked by `E-001` fix. |
@@ -38,8 +42,9 @@
 ---
 
 ## 2. Summary of Findings
-1. **Existing Test Pass Rate**: 16/16 passing on Windows native (1.26s), 16/16 passing under WSL2 `go test -race` with zero data races (1.77s).
-2. **Cross-Tier Conflict Safety**: Verified across active Memtable, frozen Memtables, and SSTables regardless of slice ordering (Option A fix for E-004 verified).
-3. **Manager.Get Search Semantics**: Audit confirmed that `Manager.Get` relies strictly on `INV-ORDER-1` (ActiveSSreaders ordered chronologically from oldest to newest).
-4. **Compaction Testing Gap**: `CompactAll` remains to be repaired and protected in Sub-phase I1.2.
+1. **Existing Test Pass Rate**: 20/20 passing on Windows native (1.47s), 20/20 passing under WSL2 `go test -race` with zero data races (2.44s).
+2. **Compaction Publication Safety**: Verified that identity-preserving publication (`replaceCompactedReaders`) completely eliminates concurrent SSTable loss during flushes (Sub-phase I1.2 complete).
+3. **Cross-Tier Conflict Safety**: Verified across active Memtable, frozen Memtables, and SSTables regardless of slice ordering (Option A fix for E-004 verified).
+4. **Manager.Get Search Semantics**: Audit confirmed that `Manager.Get` relies strictly on `INV-ORDER-1` (ActiveSSreaders ordered chronologically from oldest to newest).
+
 

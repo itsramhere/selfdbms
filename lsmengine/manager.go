@@ -18,8 +18,9 @@ type Manager struct {
 	Mu              *sync.RWMutex
 	Mem             *Memtable
 	Log             *Wal
-	Frozenmem       []*Memtable
-	ActiveSSreaders []*SSTableReader
+	Frozenmem                   []*Memtable
+	ActiveSSreaders             []*SSTableReader
+	beforeCompactionPublishHook func()
 }
 
 var ErrNotFound = errors.New("key not found")

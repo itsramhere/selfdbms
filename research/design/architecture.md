@@ -113,9 +113,10 @@ sequenceDiagram
 
 1. **Self-Deadlock on `Transaction.Commit` & Cross-Tier Conflict Detection (RESOLVED in I1.1a & I1.1b)**:
    In baseline, `Transaction.Commit` acquired `t.Man.Mu.Lock()` and subsequently called `t.Man.LatestValue(key)` which attempted to acquire `m.Mu.RLock()`, causing deterministic self-deadlock. Resolved in I1.1a by extracting internal helper `latestValueLocked(userKey)` which assumes `m.Mu` is already held. In I1.1b, `latestValueLocked` was extended to inspect `m.ActiveSSreaders[i].LatestValue(userKey)` in reverse order, resolving a critical defect where flushed mutations and tombstones bypassed conflict detection.
-2. **Data Loss via Compaction Overwrite**:
-   `CompactAll` captures `readersToCompact := m.ActiveSSreaders` and releases `m.Mu`. If a flush completes during compaction, it appends a new SSTable to `m.ActiveSSreaders`. When compaction finishes, it blindly replaces `m.ActiveSSreaders = []*SSTableReader{newReader}`, permanently erasing the newly flushed SSTable from the read path.
+2. **Data Loss via Compaction Overwrite (RESOLVED in I1.2)**:
+   In baseline, `CompactAll` captured `readersToCompact := m.ActiveSSreaders` and released `m.Mu`. If a flush completed during compaction, it appended a new SSTable to `m.ActiveSSreaders`. When compaction finished, it blindly replaced `m.ActiveSSreaders = []*SSTableReader{newReader}`, permanently erasing the newly flushed SSTable from the read path. Resolved in Sub-phase I1.2 via `replaceCompactedReaders` under `m.Mu.Lock()`: input presence is validated, only selected inputs are replaced in-place, and all concurrently flushed SSTables are preserved in strict chronological search order (`INV-ORDER-1`).
 3. **Uncoordinated SSTable File Deletion on Windows**:
-   `CompactAll` calls `os.Remove(r.File.Name())` on old SSTables without verifying whether any reader or iterator still holds an open file descriptor. On Windows (NTFS), deleting an open file descriptor triggers an access violation (`ERROR_SHARING_VIOLATION` / "Access is denied").
+   `CompactAll` calls `os.Remove(r.File.Name())` on old SSTables without verifying whether any reader or iterator still holds an open file descriptor. On Windows (NTFS), deleting an open file descriptor triggers an access violation (`ERROR_SHARING_VIOLATION` / "Access is denied"). Scheduled for ref-counted safe retirement in Sub-phase I1.3 / Phase I3.
 4. **Lock Contention Under Long Disk I/O**:
-   Because `Manager.Get` holds `m.Mu.RLock()` for the entire duration of index traversal and section reading, slow disk I/O in reader goroutines completely blocks writers from acquiring `m.Mu.Lock()`.
+   Because `Manager.Get` holds `m.Mu.RLock()` for the entire duration of index traversal and section reading, slow disk I/O in reader goroutines completely blocks writers from acquiring `m.Mu.Lock()`. Target of Approach B (Phase I2/I3).
+

@@ -3,11 +3,54 @@ package lsmengine
 import (
 	"bytes"
 	"container/heap"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"time"
 )
+
+// replaceCompactedReaders replaces the inputs in compactedSet with newReader,
+// inserting newReader at the position of the first replaced reader, and preserving
+// all other readers in their original relative chronological order.
+func replaceCompactedReaders(current []*SSTableReader, inputs []*SSTableReader, newReader *SSTableReader) ([]*SSTableReader, error) {
+	if len(inputs) == 0 {
+		return current, nil
+	}
+
+	inputSet := make(map[*SSTableReader]bool, len(inputs))
+	for _, r := range inputs {
+		inputSet[r] = true
+	}
+
+	// Verify all inputs are present in current
+	currentSet := make(map[*SSTableReader]bool, len(current))
+	for _, r := range current {
+		currentSet[r] = true
+	}
+	for _, r := range inputs {
+		if !currentSet[r] {
+			return nil, errors.New("compaction aborted: input reader is no longer active")
+		}
+	}
+
+	updated := make([]*SSTableReader, 0, len(current)-len(inputs)+1)
+	insertedNew := false
+
+	for _, r := range current {
+		if inputSet[r] {
+			if !insertedNew {
+				updated = append(updated, newReader)
+				insertedNew = true
+			}
+			// Skip this compacted reader (it is replaced)
+		} else {
+			updated = append(updated, r)
+		}
+	}
+
+	return updated, nil
+}
 
 func (m *Manager) CompactAll() error {
 	m.Mu.Lock()
@@ -16,8 +59,11 @@ func (m *Manager) CompactAll() error {
 		return nil // Nothing to compact
 	}
 
-	// snapshotting the files to compact
-	readersToCompact := m.ActiveSSreaders
+	// Snapshotting the files to compact.
+	// Make a shallow copy of the slice so readersToCompact is immutable to subsequent appends on m.ActiveSSreaders.
+	readersToCompact := make([]*SSTableReader, len(m.ActiveSSreaders))
+	copy(readersToCompact, m.ActiveSSreaders)
+
 	var filenames []string
 	for _, r := range readersToCompact {
 		filenames = append(filenames, r.File.Name())
@@ -27,6 +73,10 @@ func (m *Manager) CompactAll() error {
 	for _, fname := range filenames {
 		it, err := NewSSTableIterator(fname)
 		if err != nil {
+			m.Mu.Unlock()
+			for _, openedIt := range iterators {
+				openedIt.Close()
+			}
 			return err
 		}
 		iterators = append(iterators, it)
@@ -39,6 +89,9 @@ func (m *Manager) CompactAll() error {
 	for i, it := range iterators {
 		k, v, err := it.Next()
 		if err != nil && err != io.EOF {
+			for _, openedIt := range iterators {
+				openedIt.Close()
+			}
 			return err
 		}
 		if err == nil {
@@ -50,10 +103,13 @@ func (m *Manager) CompactAll() error {
 		}
 	}
 
-	// new compacted SSTable
+	// New compacted SSTable
 	newFilename := fmt.Sprintf("data_compacted_%d.sst", time.Now().UnixNano())
 	newFile, err := os.Create(newFilename)
 	if err != nil {
+		for _, openedIt := range iterators {
+			openedIt.Close()
+		}
 		return err
 	}
 
@@ -62,19 +118,24 @@ func (m *Manager) CompactAll() error {
 		BlockBuffer: new(bytes.Buffer),
 	}
 
-	// 5. k way merge
+	// K-way merge
 	var lastUserKey []byte
 
 	for minHeap.Len() > 0 {
 		item := heap.Pop(minHeap).(*HeapItem)
-
 		currentUserKey, _, isDelete := DecodeInternalKey(item.InternalKey)
 
-		// Deduplication check
-
+		// Deduplication check: highest sequence number for currentUserKey pops first
 		if lastUserKey == nil || !bytes.Equal(currentUserKey, lastUserKey) {
 			if !isDelete {
-				builder.Add(item.InternalKey, item.Value)
+				if err := builder.Add(item.InternalKey, item.Value); err != nil {
+					builder.Close()
+					os.Remove(newFilename)
+					for _, openedIt := range iterators {
+						openedIt.Close()
+					}
+					return err
+				}
 			}
 
 			// Update lastUserKey to track deduplication
@@ -93,19 +154,43 @@ func (m *Manager) CompactAll() error {
 	}
 
 	if err := builder.Close(); err != nil {
+		os.Remove(newFilename)
+		for _, openedIt := range iterators {
+			openedIt.Close()
+		}
 		return err
 	}
 
 	newReader, err := NewSSTableReader(newFilename)
 	if err != nil {
+		os.Remove(newFilename)
+		for _, openedIt := range iterators {
+			openedIt.Close()
+		}
 		return err
 	}
 
-	// replacing old files with the new compacted file
+	// Deterministic concurrency test hook: pause immediately before publication
+	if m.beforeCompactionPublishHook != nil {
+		m.beforeCompactionPublishHook()
+	}
+
+	// Protected identity-preserving publication under write lock
 	m.Mu.Lock()
-	m.ActiveSSreaders = []*SSTableReader{newReader}
+	updatedReaders, err := replaceCompactedReaders(m.ActiveSSreaders, readersToCompact, newReader)
+	if err != nil {
+		m.Mu.Unlock()
+		newReader.Close()
+		os.Remove(newFilename)
+		for _, openedIt := range iterators {
+			openedIt.Close()
+		}
+		return err
+	}
+	m.ActiveSSreaders = updatedReaders
 	m.Mu.Unlock()
 
+	// Retirement and resource cleanup
 	for _, it := range iterators {
 		it.Close()
 	}
