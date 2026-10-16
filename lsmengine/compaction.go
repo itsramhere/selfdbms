@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -66,7 +67,17 @@ func replaceCompactedReaders(current []*SSTableReader, inputs []*SSTableReader, 
 }
 
 func (m *Manager) CompactAll() error {
+	// Serialize all compaction lifetimes to prevent overlapping compaction races (E-006).
+	// Lock hierarchy: compactionMu -> Manager.Mu -> Wal.mu
+	m.compactionMu.Lock()
+	defer m.compactionMu.Unlock()
+
 	m.Mu.Lock()
+	if m.isClosed {
+		m.Mu.Unlock()
+		return errors.New("compaction aborted: engine is closed")
+	}
+
 	if len(m.ActiveSSreaders) <= 1 {
 		m.Mu.Unlock()
 		return nil // Nothing to compact
@@ -96,6 +107,11 @@ func (m *Manager) CompactAll() error {
 	}
 	m.Mu.Unlock()
 
+	// Deterministic concurrency test hook: pause during merge outside m.Mu
+	if m.duringCompactionMergeHook != nil {
+		m.duringCompactionMergeHook()
+	}
+
 	minHeap := &CompactionHeap{}
 	heap.Init(minHeap)
 
@@ -117,7 +133,8 @@ func (m *Manager) CompactAll() error {
 	}
 
 	// New compacted SSTable
-	newFilename := fmt.Sprintf("data_compacted_%d.sst", time.Now().UnixNano())
+	outputDir := filepath.Dir(filenames[0])
+	newFilename := filepath.Join(outputDir, fmt.Sprintf("data_compacted_%d.sst", time.Now().UnixNano()))
 	newFile, err := os.Create(newFilename)
 	if err != nil {
 		for _, openedIt := range iterators {
@@ -190,6 +207,16 @@ func (m *Manager) CompactAll() error {
 
 	// Protected identity-preserving publication under write lock
 	m.Mu.Lock()
+	if m.isClosed {
+		m.Mu.Unlock()
+		newReader.Close()
+		os.Remove(newFilename)
+		for _, openedIt := range iterators {
+			openedIt.Close()
+		}
+		return errors.New("compaction aborted: engine is closed")
+	}
+
 	updatedReaders, err := replaceCompactedReaders(m.ActiveSSreaders, readersToCompact, newReader)
 	if err != nil {
 		m.Mu.Unlock()

@@ -117,11 +117,20 @@ Under Approach A, synchronization relies entirely on `Manager.Mu (*sync.RWMutex)
    - Must hold `m.Mu.Lock()` across conflict validation, WAL append, and Memtable insertion.
    - Internal conflict lookup MUST use lock-free or caller-locked helpers (`latestValueLocked`) without attempting nested `RLock()` or `Lock()` on `m.Mu`.
 3. **Lock Order Rule**:
-   - Strict hierarchical order: `Manager.Mu` (Exclusive or Shared) $\to$ `Wal.mu` (Mutex).
-   - `Wal.mu` is never held while requesting `Manager.Mu`.
-4. **Compaction Publication Protocol (Future I1.2 Specification)**:
-   - Compaction merges a snapshot `S_c \subseteq \text{ActiveSSreaders}`.
-   - Under `m.Mu.Lock()`, publication must compute:
-     $$\text{ActiveSSreaders}_{\text{new}} = (\text{ActiveSSreaders}_{\text{current}} \setminus S_c) \cup \{ R_{\text{new}} \}$$
-     preserving any SSTables concurrently published by `flushToDisk`.
-   - Iterators used during merge must be closed before unlinking old files to prevent Windows `ERROR_SHARING_VIOLATION`.
+   - Strict hierarchical order: `m.compactionMu` (Mutex) $\to$ `Manager.Mu` (Exclusive or Shared) $\to$ `Wal.mu` (Mutex).
+   - `m.compactionMu` is never held while requesting another lock, except `Manager.Mu`.
+   - `Wal.mu` is never held while requesting `Manager.Mu` or `m.compactionMu`.
+4. **Compaction & Reader Lifetime Protocol (Verified Sub-phase I1.3)**:
+   - Compaction merges a contiguous prefix snapshot $S_c \subseteq \text{ActiveSSreaders}$ starting at index 0 (`INV-COMPACT-1`).
+   - Compactions are serialized across their entire lifetime via `m.compactionMu`, eliminating overlapping compaction races (`E-006`).
+   - Under `m.Mu.Lock()`, publication computes in-place prefix replacement:
+     $$\text{ActiveSSreaders}_{\text{new}} = \{ R_{\text{new}} \} \cup (\text{ActiveSSreaders}_{\text{current}} \setminus S_c)$$
+     preserving any SSTables concurrently published by `flushToDisk` in strict chronological order (`INV-ORDER-1`).
+   - Iterators used during merge and retired reader file handles must be closed before unlinking old files (`os.Remove`), preventing Windows `ERROR_SHARING_VIOLATION`.
+   - `Manager.Close()` coordinates via `m.compactionMu` and `m.isClosed`, ensuring no active reader is closed while in use by compaction.
+
+### INV-LIFETIME-4: Compaction Serialization and Shutdown Lifecycle Safety
+- **Statement**: Only one compaction routine may execute against active SSTable readers at any time. Compaction lifetimes must be serialized from reader acquisition through file unlinking via `m.compactionMu`. Engine shutdown (`Manager.Close`) must coordinate with `m.compactionMu` and set `isClosed = true`, ensuring active reader descriptors are never invalidated while in-flight compaction merges are reading them.
+- **Current Status**: **Adopted and Enforced (Sub-phase I1.3.3, Issue E-006)**.
+- **Evidence / Justification**: Implemented in `lsmengine/compaction.go` and `lsmengine/manager.go` via `m.compactionMu` and `m.isClosed`. Verified by `TestReaderLifetime_CaseA_OverlappingCompactions`, `TestReaderLifetime_CaseB_ShutdownDuringCompaction`, and `TestFilesystem_CloseBeforeDelete`.
+

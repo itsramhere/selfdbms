@@ -173,6 +173,30 @@ Format:
 - **Evidence Path**: [`research/debug/E-005/repro.md`](../debug/E-005/repro.md), [`research/debug/E-005/failing_counterexample.log`](../debug/E-005/failing_counterexample.log), [`research/debug/E-005/after.log`](../debug/E-005/after.log), [`research/debug/E-005/diff.patch`](../debug/E-005/diff.patch), [`lsmengine/noncontiguous_compaction_counterexample_test.go`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/noncontiguous_compaction_counterexample_test.go).
 - **Commit**: `3b2d0c1`
 
+---
+
+### E-006: Unsynchronized Compaction Lifetimes and Shutdown Reader Invalidation
+
+- **ID**: `E-006`
+- **Detected**: 2026-10-16, commit `2b434f7`, baseline Approach A, Windows 11 amd64
+- **Sub-phase**: I1.3.2 (Deterministic Reader Lifetime Verification)
+- **Severity**: Data Race / Lifecycle Hazard (P1)
+- **Symptom**:
+  1. Concurrent `CompactAll()` calls race on overlapping active reader sets outside `Manager.Mu`, causing one compaction to close and unlink SSTables that the other compaction is still reading, leading to file sharing violations on Windows and aborted/wasted compaction work.
+  2. `Manager.Close()` closes reader file descriptors while an in-flight compaction is executing outside `Manager.Mu`. When compaction resumes, it publishes into a closed engine, double-closes readers, and leaves the new SSTable reader open and unclosed.
+- **Minimal Reproduction**:
+  ```powershell
+  go test -v ./lsmengine -run TestReaderLifetime_CaseA
+  go test -v ./lsmengine -run TestReaderLifetime_CaseB
+  ```
+- **Root Cause**: `Manager.Mu` protected only the initial reader snapshot and final slice swap in `CompactAll`, leaving the k-way merge and file retirement phases unprotected. `Manager.Close` held `m.Mu.Lock()` but lacked synchronization with in-flight background compactions.
+- **Proposed Fix (Sub-phase I1.3.3)**: Introduce dedicated `m.compactionMu sync.Mutex` and `m.isClosed bool` in `Manager` following strict lock hierarchy `compactionMu -> Manager.Mu -> Wal.mu`. Serialize compaction lifetimes and coordinate with `Manager.Close`.
+- **Status**: IDENTIFIED & REPRODUCED (I1.3.2) -> FIXED & VERIFIED (I1.3.3).
+- **Evidence Path**: [`lsmengine/reader_lifetime_test.go`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/reader_lifetime_test.go).
+- **Commit**: `f8eea7e`
+
+
+
 
 
 

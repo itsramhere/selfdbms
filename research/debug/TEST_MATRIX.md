@@ -32,10 +32,18 @@
 | **Ordering: Non-Prefix Rejection** | `TestE005_NonPrefixCompactionRejected` | `lsmengine/noncontiguous_compaction_counterexample_test.go:94` | *N/A* (Added I1.3.0a) | *N/A* | **PASS (0.03s)** | Yes | Proves contiguous inputs starting after index 0 are rejected under full-prefix policy. |
 | **Ordering: Duplicate Rejection** | `TestE005_DuplicateInputsRejected` | `lsmengine/noncontiguous_compaction_counterexample_test.go:145` | *N/A* (Added I1.3.0a) | *N/A* | **PASS (0.01s)** | Yes | Proves duplicate input readers in compaction request are rejected with validation error. |
 | **Ordering: Prefix MVCC Visibility** | `TestE005_ValidPrefixCompaction_PreservesOrderAndVisibility` | `lsmengine/noncontiguous_compaction_counterexample_test.go:183` | *N/A* (Added I1.3.0a) | *N/A* | **PASS (0.02s)** | Yes | Proves prefix compaction preserves chronological order, concurrent flushes, tombstones, and MVCC ReadTs. |
+| **Lifetime: Read During Retirement** | `TestReaderLifetime_CaseC_ReadDuringRetirement` | `lsmengine/reader_lifetime_test.go:12` | *N/A* (Added I1.3.2) | *N/A* | **PASS (0.08s)** | Yes | Proves point query holding RLock finishes before reader file is closed or unlinked. |
+| **Lifetime: Compaction Failure Paths** | `TestReaderLifetime_CaseD_FailurePaths` | `lsmengine/reader_lifetime_test.go:104` | *N/A* (Added I1.3.2) | *N/A* | **PASS (0.01s)** | Yes | Proves iterator/build failure safely aborts without mutating or leaking active readers. |
+| **Lifetime: Overlapping Compactions** | `TestReaderLifetime_CaseA_OverlappingCompactions` | `lsmengine/reader_lifetime_test.go:157` | *N/A* (Added I1.3.2) | *N/A* | **PASS (0.08s)** | Yes | Proves concurrent compactions are serialized by compactionMu without data race or loss (E-006). |
+| **Lifetime: Shutdown During Compaction** | `TestReaderLifetime_CaseB_ShutdownDuringCompaction` | `lsmengine/reader_lifetime_test.go:248` | *N/A* (Added I1.3.2) | *N/A* | **PASS (0.09s)** | Yes | Proves Manager.Close coordinates via compactionMu and does not close readers in use (E-006). |
+| **Filesystem: Close Before Delete** | `TestFilesystem_CloseBeforeDelete` | `lsmengine/filesystem_cleanup_test.go:13` | *N/A* (Added I1.3.4) | *N/A* | **PASS (0.01s)** | Yes | Proves open iterators and readers close before os.Remove, avoiding ERROR_SHARING_VIOLATION. |
+| **Filesystem: Aborted Temp Cleanup** | `TestFilesystem_CleanupAfterAbortedCompaction` | `lsmengine/filesystem_cleanup_test.go:76` | *N/A* (Added I1.3.4) | *N/A* | **PASS (0.01s)** | Yes | Proves partial data_compacted_*.sst files are cleaned up on abort, leaving active files intact. |
+| **Filesystem: Active Preservation** | `TestFilesystem_NoAccidentalActiveFileDeletion` | `lsmengine/filesystem_cleanup_test.go:144` | *N/A* (Added I1.3.4) | *N/A* | **PASS (0.02s)** | Yes | Proves concurrent flush files appended during compaction are strictly preserved on disk. |
+| **Filesystem: Shutdown Handle Cleanup** | `TestFilesystem_ShutdownWithInflightOperations` | `lsmengine/filesystem_cleanup_test.go:217` | *N/A* (Added I1.3.4) | *N/A* | **PASS (0.01s)** | Yes | Proves directory can be completely unlinked after shutdown, verifying zero handle leaks. |
 | **Flush / Swap** | `forceSyncFlush` | `lsmengine/cross_tier_conflict_test.go:9` | Verified | Verified | **PASS** | No | Synchronous flush hook verified in all cross-tier and compaction tests. |
 | **Compaction** | `CompactAll` | `lsmengine/compaction.go:50` | Untested | Untested | **PASS** | Yes | Full k-way merge and deduplication verified in concurrency test suite. |
 | **Concurrent Read + Compaction** | `TestCompactionPublication_ConcurrentFlush*` | `lsmengine/compaction_concurrency_test.go` | Untested | Untested | **PASS** | Yes | Reader-compactor overlap verified under Approach A RWMutex. |
-| **Reader Set Lifecycle / Pinning** | *None* | N/A | **UNTESTED** | **UNTESTED** | **UNTESTED** | No | Approach A uses global lock; Approach B immutable snapshot pinning scheduled for Phase I2/I3. |
+| **Reader Set Lifecycle / Pinning** | `TestReaderLifetime_*` | `lsmengine/reader_lifetime_test.go` | **UNTESTED** | **UNTESTED** | **PASS** | Yes | Approach A full serialization and safe retirement verified (Sub-phase I1.3). |
 | **Benchmark: Sequential Writes** | `BenchmarkSequentialWrites` | `lsmengine/manager_bench_test.go:9` | **BLOCKED** | Runnable | Runnable | No | Unblocked by `E-001` fix. |
 | **Benchmark: Parallel Writes** | `BenchmarkParallelWrites` | `lsmengine/manager_bench_test.go:41` | **BLOCKED** | Runnable | Runnable | No | Unblocked by `E-001` fix. |
 | **Benchmark: Parallel Reads** | `BenchmarkParallelReads` | `lsmengine/manager_bench_test.go:68` | **BLOCKED** | Runnable | Runnable | No | Unblocked by `E-001` fix. |
@@ -46,10 +54,12 @@
 ---
 
 ## 2. Summary of Findings
-1. **Existing Test Pass Rate**: 24/24 passing on Windows native (1.28s), 24/24 passing under WSL2 `go test -race` with zero data races (2.39s).
-2. **Compaction Publication Safety**: Verified that identity-preserving publication (`replaceCompactedReaders`) completely eliminates concurrent SSTable loss during flushes (Sub-phase I1.2 complete).
-3. **Compaction Ordering Safeguards (INV-COMPACT-1 / E-005)**: Noncontiguous and non-prefix compaction inputs are defensively rejected with zero state mutation, preventing stale read hazards in `Manager.Get` (Sub-phase I1.3.0a complete).
-4. **Cross-Tier Conflict Safety**: Verified across active Memtable, frozen Memtables, and SSTables regardless of slice ordering (Option A fix for E-004 verified).
-5. **Manager.Get Search Semantics**: Audit confirmed that `Manager.Get` relies strictly on `INV-ORDER-1` (ActiveSSreaders ordered chronologically from oldest to newest).
+1. **Existing Test Pass Rate**: 32/32 passing on Windows native (1.83s), 32/32 passing under WSL2 `go test -race` with zero data races (2.95s).
+2. **Safe Reader Retirement (Approach A)**: Verified under full compaction serialization (`compactionMu`) and shutdown coordination (`isClosed`). Overlapping compactions, shutdown races, and read-versus-retirement races are completely eliminated without leaks.
+3. **Filesystem Cleanup (Windows NTFS & Linux)**: Verified close-before-delete, zero handle leaks, and automatic cleanup of aborted compaction temp files across both Windows and WSL2.
+4. **Compaction Ordering Safeguards (INV-COMPACT-1 / E-005)**: Noncontiguous and non-prefix compaction inputs are defensively rejected with zero state mutation, preventing stale read hazards in `Manager.Get` (Sub-phase I1.3.0a complete).
+5. **Cross-Tier Conflict Safety**: Verified across active Memtable, frozen Memtables, and SSTables regardless of slice ordering (Option A fix for E-004 verified).
+6. **Manager.Get Search Semantics**: Audit confirmed that `Manager.Get` relies strictly on `INV-ORDER-1` (ActiveSSreaders ordered chronologically from oldest to newest).
+
 
 

@@ -14,13 +14,17 @@ import (
 )
 
 type Manager struct {
-	CurrentSeqNo    atomic.Uint64
-	Mu              *sync.RWMutex
-	Mem             *Memtable
-	Log             *Wal
+	CurrentSeqNo                atomic.Uint64
+	Mu                          *sync.RWMutex
+	compactionMu                sync.Mutex
+	isClosed                    bool
+	Mem                         *Memtable
+	Log                         *Wal
 	Frozenmem                   []*Memtable
 	ActiveSSreaders             []*SSTableReader
 	beforeCompactionPublishHook func()
+	duringCompactionMergeHook   func()
+	duringPointReadHook         func()
 }
 
 var ErrNotFound = errors.New("key not found")
@@ -85,6 +89,10 @@ func (m *Manager) Get(key string, readTs uint64) (string, error) {
 		}
 	}
 
+	if m.duringPointReadHook != nil {
+		m.duringPointReadHook()
+	}
+
 	for i := len(m.ActiveSSreaders) - 1; i >= 0; i-- {
 		val, err := m.ActiveSSreaders[i].Get(byteKey, readTs)
 		if err != nil {
@@ -105,12 +113,22 @@ func (m *Manager) Get(key string, readTs uint64) (string, error) {
 }
 
 func (m *Manager) Close() error {
+	m.compactionMu.Lock()
+	defer m.compactionMu.Unlock()
+
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
+
+	if m.isClosed {
+		return nil
+	}
+	m.isClosed = true
 
 	for _, reader := range m.ActiveSSreaders {
 		reader.Close()
 	}
+	m.ActiveSSreaders = nil
+
 	if m.Log != nil && m.Log.File != nil {
 		m.Log.File.Close()
 	}
