@@ -288,9 +288,10 @@ Format:
       manager.go:259 +0x97
   ```
 - **Root Cause**: Holding exclusive mutex `m.Mu` while performing a blocking channel send to `m.flushChan`, whose consumer requires `m.Mu` to complete the task ahead of it.
-- **Status**: REPRODUCED & REGISTERED (Sub-phase I1.3.8a) — Ready for Phase I1.3.8b repair.
-- **Evidence Path**: [`research/debug/E-009/repro.md`](../debug/E-009/repro.md), [`research/debug/E-009/before.log`](../debug/E-009/before.log), [`research/debug/E-009/wsl_before.log`](../debug/E-009/wsl_before.log).
-- **Regression Test**: `TestFlushDeadlock_E009_BoundedQueueDeadlock` in `lsmengine/flush_deadlock_repro_test.go`.
+- **Status**: FIXED & VERIFIED (Sub-phase I1.3.8b).
+- **Resolution**: Replaced raw bounded channel send with unbounded internal FIFO queue slice guarded by dedicated `m.flushQueueMu sync.Mutex` and `m.flushQueueCond *sync.Cond` (D-015). `enqueueFlushLocked` appends to the queue slice under `m.flushQueueMu` instantaneously without blocking on queue capacity or worker progress, while holding `m.Mu.Lock()`. The single background worker dequeues tasks under `m.flushQueueMu`, builds SSTables without holding locks, and acquires `m.Mu.Lock()` only to publish into `m.ActiveSSreaders` and remove from `m.Frozenmem`. Strict lock hierarchy: `compactionMu -> Manager.Mu -> flushQueueMu -> Wal.mu`. Verified by 5 comprehensive tests (resolved 65-item deadlock, 128-item rapid saturation, concurrent publication with point reads, shutdown during saturated queue, and continuous key visibility across all lifecycle phases) in `lsmengine/flush_deadlock_repro_test.go` on Windows native (2.80s) and WSL2 with `-race` (12.79s, 0 data races).
+- **Evidence Path**: [`research/debug/E-009/repro.md`](../debug/E-009/repro.md), [`research/debug/E-009/before.log`](../debug/E-009/before.log), [`research/debug/E-009/wsl_before.log`](../debug/E-009/wsl_before.log), [`research/debug/E-009/after.log`](../debug/E-009/after.log), [`research/debug/E-009/wsl_after.log`](../debug/E-009/wsl_after.log).
+- **Regression Test**: `TestFlushDeadlock_E009_Resolved_NoDeadlockOnQueueSaturation`, `TestFlushAdmission_QueueSaturated128Items`, `TestFlushAdmission_WorkerPublicationDuringAdmission`, `TestFlushAdmission_ShutdownDuringSaturatedQueue`, `TestFlushAdmission_KeyVisibilityAcrossLifecycle` in `lsmengine/flush_deadlock_repro_test.go`.
 
 
 

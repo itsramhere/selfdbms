@@ -29,7 +29,10 @@ type Manager struct {
 	state                       EngineState
 	flushWg                     sync.WaitGroup
 	flushErr                    error
-	flushChan                   chan *Memtable
+	flushQueue                  []*Memtable
+	flushQueueMu                sync.Mutex
+	flushQueueCond              *sync.Cond
+	flushQueueClosed            bool
 	Mem                         *Memtable
 	Log                         *Wal
 	Frozenmem                   []*Memtable
@@ -146,9 +149,12 @@ func (m *Manager) Close() error {
 	}
 	m.state = EngineClosing
 	m.isClosed = true
-	if m.flushChan != nil {
-		close(m.flushChan)
+	m.flushQueueMu.Lock()
+	m.flushQueueClosed = true
+	if m.flushQueueCond != nil {
+		m.flushQueueCond.Broadcast()
 	}
+	m.flushQueueMu.Unlock()
 	m.Mu.Unlock()
 
 	// Drain in-flight flushes outside m.Mu to prevent self-deadlock
@@ -229,8 +235,8 @@ func (m *Manager) latestValueLocked(userKey []byte) (uint64, error) {
 }
 
 func (m *Manager) initFlushWorkerLocked() {
-	if m.flushChan == nil {
-		m.flushChan = make(chan *Memtable, 64)
+	if m.flushQueueCond == nil {
+		m.flushQueueCond = sync.NewCond(&m.flushQueueMu)
 		m.flushWg.Add(1)
 		go m.flushLoop()
 	}
@@ -238,14 +244,33 @@ func (m *Manager) initFlushWorkerLocked() {
 
 func (m *Manager) flushLoop() {
 	defer m.flushWg.Done()
-	for mem := range m.flushChan {
+	for {
+		m.flushQueueMu.Lock()
+		for len(m.flushQueue) == 0 && !m.flushQueueClosed {
+			m.flushQueueCond.Wait()
+		}
+		if len(m.flushQueue) == 0 && m.flushQueueClosed {
+			m.flushQueueMu.Unlock()
+			return
+		}
+		mem := m.flushQueue[0]
+		m.flushQueue[0] = nil // allow GC
+		m.flushQueue = m.flushQueue[1:]
+		if len(m.flushQueue) == 0 {
+			m.flushQueue = nil
+		}
+		m.flushQueueMu.Unlock()
+
 		m.flushToDisk(mem)
 	}
 }
 
 func (m *Manager) enqueueFlushLocked(mem *Memtable) {
 	m.initFlushWorkerLocked()
-	m.flushChan <- mem
+	m.flushQueueMu.Lock()
+	m.flushQueue = append(m.flushQueue, mem)
+	m.flushQueueCond.Signal()
+	m.flushQueueMu.Unlock()
 }
 
 // EnqueueFlush enqueues a frozen Memtable into the FIFO flush queue.
