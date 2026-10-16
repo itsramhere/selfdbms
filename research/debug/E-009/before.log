@@ -1,0 +1,56 @@
+﻿=== RUN   TestFlushDeadlock_E009_BoundedQueueDeadlock
+    flush_deadlock_repro_test.go:145: Goroutine stack traces during deadlock:
+        goroutine 8 [running]:
+        owndbms/lsmengine.TestFlushDeadlock_E009_BoundedQueueDeadlock(0x105219822400)
+        	C:/Users/ramst/Documents/Projects/selfdbms/lsmengine/flush_deadlock_repro_test.go:123 +0xd29
+        testing.tRunner(0x105219822400, 0x7ff7222f98d8)
+        	C:/Program Files/Go/src/testing/testing.go:2036 +0xc3
+        created by testing.(*T).Run in goroutine 1
+        	C:/Program Files/Go/src/testing/testing.go:2101 +0x4a9
+        
+        goroutine 1 [chan receive]:
+        testing.(*T).Run(0x105219822200, {0x7ff7222f2a89?, 0x7ff7221ded4e?}, 0x7ff7222f98d8)
+        	C:/Program Files/Go/src/testing/testing.go:2109 +0x4c7
+        testing.runTests.func1(0x105219822200)
+        	C:/Program Files/Go/src/testing/testing.go:2585 +0x3e
+        testing.tRunner(0x105219822200, 0x1052198dfc58)
+        	C:/Program Files/Go/src/testing/testing.go:2036 +0xc3
+        testing.runTests({0x7ff7222e301d, 0x7}, {0x7ff7222e6bbf, 0x11}, 0x10521982a138, {0x7ff722498740, 0x37, 0x37}, {0xc2acb3ed01857270, 0x8bb3374ef5, ...})
+        	C:/Program Files/Go/src/testing/testing.go:2583 +0x4f0
+        testing.(*M).Run(0x1052198a6280)
+        	C:/Program Files/Go/src/testing/testing.go:2443 +0x6ac
+        main.main()
+        	_testmain.go:166 +0x9b
+        
+        goroutine 9 [sync.Mutex.Lock]:
+        internal/sync.runtime_SemacquireMutex(0x105219902008?, 0xa0?, 0x10521982c2e0?)
+        	C:/Program Files/Go/src/runtime/sema.go:95 +0x25
+        internal/sync.(*Mutex).lockSlow(0x105219836198)
+        	C:/Program Files/Go/src/internal/sync/mutex.go:149 +0x15d
+        internal/sync.(*Mutex).Lock(...)
+        	C:/Program Files/Go/src/internal/sync/mutex.go:70
+        sync.(*Mutex).Lock(...)
+        	C:/Program Files/Go/src/sync/mutex.go:46
+        sync.(*RWMutex).Lock(0x105219912000?)
+        	C:/Program Files/Go/src/sync/rwmutex.go:150 +0x32
+        owndbms/lsmengine.(*Manager).flushToDisk(0x1052198b83c0, 0x10521984a490)
+        	C:/Users/ramst/Documents/Projects/selfdbms/lsmengine/manager.go:396 +0x3ef
+        owndbms/lsmengine.(*Manager).flushLoop(0x1052198b83c0)
+        	C:/Users/ramst/Documents/Projects/selfdbms/lsmengine/manager.go:242 +0x75
+        created by owndbms/lsmengine.(*Manager).initFlushWorkerLocked in goroutine 8
+        	C:/Users/ramst/Documents/Projects/selfdbms/lsmengine/manager.go:235 +0xa6
+        
+        goroutine 18 [chan send]:
+        owndbms/lsmengine.(*Manager).enqueueFlushLocked(...)
+        	C:/Users/ramst/Documents/Projects/selfdbms/lsmengine/manager.go:248
+        owndbms/lsmengine.(*Manager).EnqueueFlush(0x1052198b83c0, 0x1052199204f0)
+        	C:/Users/ramst/Documents/Projects/selfdbms/lsmengine/manager.go:259 +0x97
+        owndbms/lsmengine.TestFlushDeadlock_E009_BoundedQueueDeadlock.func2()
+        	C:/Users/ramst/Documents/Projects/selfdbms/lsmengine/flush_deadlock_repro_test.go:89 +0x45
+        created by owndbms/lsmengine.TestFlushDeadlock_E009_BoundedQueueDeadlock in goroutine 8
+        	C:/Users/ramst/Documents/Projects/selfdbms/lsmengine/flush_deadlock_repro_test.go:87 +0xbe5
+    flush_deadlock_repro_test.go:146: DEFECT E-009 REPRODUCED: circular wait deadlock between Manager.Mu and full flushChan (capacity 64)
+--- FAIL: TestFlushDeadlock_E009_BoundedQueueDeadlock (0.61s)
+FAIL
+FAIL	owndbms/lsmengine	1.777s
+FAIL

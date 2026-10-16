@@ -256,6 +256,43 @@ Format:
 - **Resolution**: Implemented dedicated background FIFO flush worker with buffered `flushChan chan *Memtable` (D-014). Memtables are enqueued under `Manager.Mu` at the instant of freezing in exact chronological creation order. The single worker processes and publishes SSTables sequentially to `ActiveSSreaders` in strict FIFO order, guaranteeing `INV-ORDER-1`. Draining is seamlessly coordinated with `Manager.Close()` 4-phase drain protocol. Verified by 6 deterministic regression tests (reversed timing, 3+ queue drain, multi-version MVCC, tombstone precedence, interleaved compaction, concurrent point reads) in `lsmengine/flush_ordering_test.go` on Windows native (1.18s) and WSL2 with `-race` (2.50s, 0 data races).
 - **Evidence Path**: [`research/debug/E-008/repro.md`](../debug/E-008/repro.md), [`research/debug/E-008/failing_repro.log`](../debug/E-008/failing_repro.log), [`research/debug/E-008/wsl_failing_repro.log`](../debug/E-008/wsl_failing_repro.log), [`research/debug/E-008/after.log`](../debug/E-008/after.log), [`research/debug/E-008/wsl_after.log`](../debug/E-008/wsl_after.log).
 
+---
+
+### E-009: Deadlock on Bounded Flush Queue Saturation via Circular Wait with Manager.Mu
+
+- **ID**: `E-009`
+- **Detected**: 2026-10-16, baseline Approach A, Windows 11 amd64 & WSL2 Linux
+- **Sub-phase**: I1.3.8a (Flush Queue Deadlock and Lifecycle Hardening)
+- **Severity**: Liveness / Deadlock / Engine Stall (P0 Blocker)
+- **Symptom**: When write load triggers flushes faster than disk I/O can persist SSTables, 64 flush tasks saturate the bounded `flushChan` buffer (`make(chan *Memtable, 64)`). Any 65th flush task invokes `enqueueFlushLocked` while holding `m.Mu.Lock()`, which blocks on channel send (`m.flushChan <- mem`). The background flush worker completes its current SSTable ($F_0$) and attempts to acquire `m.Mu.Lock()` to publish the reader into `m.ActiveSSreaders`. This creates an inescapable circular wait: the producer holds `m.Mu` waiting for space in `flushChan`, while the worker holds no lock and waits for `m.Mu` to finish $F_0$ before dequeuing $F_1$. All subsequent engine operations hang indefinitely.
+- **Minimal Reproduction**:
+  ```powershell
+  go test -v ./lsmengine -run TestFlushDeadlock_E009_BoundedQueueDeadlock
+  ```
+- **Expected / Actual**:
+  - *Expected*: Flush admission never blocks while holding `Manager.Mu`, or applies backpressure outside lock boundaries; background worker publishes completed flushes without deadlock.
+  - *Actual*: Producer blocks on `m.flushChan <- mem` inside `enqueueFlushLocked` holding `m.Mu.Lock()`; worker blocks on `m.Mu.Lock()` at `manager.go:396` in `flushToDisk`.
+- **Trace / Log**:
+  ```
+  goroutine 9 [sync.Mutex.Lock]:
+  sync.(*RWMutex).Lock(...)
+  owndbms/lsmengine.(*Manager).flushToDisk(0x1052198b83c0, 0x10521984a490)
+      manager.go:396 +0x3ef
+  owndbms/lsmengine.(*Manager).flushLoop(0x1052198b83c0)
+      manager.go:242 +0x75
+
+  goroutine 18 [chan send]:
+  owndbms/lsmengine.(*Manager).enqueueFlushLocked(...)
+      manager.go:248
+  owndbms/lsmengine.(*Manager).EnqueueFlush(0x1052198b83c0, 0x1052199204f0)
+      manager.go:259 +0x97
+  ```
+- **Root Cause**: Holding exclusive mutex `m.Mu` while performing a blocking channel send to `m.flushChan`, whose consumer requires `m.Mu` to complete the task ahead of it.
+- **Status**: REPRODUCED & REGISTERED (Sub-phase I1.3.8a) — Ready for Phase I1.3.8b repair.
+- **Evidence Path**: [`research/debug/E-009/repro.md`](../debug/E-009/repro.md), [`research/debug/E-009/before.log`](../debug/E-009/before.log), [`research/debug/E-009/wsl_before.log`](../debug/E-009/wsl_before.log).
+- **Regression Test**: `TestFlushDeadlock_E009_BoundedQueueDeadlock` in `lsmengine/flush_deadlock_repro_test.go`.
+
+
 
 
 
