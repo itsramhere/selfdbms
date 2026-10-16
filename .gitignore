@@ -1,2 +1,8 @@
 01_IMPLEMENTATION_PLAN.md
 02_DEBUGGING_VALIDATION_PLAN.md
+test_data_*
+bench_data*
+lsmengine/test_data_*
+lsmengine/bench_data*
+*.sst
+wal*.log
