@@ -1,0 +1,24 @@
+=== RUN   TestFailedFlush_E010_StaleReadRepro
+    failed_flush_precedence_test.go:121: DEFECT E-010 REPRODUCED: Manager.Get returned stale value "old" (expected "new"). Failed flush F0 in Frozenmem masked newer SSTable F1!
+--- FAIL: TestFailedFlush_E010_StaleReadRepro (0.02s)
+=== RUN   TestFailedFlush_E010_TombstoneResurrectionRepro
+    failed_flush_precedence_test.go:205: DEFECT E-010 REPRODUCED: Manager.Get returned resurrected value "val_to_delete" (error <nil>, expected ErrKeyDeleted key has been deleted). Older Put in failed flush F0 masked newer Tombstone in SSTable F1! (oracle="", err=key has been deleted)
+--- FAIL: TestFailedFlush_E010_TombstoneResurrectionRepro (0.02s)
+=== RUN   TestFailedFlush_E010_StaleDeletionMaskingRepro
+    failed_flush_precedence_test.go:289: DEFECT E-010 REPRODUCED: Manager.Get returned error key has been deleted, val " " (expected "reborn_at_s2"). Older Tombstone in failed flush F0 masked newer Put in SSTable F1!
+--- FAIL: TestFailedFlush_E010_StaleDeletionMaskingRepro (0.02s)
+=== RUN   TestFailedFlush_E010_ThreeGenerationsRepro
+    failed_flush_precedence_test.go:369: DEFECT E-010 REPRODUCED: Manager.Get returned "v0" (expected "v2") across 3 generations! Failed flush F0 masked SSTables F1 and F2.
+--- FAIL: TestFailedFlush_E010_ThreeGenerationsRepro (0.04s)
+=== RUN   TestFailedFlush_E010_ActiveMemtablePrecedence
+--- PASS: TestFailedFlush_E010_ActiveMemtablePrecedence (0.01s)
+=== RUN   TestFailedFlush_E010_NoPartialPublication
+--- PASS: TestFailedFlush_E010_NoPartialPublication (0.01s)
+=== RUN   TestFailedFlush_E010_WriteConflictDetectionFailure
+    failed_flush_precedence_test.go:574: DEFECT E-010 REPRODUCED: Transaction committed write on k8 without detecting write-write conflict against SSTable F1 (seq S2=2)! latestValueLocked returned seq S1=1 from failed flush F0 in Frozenmem.
+--- FAIL: TestFailedFlush_E010_WriteConflictDetectionFailure (0.03s)
+=== RUN   TestFailedFlush_E010_ErrorReportingOnClose
+--- PASS: TestFailedFlush_E010_ErrorReportingOnClose (0.01s)
+FAIL
+FAIL	owndbms/lsmengine	1.184s
+FAIL

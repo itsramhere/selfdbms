@@ -293,6 +293,42 @@ Format:
 - **Evidence Path**: [`research/debug/E-009/repro.md`](../debug/E-009/repro.md), [`research/debug/E-009/before.log`](../debug/E-009/before.log), [`research/debug/E-009/wsl_before.log`](../debug/E-009/wsl_before.log), [`research/debug/E-009/after.log`](../debug/E-009/after.log), [`research/debug/E-009/wsl_after.log`](../debug/E-009/wsl_after.log).
 - **Regression Test**: `TestFlushDeadlock_E009_Resolved_NoDeadlockOnQueueSaturation`, `TestFlushAdmission_QueueSaturated128Items`, `TestFlushAdmission_WorkerPublicationDuringAdmission`, `TestFlushAdmission_ShutdownDuringSaturatedQueue`, `TestFlushAdmission_KeyVisibilityAcrossLifecycle` in `lsmengine/flush_deadlock_repro_test.go`.
 
+---
+
+### E-010: Flush Failure Precedence Inversion (RISK-004)
+
+- **ID**: `E-010`
+- **Detected**: 2026-10-17, baseline Approach A, Windows 11 amd64 & WSL2 Linux
+- **Sub-phase**: I1.4.7b (Build a deterministic reproduction)
+- **Severity**: Correctness / Data Integrity / Serializability (P0 Blocker)
+- **Symptom**: When a background Memtable flush $F_0$ fails (e.g. disk full, I/O error), $F_0$ is retained in `m.Frozenmem`. The worker continues running and processes subsequent flushes $F_1, F_2$. If $F_1$ succeeds, it is published to `m.ActiveSSreaders` and removed from `m.Frozenmem`. Because `Manager.Get` and `Manager.latestValueLocked` inspect Tier 2 (`Frozenmem`) before Tier 3 (`ActiveSSreaders`), the older version in $F_0$ masks newer writes or tombstones in $F_1$, leading to stale reads, tombstone resurrection, and missed write-write conflicts.
+- **Minimal Reproduction**:
+  ```powershell
+  go test -v ./lsmengine -run TestFailedFlush_E010
+  ```
+- **Expected / Actual**:
+  - *Expected*: Reads return latest committed version across all tiers; write-write conflicts are detected against the latest committed version; failure halts out-of-order publication.
+  - *Actual*: `Manager.Get` returns stale value `"old"` (expected `"new"`); returns resurrected value `"val_to_delete"` instead of `ErrKeyDeleted`; transaction commits write without detecting conflict against on-disk SSTable.
+- **Trace / Log**:
+  ```
+  === RUN   TestFailedFlush_E010_StaleReadRepro
+      failed_flush_precedence_test.go:121: DEFECT E-010 REPRODUCED: Manager.Get returned stale value "old" (expected "new"). Failed flush F0 in Frozenmem masked newer SSTable F1!
+  --- FAIL: TestFailedFlush_E010_StaleReadRepro (0.02s)
+  === RUN   TestFailedFlush_E010_TombstoneResurrectionRepro
+      failed_flush_precedence_test.go:205: DEFECT E-010 REPRODUCED: Manager.Get returned resurrected value "val_to_delete" (error <nil>, expected ErrKeyDeleted key has been deleted). Older Put in failed flush F0 masked newer Tombstone in SSTable F1!
+  --- FAIL: TestFailedFlush_E010_TombstoneResurrectionRepro (0.02s)
+  === RUN   TestFailedFlush_E010_WriteConflictDetectionFailure
+      failed_flush_precedence_test.go:574: DEFECT E-010 REPRODUCED: Transaction committed write on k8 without detecting write-write conflict against SSTable F1 (seq S2=2)! latestValueLocked returned seq S1=1 from failed flush F0 in Frozenmem.
+  --- FAIL: TestFailedFlush_E010_WriteConflictDetectionFailure (0.03s)
+  ```
+- **Root Cause**:
+  1. `flushLoop` does not stop upon an error in `flushToDisk`; it continues dequeuing subsequent flushes.
+  2. Failed Memtables remain in `m.Frozenmem` indefinitely while successful newer Memtables are promoted to `m.ActiveSSreaders`.
+  3. `Manager.Get` and `Manager.latestValueLocked` rely on a hardcoded tier hierarchy ($\text{Mem} \succ \text{Frozenmem} \succ \text{ActiveSSreaders}$) that breaks when generations are split across tiers out of chronological order.
+- **Status**: REPRODUCED (Failing-before baseline preserved).
+- **Evidence Path**: [`research/debug/E-010/repro.md`](../debug/E-010/repro.md), [`research/debug/E-010/before.log`](../debug/E-010/before.log), [`research/debug/E-010/wsl_before.log`](../debug/E-010/wsl_before.log).
+
+
 
 
 
