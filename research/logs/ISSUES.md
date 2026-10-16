@@ -103,4 +103,38 @@ Format:
 - **Status**: Fixed (Sub-phase I1.1b).
 - **Residual Risk**: If SSTables are merged by `CompactAll`, `CompactAll`'s publication path must preserve all active tables and not overwrite concurrently flushed tables (addressed in I1.2).
 - **Evidence Path**: [`research/debug/E-003/before.log`](../debug/E-003/before.log), [`research/debug/E-003/after.log`](../debug/E-003/after.log), [`research/debug/E-003/diff.patch`](../debug/E-003/diff.patch), [`research/debug/E-003/repro.md`](../debug/E-003/repro.md)
-- **Commit**: Pending I1.1b commit
+- **Commit**: `4a4264f`
+
+---
+
+### E-004: `latestValueLocked` Fails to Identify Greatest Sequence Number when SSTable Ordering Changes
+
+- **ID**: `E-004`
+- **Detected**: 2026-10-16, commit `fbe9d81`, baseline Approach A, Windows 11 amd64
+- **Sub-phase**: I1.2.0 (Invariant Verification)
+- **Severity**: Correctness / Concurrency Hazard (P1)
+- **Symptom**: If `ActiveSSreaders` contains SSTables whose order deviates from strict chronological sequence (e.g., during compaction publication if a compacted table is published out of place, or if multi-level SSTables are placed in arbitrary order), `latestValueLocked` returns the sequence number from the SSTable with the highest slice index instead of the greatest sequence number across all SSTables. A concurrent transaction with $ReadTs$ between the returned sequence number and the true committed sequence number will fail to detect the write-write conflict and commit, silently overwriting committed data.
+- **Minimal Reproduction**:
+  ```powershell
+  go test -v ./lsmengine -run TestI1_2_0_SSTableOrderingAnomaly
+  ```
+- **Expected / Actual**:
+  - *Expected*: Conflict detector returns greatest sequence number (50) regardless of SSTable slice ordering.
+  - *Actual*: Conflict detector returns sequence number (10) from the table at the highest slice index (`m.ActiveSSreaders[len-1]`), failing to check older index positions.
+- **Trace / Log**:
+  ```
+  === RUN   TestI1_2_0_SSTableOrderingAnomaly
+      i1_2_0_invariants_test.go:341: FAIL: conflict detector returned seq 10 instead of greatest committed sequence 50 when SSTable ordering changed
+  --- FAIL: TestI1_2_0_SSTableOrderingAnomaly (0.01s)
+  FAIL
+  FAIL	owndbms/lsmengine	0.929s
+  FAIL
+  ```
+- **Hypotheses Considered**:
+  1. *Early-return optimization in `latestValueLocked` assumes strict chronological ordering*: Confirmed. `latestValueLocked` returns on the first match (`return seq, nil`), which is valid ONLY if `ActiveSSreaders` is guaranteed to be chronologically ordered.
+- **Proposed Fix (Awaiting Authorization)**: Update `latestValueLocked` to scan all readers in `ActiveSSreaders` and track `maxSeq` instead of returning on the first match.
+- **Status**: REPRODUCED / AWAITING AUTHORIZATION BEFORE OUT-OF-SCOPE REPAIR.
+- **Residual Risk**: Awaiting reviewer guidance on whether to repair `latestValueLocked` or enforce strict slice position invariants during compaction publication.
+- **Evidence Path**: [`research/debug/E-004/repro.md`](../debug/E-004/repro.md), [`research/debug/E-004/failing_test.log`](../debug/E-004/failing_test.log).
+- **Commit**: `b03b338`
+
