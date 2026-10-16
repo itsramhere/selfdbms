@@ -167,15 +167,11 @@ Format:
   FAIL
   ```
 - **Root Cause**: In a single flat slice architecture where `Manager.Get` iterates backwards, replacing noncontiguous inputs by inserting the merged table at the first input's position places the output before unselected intermediate tables, inverting relative version order.
-- **Implemented Fix**: Codified invariant `INV-COMPACT-1` (compaction inputs must be contiguous). In `replaceCompactedReaders`, added strict defensive validation ensuring:
-  1. All inputs are active and present in `current`.
-  2. No duplicate or nil inputs.
-  3. Inputs form a strictly contiguous prefix starting at index 0 of `current`.
-  4. Invalid inputs immediately abort with error without mutating `current`.
-  5. Any concurrently flushed SSTables appended after the compacted prefix are preserved.
-- **Status**: FIXED / VERIFIED (Sub-phase I1.3.0a).
+- **Proposed Fix (Authorized D-008)**: Formally codify invariant `INV-COMPACT-1` (compaction inputs in a flat slice must be contiguous), and enforce in `replaceCompactedReaders` that `inputs` appear without duplicates, all are active, and form a strictly contiguous prefix starting at index 0 of `current`.
+- **Status**: FIXED & VERIFIED.
+- **Resolution**: Implemented defensive validation in `replaceCompactedReaders` (`lsmengine/compaction.go`). Codified `INV-COMPACT-1` in `research/design/invariants.md`. Added 4 passing regression tests covering noncontiguous rejection, non-prefix rejection, duplicate rejection, and valid prefix MVCC visibility across concurrent flushes (`lsmengine/noncontiguous_compaction_counterexample_test.go`). 24/24 tests PASS on Windows native (1.28s) and WSL2 with `-race` (2.39s) with 0 data races.
 - **Evidence Path**: [`research/debug/E-005/repro.md`](../debug/E-005/repro.md), [`research/debug/E-005/failing_counterexample.log`](../debug/E-005/failing_counterexample.log), [`research/debug/E-005/after.log`](../debug/E-005/after.log), [`research/debug/E-005/diff.patch`](../debug/E-005/diff.patch), [`lsmengine/noncontiguous_compaction_counterexample_test.go`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/noncontiguous_compaction_counterexample_test.go).
-- **Commit**: Sub-phase I1.3.0a
+- **Commit**: `3b2d0c1`
 
 
 

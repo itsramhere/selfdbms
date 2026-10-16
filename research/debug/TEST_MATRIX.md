@@ -28,8 +28,10 @@
 | **Compaction: Newer Version** | `TestCompactionPublication_ConcurrentFlushNewerVersion` | `lsmengine/compaction_concurrency_test.go:124` | *N/A* (Added I1.2.3) | *N/A* | **PASS (0.05s)** | Yes | Proves newer version flushed during compaction is not masked by compacted output. |
 | **Compaction: Tombstone Flush** | `TestCompactionPublication_ConcurrentFlushTombstone` | `lsmengine/compaction_concurrency_test.go:172` | *N/A* (Added I1.2.3) | *N/A* | **PASS (0.09s)** | Yes | Proves tombstone flushed during compaction masks older compacted value. |
 | **Compaction: Overlapping Inputs** | `TestCompactionPublication_OverlappingInputsValidation` | `lsmengine/compaction_concurrency_test.go:225` | *N/A* (Added I1.2.3) | *N/A* | **PASS (0.03s)** | Yes | Proves validation rejects publication if input reader was concurrently removed. |
-| **Compaction: E-005 Noncontiguous Rejection** | `TestE005_NoncontiguousCompactionSafelyRejected` | `lsmengine/noncontiguous_compaction_counterexample_test.go:11` | *N/A* (Added I1.3.0a) | *N/A* | **PASS (0.03s)** | No | Proves replaceCompactedReaders rejects noncontiguous, non-prefix, duplicate, and nil inputs without state mutation. |
-| **Compaction: E-005 Valid Prefix & MVCC** | `TestE005_ValidPrefixCompactionAndMVCCCorrectness` | `lsmengine/noncontiguous_compaction_counterexample_test.go:115` | *N/A* (Added I1.3.0a) | *N/A* | **PASS (0.06s)** | No | Proves valid prefix compaction preserves chronological order, keeps flushes visible, and serves correct MVCC versions across timestamps. |
+| **Ordering: Noncontiguous Rejection** | `TestE005_NoncontiguousCompactionRejected` | `lsmengine/noncontiguous_compaction_counterexample_test.go:12` | *N/A* (Added I1.3.0a) | *N/A* | **PASS (0.02s)** | Yes | Proves noncontiguous compaction inputs are rejected with zero mutation (E-005 / INV-COMPACT-1). |
+| **Ordering: Non-Prefix Rejection** | `TestE005_NonPrefixCompactionRejected` | `lsmengine/noncontiguous_compaction_counterexample_test.go:94` | *N/A* (Added I1.3.0a) | *N/A* | **PASS (0.03s)** | Yes | Proves contiguous inputs starting after index 0 are rejected under full-prefix policy. |
+| **Ordering: Duplicate Rejection** | `TestE005_DuplicateInputsRejected` | `lsmengine/noncontiguous_compaction_counterexample_test.go:145` | *N/A* (Added I1.3.0a) | *N/A* | **PASS (0.01s)** | Yes | Proves duplicate input readers in compaction request are rejected with validation error. |
+| **Ordering: Prefix MVCC Visibility** | `TestE005_ValidPrefixCompaction_PreservesOrderAndVisibility` | `lsmengine/noncontiguous_compaction_counterexample_test.go:183` | *N/A* (Added I1.3.0a) | *N/A* | **PASS (0.02s)** | Yes | Proves prefix compaction preserves chronological order, concurrent flushes, tombstones, and MVCC ReadTs. |
 | **Flush / Swap** | `forceSyncFlush` | `lsmengine/cross_tier_conflict_test.go:9` | Verified | Verified | **PASS** | No | Synchronous flush hook verified in all cross-tier and compaction tests. |
 | **Compaction** | `CompactAll` | `lsmengine/compaction.go:50` | Untested | Untested | **PASS** | Yes | Full k-way merge and deduplication verified in concurrency test suite. |
 | **Concurrent Read + Compaction** | `TestCompactionPublication_ConcurrentFlush*` | `lsmengine/compaction_concurrency_test.go` | Untested | Untested | **PASS** | Yes | Reader-compactor overlap verified under Approach A RWMutex. |
@@ -44,9 +46,10 @@
 ---
 
 ## 2. Summary of Findings
-1. **Existing Test Pass Rate**: 20/20 passing on Windows native (1.47s), 20/20 passing under WSL2 `go test -race` with zero data races (2.44s).
+1. **Existing Test Pass Rate**: 24/24 passing on Windows native (1.28s), 24/24 passing under WSL2 `go test -race` with zero data races (2.39s).
 2. **Compaction Publication Safety**: Verified that identity-preserving publication (`replaceCompactedReaders`) completely eliminates concurrent SSTable loss during flushes (Sub-phase I1.2 complete).
-3. **Cross-Tier Conflict Safety**: Verified across active Memtable, frozen Memtables, and SSTables regardless of slice ordering (Option A fix for E-004 verified).
-4. **Manager.Get Search Semantics**: Audit confirmed that `Manager.Get` relies strictly on `INV-ORDER-1` (ActiveSSreaders ordered chronologically from oldest to newest).
+3. **Compaction Ordering Safeguards (INV-COMPACT-1 / E-005)**: Noncontiguous and non-prefix compaction inputs are defensively rejected with zero state mutation, preventing stale read hazards in `Manager.Get` (Sub-phase I1.3.0a complete).
+4. **Cross-Tier Conflict Safety**: Verified across active Memtable, frozen Memtables, and SSTables regardless of slice ordering (Option A fix for E-004 verified).
+5. **Manager.Get Search Semantics**: Audit confirmed that `Manager.Get` relies strictly on `INV-ORDER-1` (ActiveSSreaders ordered chronologically from oldest to newest).
 
 

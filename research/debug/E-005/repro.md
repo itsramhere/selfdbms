@@ -2,7 +2,7 @@
 
 **Title:** Noncontiguous Compaction Input Selection Violates Invariant `INV-ORDER-1` in Flat Reader Architecture  
 **Sub-phase Discovered:** I1.3.0 (Reader Ownership & Ordering Audit)  
-**Status:** RESOLVED / VERIFIED (Sub-phase I1.3.0a)  
+**Status:** FIXED & VERIFIED (Sub-phase I1.3.0a, commit pending)  
 **Severity:** Architectural Invariant Hazard (P1)  
 
 ---
@@ -40,15 +40,10 @@ If compaction selects noncontiguous inputs $S_{\text{inputs}} = \{ R_0, R_2 \}$ 
 
 ---
 
-## 2. Deterministic Counterexample Test
+## 2. Before-Fix Reproduction Evidence
 
-Preserved in [`lsmengine/noncontiguous_compaction_counterexample_test.go`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/noncontiguous_compaction_counterexample_test.go):
+Archived in [`research/debug/E-005/failing_counterexample.log`](failing_counterexample.log):
 
-```powershell
-go test -v ./lsmengine -run TestCounterexample_NoncontiguousCompactionViolatesOrder
-```
-
-Output:
 ```text
 === RUN   TestCounterexample_NoncontiguousCompactionViolatesOrder
     noncontiguous_compaction_counterexample_test.go:85: Result of Manager.Get after noncontiguous compaction: "v1_mid"
@@ -59,38 +54,23 @@ FAIL
 
 ---
 
-## 3. Scope & Recommended Resolution
+## 3. Resolution & Safeguards Implemented (Sub-phase I1.3.0a)
 
-In the actual repository codebase today:
-- `CompactAll` selects **ALL** active readers:
-  ```go
-  readersToCompact := make([]*SSTableReader, len(m.ActiveSSreaders))
-  copy(readersToCompact, m.ActiveSSreaders)
-  ```
-- Because `CompactAll` selects all active readers, the input set is **always a contiguous prefix** `[0..k]`.
-- Any SSTables added during compaction are newly flushed tables appended to the end `[k+1..N]`.
-- Therefore, in the actual implementation, `replaceCompactedReaders` replaces the contiguous prefix `[0..k]` at index 0, and all concurrent flushes remain at `[1..N-k]`. Invariant `INV-ORDER-1` is 100% preserved.
+Under external reviewer authorization (D-008):
 
-### Formal Rule Implemented:
-1. Codified **`INV-COMPACT-1`** in `research/design/invariants.md`: Compaction input selection is strictly restricted to contiguous ranges of `m.ActiveSSreaders`.
-2. In `replaceCompactedReaders` (`lsmengine/compaction.go`), implemented defensive validation ensuring:
-   - All input readers are active and present in `current`.
-   - Each input appears exactly once (no duplicates, no nil pointers).
-   - Inputs form a strictly contiguous prefix starting at index 0 of `current`.
-   - Invalid or noncontiguous inputs immediately return a descriptive error without mutating `current`.
-   - Concurrently flushed SSTables appended after the compacted prefix are preserved in their exact chronological order.
+1. **Adopted Invariant `INV-COMPACT-1`**: Formally codified in [`research/design/invariants.md`](../../design/invariants.md). Compaction inputs must preserve chronological precedence of all surviving readers. In a flat slice, input selection is strictly restricted to a contiguous prefix `[0..k]`.
+2. **Defensive Validation in `replaceCompactedReaders`**:
+   - Validates that each input reader appears without duplicates.
+   - Validates that all inputs are currently active in `current`.
+   - Validates that inputs start at index 0 (`current[0] == inputs[0]`), preserving the full-prefix compaction policy.
+   - Validates that inputs are strictly contiguous (`current[j] == inputs[j]` for all $j$).
+   - Returns descriptive validation error on violation without mutating `current`.
+   - Cleans up temporary output files and leaves active readers untouched.
+3. **Comprehensive Regression Suite**:
+   - `TestE005_NoncontiguousCompactionRejected`: Asserts rejection and zero mutation.
+   - `TestE005_NonPrefixCompactionRejected`: Asserts rejection when inputs do not start at 0.
+   - `TestE005_DuplicateInputsRejected`: Asserts rejection when duplicate input readers are passed.
+   - `TestE005_ValidPrefixCompaction_PreservesOrderAndVisibility`: Tests valid prefix compaction with concurrently flushed tables, tombstone visibility, newer version visibility, and multiple timestamp evaluations.
 
----
+Post-fix output preserved in [`research/debug/E-005/after.log`](after.log). All 24 tests pass on Windows native and WSL2 with `-race`.
 
-## 4. Verification Evidence (Sub-phase I1.3.0a)
-
-- **Test Suite:** [`lsmengine/noncontiguous_compaction_counterexample_test.go`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/noncontiguous_compaction_counterexample_test.go)
-  - `TestE005_NoncontiguousCompactionSafelyRejected`: Asserts rejection of noncontiguous inputs `[r0, r2]`, non-prefix inputs `[r1, r2]`, duplicate inputs `[r0, r0]`, nil readers, and confirms zero mutation of active reader set. (PASS, 0.03s)
-  - `TestE005_ValidPrefixCompactionAndMVCCCorrectness`: Asserts prefix compaction `[r0, r1]` with concurrent flush `r2` preserves `[mCompact, r2]`, validates MVCC visibility at timestamps 100, 25, 15, and tombstone suppression. (PASS, 0.06s)
-- **All Unit Tests:** 21/21 PASS on Windows 11 Native (1.56s).
-- **WSL2 Race Detector:** 21/21 PASS under Linux amd64 `-race` (2.44s) with zero race warnings.
-- **Go Vet:** Clean (`go vet ./...` exit code 0).
-- **Artifacts:**
-  - Before log: [`research/debug/E-005/failing_counterexample.log`](failing_counterexample.log)
-  - After log: [`research/debug/E-005/after.log`](after.log)
-  - Diff patch: [`research/debug/E-005/diff.patch`](diff.patch)

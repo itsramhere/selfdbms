@@ -10,37 +10,28 @@ import (
 	"time"
 )
 
-// replaceCompactedReaders replaces a contiguous prefix of inputs in current with newReader.
-// Under INV-COMPACT-1 and INV-ORDER-1, inputs must:
-// 1. Be non-empty and non-nil.
-// 2. Contain no duplicates.
-// 3. Match a strictly contiguous prefix of current starting at index 0.
-// Any concurrently flushed SSTables appended after the compacted prefix are preserved
-// in their exact chronological order.
+// replaceCompactedReaders replaces the input readers with newReader in current.
+// Under INV-ORDER-1 and INV-COMPACT-1, compaction inputs must form a strictly contiguous
+// prefix starting at index 0, preserving chronological precedence of all surviving readers.
+// Any concurrently flushed SSTables appended after the compacted prefix are preserved.
 func replaceCompactedReaders(current []*SSTableReader, inputs []*SSTableReader, newReader *SSTableReader) ([]*SSTableReader, error) {
 	if len(inputs) == 0 {
 		return current, nil
 	}
-	if newReader == nil {
-		return nil, errors.New("compaction aborted: nil replacement reader")
-	}
-	if len(inputs) > len(current) {
-		return nil, errors.New("compaction aborted: input reader is no longer active")
-	}
 
-	// Verify each input reader appears exactly once and no nil readers
-	seenInputs := make(map[*SSTableReader]bool, len(inputs))
+	// 1. Ensure each input reader appears exactly once (no duplicates) and is non-nil
+	inputSet := make(map[*SSTableReader]bool, len(inputs))
 	for _, r := range inputs {
 		if r == nil {
 			return nil, errors.New("compaction aborted: nil input reader")
 		}
-		if seenInputs[r] {
-			return nil, errors.New("compaction aborted: duplicate input reader")
+		if inputSet[r] {
+			return nil, errors.New("compaction aborted: duplicate input reader in inputs")
 		}
-		seenInputs[r] = true
+		inputSet[r] = true
 	}
 
-	// Verify all inputs are present in current
+	// 2. Verify all inputs are present in current
 	currentSet := make(map[*SSTableReader]bool, len(current))
 	for _, r := range current {
 		currentSet[r] = true
@@ -51,33 +42,24 @@ func replaceCompactedReaders(current []*SSTableReader, inputs []*SSTableReader, 
 		}
 	}
 
-	// Find the position of inputs[0] in current
-	startIdx := -1
-	for i, r := range current {
-		if r == inputs[0] {
-			startIdx = i
-			break
-		}
-	}
-	if startIdx == -1 {
-		return nil, errors.New("compaction aborted: input reader is no longer active")
+	// 3. Verify inputs preserve the full-prefix policy (must start at index 0)
+	if current[0] != inputs[0] {
+		return nil, errors.New("compaction aborted: inputs must start at index 0 to preserve full-prefix policy")
 	}
 
-	// Under INV-COMPACT-1, compaction must preserve full-prefix selection policy (must start at index 0)
-	if startIdx != 0 {
-		return nil, errors.New("compaction aborted: inputs must form a prefix starting at index 0")
-	}
-
-	// Verify strictly contiguous range matching inputs
-	for j, r := range inputs {
-		if current[startIdx+j] != r {
-			return nil, errors.New("compaction aborted: input readers are not strictly contiguous")
+	// 4. Verify inputs form a strictly contiguous range in current
+	for j := 0; j < len(inputs); j++ {
+		if current[j] != inputs[j] {
+			return nil, errors.New("compaction aborted: inputs are not contiguous in current active readers")
 		}
 	}
 
-	// Build updated reader slice: [newReader, concurrentlyFlushed...]
+	// 5. Construct updated reader set:
+	// New reader is published at index 0, followed by all concurrently flushed readers.
 	updated := make([]*SSTableReader, 0, len(current)-len(inputs)+1)
-	updated = append(updated, newReader)
+	if newReader != nil {
+		updated = append(updated, newReader)
+	}
 	updated = append(updated, current[len(inputs):]...)
 
 	return updated, nil
