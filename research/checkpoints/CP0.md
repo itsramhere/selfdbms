@@ -1,6 +1,6 @@
 # CHECKPOINT CP0 — Baseline Reconnaissance and Architecture Audit
 
-**Commit:** `f88a682`  
+**Commit:** `3eaae45`  
 **Branch:** `research/reader-compactor-sync`  
 **Date:** `2026-10-16`  
 
