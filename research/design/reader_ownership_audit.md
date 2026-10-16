@@ -49,10 +49,12 @@ stateDiagram-v2
 
 ## 3. Detailed Audit Findings
 
-### 1. Reader Reference Containment
+### 1. Reader Reference Containment (Re-examined in I1.3.1)
 - In `Manager.Get(key string, readTs uint64)`, the reader pointer `m.ActiveSSreaders[i]` is used strictly within the function scope. The value read from disk is converted to a Go `string(val)` before returning.
 - In `latestValueLocked(userKey []byte)`, only the decoded primitive `uint64` sequence number is returned.
-- **Finding**: Reader references **never escape** the protection of `Manager.Mu`.
+- **Critical Exception**: In `CompactAll`, `readersToCompact` is captured under `m.Mu.Lock()`, but the merge loop executes **outside `m.Mu`**. Therefore, reader references **DO escape** the protection of `Manager.Mu` during compaction merges.
+- Full lifetime protocol and hazards (overlapping compactions, shutdown races) are specified in [`research/design/reader_lifetime_protocol.md`](reader_lifetime_protocol.md).
+
 
 ### 2. Reachability vs. Closure Timing
 - When `CompactAll` completes, it removes `readersToCompact` from `m.ActiveSSreaders` under `m.Mu.Lock()`.
