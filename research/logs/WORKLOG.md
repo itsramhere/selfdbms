@@ -65,6 +65,8 @@ Format:
 | 2026-10-17 01:13:00 | I1.5.4 | Codify recovery scenarios and benchmark eligibility | `research/design/durability_and_recovery_limitations.md`, `research/logs/WORKLOG.md` | Codified Scenarios A through E across normal, queued, fail-stop, restart, and power-loss recovery; codified benchmark eligibility criteria and evaluation boundaries for Approach A baseline in Phases I4/I5 | `9a9c6ea` |
 | 2026-10-17 01:14:00 | I1.5.5 | Freeze candidate Approach A baseline | `research/logs/WORKLOG.md` | Verified clean working tree; recorded Windows 11 (`go1.26.3`) and WSL2 (`go1.27.1`) toolchains; prepared baseline candidate tag `baseline-approach-a` | `38a440b` |
 | 2026-10-17 01:15:00 | I1.5.6 | Complete research handoff and documentation synchronization | `research/design/invariants.md`, `research/design/architecture.md`, `research/logs/DECISIONS.md`, `research/README.md`, `research/logs/WORKLOG.md` | Synchronized all Approach A invariants (added INV-APPROACH-A), architecture documentation (item 10 mode seam), decision records (D-001 through D-018), issues log (E-001 through E-010 resolved), and environment specs | `38a440b` |
+| 2026-10-17 01:19:00 | CP1 | Deliver Major Checkpoint CP1 report and external ChatGPT review packet | `research/checkpoints/CP1.md`, `research/checkpoints/CP1_CHATGPT_REVIEW_PACKET.md`, `research/logs/WORKLOG.md` | Delivered comprehensive Major Checkpoint CP1 milestone report and standalone external review packet; froze candidate baseline under git tag `baseline-approach-a`; confirmed 98 unit tests passing across Windows native (7.70s) and WSL2 with `-race` (14.52s, 0 data races); stopped for external reviewer approval | `f81a20a` |
+
 
 
 
