@@ -1,0 +1,42 @@
+=== RUN   TestBasicPutGet
+panic: test timed out after 5s
+	running tests:
+		TestBasicPutGet (5s)
+
+goroutine 22 [running]:
+testing.(*M).startAlarm.func1()
+	C:/Program Files/Go/src/testing/testing.go:2802 +0x354
+created by time.goFunc
+	C:/Program Files/Go/src/time/sleep.go:215 +0x2d
+
+goroutine 1 [chan receive]:
+testing.(*T).Run(0x8fa736f8000, {0x7ff71b44e705?, 0x7ff71b36c32e?}, 0x7ff71b45e798)
+	C:/Program Files/Go/src/testing/testing.go:2109 +0x4c7
+testing.runTests.func1(0x8fa736f8000)
+	C:/Program Files/Go/src/testing/testing.go:2585 +0x3e
+testing.tRunner(0x8fa736f8000, 0x8fa736f1c58)
+	C:/Program Files/Go/src/testing/testing.go:2036 +0xc3
+testing.runTests({0x7ff71b44bc50, 0x7}, {0x7ff71b44f515, 0x11}, 0x8fa73694120, {0x7ff71b5e20c0, 0x4, 0x4}, {0xc2aca388d153e704, 0x12a760f2d, ...})
+	C:/Program Files/Go/src/testing/testing.go:2583 +0x4f0
+testing.(*M).Run(0x8fa73690280)
+	C:/Program Files/Go/src/testing/testing.go:2443 +0x6ac
+main.main()
+	_testmain.go:64 +0x9b
+
+goroutine 21 [sync.RWMutex.RLock]:
+sync.runtime_SemacquireRWMutexR(0x1773ea83560?, 0xa0?, 0x7ff71b5e8d80?)
+	C:/Program Files/Go/src/runtime/sema.go:100 +0x25
+sync.(*RWMutex).RLock(...)
+	C:/Program Files/Go/src/sync/rwmutex.go:74
+owndbms/lsmengine.(*Manager).LatestValue(0x8fa736de190, {0x7ff71b44b575, 0x4, 0x4})
+	C:/Users/ramst/Documents/Projects/selfdbms/lsmengine/manager.go:120 +0x73
+owndbms/lsmengine.(*Transaction).Commit(0x8fa735fdee8)
+	C:/Users/ramst/Documents/Projects/selfdbms/lsmengine/transaction.go:60 +0xb4
+owndbms/lsmengine.TestBasicPutGet(0x8fa736f8200)
+	C:/Users/ramst/Documents/Projects/selfdbms/lsmengine/engine_test.go:50 +0x216
+testing.tRunner(0x8fa736f8200, 0x7ff71b45e798)
+	C:/Program Files/Go/src/testing/testing.go:2036 +0xc3
+created by testing.(*T).Run in goroutine 1
+	C:/Program Files/Go/src/testing/testing.go:2101 +0x4a9
+FAIL	owndbms/lsmengine	6.443s
+FAIL
