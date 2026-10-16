@@ -6,3 +6,4 @@ lsmengine/test_data_*
 lsmengine/bench_data*
 *.sst
 wal*.log
+research/*
