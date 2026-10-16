@@ -5,7 +5,7 @@
 **Governing Sub-phase:** I1.3.8 (I1.3.8a through I1.3.8f)  
 **Governing Architecture:** Approach A (Manager-wide Mutex Baseline)  
 **Git Branch:** `research/reader-compactor-sync`  
-**Current HEAD Commit:** `eb78fd1`  
+**Current HEAD Commit:** `e3026e8`  
 **Prior Milestone Review:** CP1.3b Conditional Rejection (Circular wait deadlock between `Manager.Mu` and bounded `flushChan`)  
 **Status:** COMPLETE — STOPPED FOR EXTERNAL REVIEWER DECISION  
 
