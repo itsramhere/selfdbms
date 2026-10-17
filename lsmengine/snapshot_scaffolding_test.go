@@ -27,11 +27,30 @@ func TestSnapshotState_String(t *testing.T) {
 	}
 }
 
+func TestSnapshotShutdownPhase_String(t *testing.T) {
+	tests := []struct {
+		phase    SnapshotShutdownPhase
+		expected string
+	}{
+		{SnapshotPhaseOpen, "Open"},
+		{SnapshotPhaseDraining, "Draining"},
+		{SnapshotPhaseClosed, "Closed"},
+		{SnapshotShutdownPhase(99), "Unknown"},
+	}
+
+	for _, tt := range tests {
+		if got := tt.phase.String(); got != tt.expected {
+			t.Errorf("SnapshotShutdownPhase(%d).String() = %q, expected %q", int(tt.phase), got, tt.expected)
+		}
+	}
+}
+
 func TestSharedReaderState_String(t *testing.T) {
 	tests := []struct {
 		state    SharedReaderState
 		expected string
 	}{
+		{SharedReaderUnpublished, "Unpublished"},
 		{SharedReaderActive, "Active"},
 		{SharedReaderObsolete, "Obsolete"},
 		{SharedReaderClosing, "Closing"},
@@ -56,6 +75,9 @@ func TestSharedReader_RefAndCount(t *testing.T) {
 	}
 	if count := sr.RefCount(); count != 0 {
 		t.Fatalf("expected initial RefCount to be 0, got %d", count)
+	}
+	if sr.State() != SharedReaderUnpublished {
+		t.Fatalf("expected initial state SharedReaderUnpublished, got %v", sr.State())
 	}
 
 	sr.Ref()

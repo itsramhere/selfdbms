@@ -202,6 +202,16 @@ Under Approach A, synchronization relies entirely on `Manager.Mu (*sync.RWMutex)
 - **Current Status**: **Adopted and Formalized (Sub-phase I2.7, Decision D-025)**.
 - **Evidence / Justification**: Specified in `research/design/alternatives.md`. Eliminates premature rejection of admitted flushes during shutdown drain.
 
+### INV-SNAP-8: Concurrent Close Idempotency & Unified Teardown Barrier (Approach B)
+- **Statement**: Exactly one caller initiates and executes engine shutdown teardown. Concurrent `Close()` callers wait outside all locks until teardown completely finishes, holding zero mutexes needed by background workers, pin releases, or file cleanup routines. All callers observe the identical final shutdown error (`m.closeErr`). No caller returns successful completion before physical cleanup and handle teardown finishes.
+- **Current Status**: **Adopted and Formalized (Sub-phase CP2b-V, Decision D-027)**.
+- **Evidence / Justification**: Specified in `research/design/alternatives.md` Section 6 via non-mutex channel barrier `m.closeDone`. Eliminates premature `ErrClosed` return while teardown is in progress, guarantees exactly-once cleanup, and preserves Approach A contract.
+
+### INV-SNAP-9: Unpublished SSTable Discard & Rollback Isolation (Approach B)
+- **Statement**: A newly constructed `SharedReader` begins in state `SharedReaderUnpublished` with initial `refCount = 1` owned exclusively by the builder goroutine. If snapshot publication fails, the builder relinquishes ownership (`refCount = 0`), transitioning the reader via Case C to `SharedReaderClosing` without ever marking it obsolete. A failed or abandoned unpublished table shall never be observed by queries, shall never enter published snapshot reader sets, and must have its OS file handle closed before file unlinking on Windows NTFS.
+- **Current Status**: **Adopted and Formalized (Sub-phase CP2b-V, Decisions D-026, D-029)**.
+- **Evidence / Justification**: Specified in `research/design/alternatives.md` Section 3.4. Scaffolding enum `SharedReaderUnpublished` declared in `lsmengine/snapshot.go`. Verified by `TestSharedReaderState_String` and `TestSharedReader_RefAndCount`. Eliminates file descriptor and disk space leaks upon failed flushes or compactions.
+
 
 
 

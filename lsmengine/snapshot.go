@@ -40,11 +40,35 @@ func (s SnapshotState) String() string {
 	}
 }
 
+// SnapshotShutdownPhase represents the snapshot subsystem lifecycle phase during shutdown.
+// Synchronized exclusively under Manager.snapshotMu.
+type SnapshotShutdownPhase int32
+
+const (
+	SnapshotPhaseOpen SnapshotShutdownPhase = iota
+	SnapshotPhaseDraining
+	SnapshotPhaseClosed
+)
+
+func (s SnapshotShutdownPhase) String() string {
+	switch s {
+	case SnapshotPhaseOpen:
+		return "Open"
+	case SnapshotPhaseDraining:
+		return "Draining"
+	case SnapshotPhaseClosed:
+		return "Closed"
+	default:
+		return "Unknown"
+	}
+}
+
 // SharedReaderState represents the physical lifecycle phase of an SSTable reader and file descriptor.
 type SharedReaderState int32
 
 const (
-	SharedReaderActive SharedReaderState = iota
+	SharedReaderUnpublished SharedReaderState = iota
+	SharedReaderActive
 	SharedReaderObsolete
 	SharedReaderClosing
 	SharedReaderClosed
@@ -56,6 +80,8 @@ const (
 
 func (s SharedReaderState) String() string {
 	switch s {
+	case SharedReaderUnpublished:
+		return "Unpublished"
 	case SharedReaderActive:
 		return "Active"
 	case SharedReaderObsolete:
