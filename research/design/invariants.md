@@ -167,6 +167,32 @@ Under Approach A, synchronization relies entirely on `Manager.Mu (*sync.RWMutex)
 - **Current Status**: **Adopted and Enforced (Sub-phase I1.5.2, Decision D-018)**.
 - **Evidence / Justification**: Implemented in `lsmengine/manager.go` via `SyncMode`, `Config`, `DefaultConfig`, `CreateManagerWithConfig`, and `(m *Manager) SyncMode()`. Verified by 5 comprehensive unit tests in `lsmengine/mode_selection_test.go` on Windows 11 NTFS native and WSL2 Linux with `-race` (zero data races).
 
+### INV-SNAP-1: Reader-Set Snapshot Immutability (Approach B)
+- **Statement**: Once published to `Manager.currentSnapshot`, the constituent `SharedReader` slice of a `ReaderSnapshot` is strictly immutable. No goroutine or compaction routine may append, reorder, replace, or mutate readers in an active or retired snapshot. Modifications are published exclusively by creating a completely new `ReaderSnapshot` instance.
+- **Current Status**: **Adopted and Formalized (Phase I2, Decision D-020)**.
+- **Evidence / Justification**: Specified in `research/design/alternatives.md`. Scaffolding types declared in `lsmengine/snapshot.go`. Verified by `TestSnapshotState_String` and `TestApproachB_ScaffoldingEnforcesUnsupportedMode`.
+
+### INV-SNAP-2: Pre-Release Snapshot Pinning Atomicity (Approach B)
+- **Statement**: A reader must acquire an active pin on the published snapshot before releasing the lock protecting that snapshot (`snapshotMu` or `Manager.Mu.RLock()`). Readers holding a valid pin are guaranteed that no constituent reader will be closed, invalidated, or unlinked during disk I/O execution.
+- **Current Status**: **Adopted and Formalized (Phase I2, Decision D-021)**.
+- **Evidence / Justification**: Specified in `research/design/alternatives.md`. Enforces leaf-lock acquisition and zero-lock disk I/O.
+
+### INV-SNAP-3: Two-Tier Independent SSTable Handle Lifetime (Approach B)
+- **Statement**: An `SSTableReader` OS file descriptor is closed and unlinked if and only if its global `SharedReader.refCount` reaches zero AND it is marked `obsolete`. Retiring or draining a snapshot that shares uncompacted readers with other published or pinned snapshots shall never close or unlink surviving readers.
+- **Current Status**: **Adopted and Formalized (Phase I2, Decision D-020)**.
+- **Evidence / Justification**: Specified in `research/design/alternatives.md`. Scaffolding declared in `lsmengine/snapshot.go`. Verified by `TestSharedReader_RefAndCount`.
+
+### INV-SNAP-4: Snapshot Pin Underflow Invariant (Approach B)
+- **Statement**: The pin count on any snapshot must be monotonically non-negative. Decrementing a snapshot pin count when `pins <= 0` must trigger an immediate fatal panic (`FATAL: snapshot pin underflow detected`), preventing silent corruption of reader lifecycle state.
+- **Current Status**: **Adopted and Formalized (Phase I2, Decision D-021)**.
+- **Evidence / Justification**: Specified in `research/design/alternatives.md`.
+
+### INV-SNAP-5: Coupled Memory-Tier Read and Disk Snapshot Pinning (Approach B)
+- **Statement**: A point read query must inspect the active mutable Memtable and all frozen Memtables, and acquire its pin on the active disk snapshot within the same atomic `Manager.Mu.RLock()` critical section. No flush publication or Memtable retirement may interleave between memory-tier inspection and disk snapshot acquisition, guaranteeing continuous key visibility (`INV-HANDOFF-1`).
+- **Current Status**: **Adopted and Formalized (Phase I2, Decision D-022)**.
+- **Evidence / Justification**: Specified in `research/design/alternatives.md`. Eliminates the visibility gap between memory tiers and disk tiers.
+
+
 
 
 

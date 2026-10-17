@@ -109,6 +109,9 @@
 | **Commit: Flush Trigger Deadlock Audit** | `TestCP1V2_TransactionCommit_FlushTrigger_NoDeadlock` | `lsmengine/cp1_verification_test.go:13` | *N/A* (Added CP1-V.2) | *N/A* | **PASS (0.07s)** | No | Verifies Transaction.Commit calling checkAndTriggerFlush executes cleanly without self-deadlock on Manager.Mu. |
 | **Commit: Error Propagation on SSTable IO** | `TestCP1V3_TransactionCommit_ErrorPropagation_SSTableIOError` | `lsmengine/cp1_verification_test.go:82` | *N/A* (Added CP1-V.3) | *N/A* | **PASS (0.02s)** | No | Verifies Transaction.Commit aborts and surfaces error when latestValueLocked encounters SSTable I/O error (E-011 / D-019). |
 | **Shutdown: Active Memtable & WAL Recovery** | `TestCP1V7_CleanShutdown_ActiveMemtableAndWALRecovery` | `lsmengine/cp1_verification_test.go:187` | *N/A* (Added CP1-V.7) | *N/A* | **PASS (0.03s)** | No | Verifies Close() preserves active Memtable data in WAL without flushing to SSTable, and RecoverFromWAL accurately restores committed entries and sequence numbers. |
+| **Snapshot: State String Formatting** | `TestSnapshotState_String` | `lsmengine/snapshot_scaffolding_test.go:8` | *N/A* (Added I2.4) | *N/A* | **PASS (0.00s)** | No | Verifies SnapshotState enum string formatting for all 7 lifecycle states and unknown modes. |
+| **Snapshot: SharedReader Refcounting** | `TestSharedReader_RefAndCount` | `lsmengine/snapshot_scaffolding_test.go:27` | *N/A* (Added I2.4) | *N/A* | **PASS (0.00s)** | No | Verifies SharedReader atomic Ref and RefCount behavior. |
+| **Snapshot: Scaffolding Rejection** | `TestApproachB_ScaffoldingEnforcesUnsupportedMode` | `lsmengine/snapshot_scaffolding_test.go:40` | *N/A* (Added I2.4) | *N/A* | **PASS (0.00s)** | No | Verifies that minimal Approach B scaffolding preserves ErrUnsupportedSyncMode rejection until Phase I3. |
 | **Flush / Swap** | `forceSyncFlush` | `lsmengine/cross_tier_conflict_test.go:9` | Verified | Verified | **PASS** | No | Synchronous flush hook verified in all cross-tier and compaction tests. |
 | **Compaction** | `CompactAll` | `lsmengine/compaction.go:50` | Untested | Untested | **PASS** | Yes | Full k-way merge and deduplication verified in concurrency test suite. |
 | **Concurrent Read + Compaction** | `TestCompactionPublication_ConcurrentFlush*` | `lsmengine/compaction_concurrency_test.go` | Untested | Untested | **PASS** | Yes | Reader-compactor overlap verified under Approach A RWMutex. |
@@ -123,7 +126,7 @@
 ---
 
 ## 2. Summary of Findings
-1. **Current Test Pass Rate**: **101/101 unit tests (107 total runnable tests including 6 benchmarks)** passing on Windows 11 NTFS native (7.78s), **101/101 unit tests passing under WSL2 `go test -race` with zero data races and zero deadlocks** (14.68s). Concurrency stress suites verified with `-count=5` on Windows (10.12s) and WSL2 `-race` (23.64s). Clean `go vet ./...` in both environments.
+1. **Current Test Pass Rate**: **104/104 unit tests (110 total runnable tests including 6 benchmarks)** passing on Windows 11 NTFS native (5.04s), **104/104 unit tests passing under WSL2 `go test -race` with zero data races and zero deadlocks** (12.34s). Clean `go vet ./...` in both environments.
 2. **Synchronization-Mode Seam (INV-APPROACH-A / D-018)**: Engine provides explicit `SyncMode` (`SyncModeApproachA`, `SyncModeApproachB`) and `CreateManagerWithConfig(cfg)`. Default configuration selects Approach A. Unimplemented Approach B is explicitly rejected with `ErrUnsupportedSyncMode`.
 3. **Flush Failure Precedence & Fail-Stop (INV-FLUSH-FAIL-1 / D-017 / Issue E-010)**: When a flush fails, background worker `flushLoop` halts immediately upon observing `m.flushErr != nil`. Halting prevents subsequent generations from being published out-of-order to `m.ActiveSSreaders`, preserving strict chronological order in `m.Frozenmem` and eliminating stale reads, tombstone resurrection, and conflict detection failures.
 4. **Memory-Tier Synchronization (INV-SYNC-1 / D-016)**: Active Memtable mutations (`Put`) and lookups (`Get`, `LatestValue`) are serialized exclusively under `Manager.Mu` (`Lock()` for writes, `RLock()` for reads). SkipList is non-thread-safe on its own, but external mutex protection provides complete mutual exclusion and happens-before synchronization.
@@ -132,6 +135,7 @@
 7. **Cross-Tier Logical Ordering & Reference Oracle Scope**: Validated against an independent snapshot reference oracle across 104 data points for all sequence numbers. Point-read reference oracle tests establish correct single-key multi-version selection across tiers; they do not establish multi-key transactional snapshot isolation across concurrent long-running transactions.
 8. **Acyclic Lock Hierarchy (INV-SYNC-3)**: Strict hierarchical order `m.compactionMu -> Manager.Mu -> m.flushQueueMu -> Wal.mu` maintained across all paths. Deadlock freedom validated empirically under saturated conditions.
 9. **Durability and Recovery Limitations**: Documented single-file recovery limit in `RecoverFromWAL` (`RISK-002`), unbounded queue memory growth (`RISK-001`), and RAM-only volatility of failed Memtables (`RISK-003`) as open risks for Checkpoint CP1 (`research/design/durability_and_recovery_limitations.md`).
+
 
 
 
