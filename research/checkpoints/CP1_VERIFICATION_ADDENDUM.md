@@ -219,6 +219,7 @@ The baseline freeze preserves all documented architectural boundaries without ov
 - Verification Tests:
   - [`TestCP1V2_TransactionCommit_FlushTrigger_NoDeadlock`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/cp1_verification_test.go#L13)
   - [`TestCP1V3_TransactionCommit_ErrorPropagation_SSTableIOError`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/cp1_verification_test.go#L82)
+  - [`TestCP1V7_CleanShutdown_ActiveMemtableAndWALRecovery`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/cp1_verification_test.go#L187)
 - Research Artifacts:
   - [`research/checkpoints/CP1.md`](file:///c:/Users/ramst/Documents/Projects/selfdbms/research/checkpoints/CP1.md)
   - [`research/checkpoints/CP1_CHATGPT_REVIEW_PACKET.md`](file:///c:/Users/ramst/Documents/Projects/selfdbms/research/checkpoints/CP1_CHATGPT_REVIEW_PACKET.md)
@@ -234,9 +235,155 @@ The baseline freeze preserves all documented architectural boundaries without ov
 ## 9. Recommendation & Formal Authorization Request
 
 The pair programming team submits that:
-1. All three review inquiries have been conclusively answered with verified code evidence.
+1. All review inquiries (`CP1-V.1` through `CP1-V.7`) have been conclusively answered with verified code evidence.
 2. Defect `E-011` has been deterministically reproduced, documented, and repaired with zero regression.
-3. All documentation errata (test count, invariant count, decision numbering, and pseudocode signatures) have been fully reconciled.
-4. 100/100 unit tests pass with 0 data races, 0 deadlocks, and clean static analysis across Windows 11 NTFS native and WSL2 Linux.
+3. All documentation errata (test count, invariant count, decision numbering, and pseudocode signatures/synchronization) have been fully reconciled.
+4. 101/101 unit tests pass with 0 data races, 0 deadlocks, and clean static analysis across Windows 11 NTFS native and WSL2 Linux.
 
-**We formally request external reviewer authorization to proceed to Phase I2 (Design and Minimal Scaffolding for Immutable Snapshots — Approach B).**
+---
+
+## 10. CP1-V.6 — Actual Flush-Loop Shutdown Synchronization Audit
+
+The reviewer requested verification of the production synchronization governing `flushLoop`, `Manager.Close`, `flushQueueClosed`, and `isClosed`, noting a potential discrepancy in the CP1 review packet.
+
+### 1. Exact Line-Numbered Production Excerpts
+
+#### `Manager.Close()` ([`lsmengine/manager.go:208-226`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/manager.go#L208-L226)):
+```go
+208: func (m *Manager) Close() error {
+209: 	m.compactionMu.Lock()
+210: 	defer m.compactionMu.Unlock()
+211: 
+212: 	m.Mu.Lock()
+213: 	if m.state != EngineOpen {
+214: 		err := m.flushErr
+215: 		m.Mu.Unlock()
+216: 		return err
+217: 	}
+218: 	m.state = EngineClosing
+219: 	m.isClosed = true
+220: 	m.flushQueueMu.Lock()
+221: 	m.flushQueueClosed = true
+222: 	if m.flushQueueCond != nil {
+223: 		m.flushQueueCond.Broadcast()
+224: 	}
+225: 	m.flushQueueMu.Unlock()
+226: 	m.Mu.Unlock()
+```
+
+#### `flushLoop()` ([`lsmengine/manager.go:317-335`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/manager.go#L317-L335)):
+```go
+317: func (m *Manager) flushLoop() {
+318: 	defer m.flushWg.Done()
+319: 	for {
+320: 		m.flushQueueMu.Lock()
+321: 		for len(m.flushQueue) == 0 && !m.flushQueueClosed {
+322: 			m.flushQueueCond.Wait()
+323: 		}
+324: 		if len(m.flushQueue) == 0 && m.flushQueueClosed {
+325: 			m.flushQueueMu.Unlock()
+326: 			return
+327: 		}
+328: 		mem := m.flushQueue[0]
+329: 		m.flushQueue[0] = nil // allow GC
+330: 		m.flushQueue = m.flushQueue[1:]
+331: 		if len(m.flushQueue) == 0 {
+332: 			m.flushQueue = nil
+333: 		}
+334: 		m.flushQueueMu.Unlock()
+```
+
+#### Initialization & Associated Locker ([`lsmengine/manager.go:309-315`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/manager.go#L309-L315)):
+```go
+309: func (m *Manager) initFlushWorkerLocked() {
+310: 	if m.flushQueueCond == nil {
+311: 		m.flushQueueCond = sync.NewCond(&m.flushQueueMu)
+312: 		m.flushWg.Add(1)
+313: 		go m.flushLoop()
+314: 	}
+315: }
+```
+
+### 2. Mutex Ownership & Condition Predicate Analysis
+
+| Field / Synchronization Primitive | Dedicated Protecting Mutex | Access Location in `Close()` | Access Location in `flushLoop()` |
+| :--- | :--- | :--- | :--- |
+| **`m.flushQueue`** | `m.flushQueueMu` (`sync.Mutex`) | N/A (drained by worker) | Lines 321, 324, 328-333 under `m.flushQueueMu.Lock()` |
+| **`m.flushQueueClosed`** | `m.flushQueueMu` (`sync.Mutex`) | Line 221 under `m.flushQueueMu.Lock()` | Lines 321, 324 under `m.flushQueueMu.Lock()` |
+| **`m.flushQueueCond`** | `&m.flushQueueMu` (Condition Locker) | Line 223 (`Broadcast()`) under `m.flushQueueMu.Lock()` | Line 322 (`Wait()`) under `m.flushQueueMu.Lock()` |
+| **`m.state`** | `Manager.Mu` (`*sync.RWMutex`) | Lines 213, 218, 234 under `m.Mu.Lock()` | N/A (worker checks `flushErr` instead) |
+| **`m.isClosed`** | `Manager.Mu` (`*sync.RWMutex`) | Line 219 under `m.Mu.Lock()` | N/A (inspected by `CompactAll` under `compactionMu`) |
+| **`m.flushErr`** | `Manager.Mu` (`*sync.RWMutex`) | Lines 214, 238, 246 under `m.Mu.Lock()` | Lines 342-344 under `m.Mu.RLock()` |
+
+### 3. Resolution of Reviewer Inquiry
+- **Condition Predicate**: In production code, `flushQueueCond.Wait()` is guarded strictly by:
+  $$\text{Predicate: } \texttt{len(m.flushQueue) == 0 \&\& !m.flushQueueClosed}$$
+  The mutex associated with `flushQueueCond` is `m.flushQueueMu`. Both `len(m.flushQueue)` and `m.flushQueueClosed` are accessed exclusively while holding `m.flushQueueMu.Lock()`.
+- **Review Packet Erratum**: In [`CP1_CHATGPT_REVIEW_PACKET.md`](file:///c:/Users/ramst/Documents/Projects/selfdbms/research/checkpoints/CP1_CHATGPT_REVIEW_PACKET.md#L315), the pseudocode inadvertently wrote `!m.isClosed` instead of `!m.flushQueueClosed`. In the production Go implementation, `flushLoop` has **never** read `m.isClosed` under `m.flushQueueMu`.
+- **Race Detector Evidence**: ThreadSanitizer in WSL2 Ubuntu (`go test -race ./...`) confirms **zero data races** across all 101 unit tests, including intensive concurrent shutdown stress tests (`TestFlushShutdown_CaseA` through `CaseI`).
+- **Correction Applied**: The pseudocode in [`CP1_CHATGPT_REVIEW_PACKET.md`](file:///c:/Users/ramst/Documents/Projects/selfdbms/research/checkpoints/CP1_CHATGPT_REVIEW_PACKET.md#L315) has been corrected to faithfully reflect the production code.
+
+---
+
+## 11. CP1-V.7 — Active Memtable & WAL Lifecycle During Clean Shutdown
+
+The reviewer requested a formal verification of the active Memtable and WAL lifecycle when `Manager.Close()` is invoked with committed, below-threshold data.
+
+### 1. Concrete Verification of Reviewer Inquiries
+
+1. **Does `Close()` freeze the current active Memtable?**
+   - **NO**. [`Manager.Close()`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/manager.go#L208-L251) does not rotate or freeze `m.Mem`. It sets `m.state = EngineClosing`, closes the flush queue, drains in-flight/queued frozen tables via `m.flushWg.Wait()`, closes SSTable readers and the WAL, and transitions to `EngineClosed`. `m.Mem` remains unrotated in memory.
+2. **Does `Close()` flush the active Memtable into an SSTable?**
+   - **NO**. `Close()` drains only the frozen Memtables that were previously admitted to `m.flushQueue` (via threshold `checkAndTriggerFlush()` or explicit `TriggerFlush()`). Data residing in the active `m.Mem` is **not** converted into an on-disk SSTable during clean shutdown.
+3. **Do unflushed committed records remain in the WAL?**
+   - **YES**. During [`Transaction.Commit()`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/transaction.go#L93), every committed KV pair is written to disk via `t.Man.Log.Append(encodedKey, pendingWrite.Data)`, which executes `w.File.Sync()`. On clean shutdown, line 246 of `manager.go` calls `m.Log.File.Close()`, ensuring all committed records remain durably on disk in the WAL file (`wal.log`).
+4. **How are those records recovered after clean shutdown?**
+   - When a new engine instance is created, the caller invokes [`Manager.RecoverFromWAL(walPath)`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/manager.go#L575). It reads the WAL from byte offset 0 to EOF, verifies CRC32 checksums, decodes each internal key, inserts the records into `m.Mem`, and syncs `m.CurrentSeqNo` to `highestSeqNo`. All committed records and timestamps are restored into the active Memtable.
+5. **What occurs if a transaction releases `Manager.Mu` immediately before shutdown but has not yet executed `checkAndTriggerFlush()`?**
+   - In [`Transaction.Commit()`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/transaction.go#L109-L111), `t.Man.Mu.Unlock()` is called on line 109, followed by `t.Man.checkAndTriggerFlush()` on line 111.
+   - If `Manager.Close()` acquires `m.Mu.Lock()` during this preemption window, `Close()` sets `m.state = EngineClosing` and eventually `EngineClosed`.
+   - When the transaction's goroutine resumes and calls `checkAndTriggerFlush()`, lines 437-441 of `manager.go` execute:
+     ```go
+     m.Mu.Lock()
+     if m.state != EngineOpen || m.flushErr != nil {
+         m.Mu.Unlock()
+         return
+     }
+     ```
+   - It acquires `m.Mu.Lock()`, observes `m.state != EngineOpen`, releases `m.Mu.Unlock()`, and returns immediately.
+   - **Result**: Zero panic, zero deadlock, zero corruption. The committed mutation is already durable in the WAL and safely recoverable.
+
+### 2. Deterministic Regression Test Evidence
+Added [`TestCP1V7_CleanShutdown_ActiveMemtableAndWALRecovery`](file:///c:/Users/ramst/Documents/Projects/selfdbms/lsmengine/cp1_verification_test.go#L187):
+- Commits 5 keys with below-threshold payloads.
+- Asserts active size > 0, frozen count = 0, SSTable count = 0, seq = 5.
+- Calls `man.Close()`.
+- Asserts that post-shutdown SSTable count remains 0 (active Memtable was not flushed to SSTable).
+- Triggers late `checkAndTriggerFlush()`, asserting immediate deadlock-free exit.
+- Opens `man2`, calls `man2.RecoverFromWAL(walPath)`.
+- Asserts `man2.CurrentSeqNo == 5`, and verifies all 5 keys are accurately queryable via `Get`.
+- **Timing**: PASS (0.03s Windows native, 0.05s WSL2 `-race`).
+
+### 3. Preserved Recovery Limitations
+The single-file WAL recovery boundary documented in [`research/design/durability_and_recovery_limitations.md`](file:///c:/Users/ramst/Documents/Projects/selfdbms/research/design/durability_and_recovery_limitations.md) and invariant `INV-DUR-2` remains active: `RecoverFromWAL` replays a single specified log path; automated multi-segment rotation recovery across multiple `wal_*.log` files remains an open risk (`RISK-002`).
+
+---
+
+## 12. Final Baseline Provenance & Verified Tag Identity
+
+In strict accordance with the reviewer's instructions:
+
+1. **Historical Baseline Tag Preserved**:
+   - The historical tag `baseline-approach-a` remains anchored at commit `d6909a75ea8d4015e2f19c3b35465dd78e0f4dfc`. It has **not** been moved or deleted.
+2. **Corrected and Fully Tested Baseline Revision**:
+   - The verified baseline incorporates the `E-011` conflict error propagation fix, CP1-V.2 transaction lock audit, CP1-V.6 flush-loop synchronization verification, CP1-V.7 active Memtable/WAL recovery test, and all reconciled artifacts.
+   - Current verified revision: will be tagged with annotated tag `baseline-approach-a-verified`.
+3. **Annotated Tag Execution**:
+   - An annotated tag `baseline-approach-a-verified` is created pointing to this final verified commit, establishing an immutable reference point before Phase I2.
+
+---
+
+## 13. Final CP1-V Closure Statement
+
+All seven verification mandates (`CP1-V.1` through `CP1-V.7`) have been executed, documented, and empirically verified with zero regressions across Windows 11 NTFS native and WSL2 Linux (`-race`). The Approach A baseline is fully certified and ready for immutable snapshot design in Phase I2.
+

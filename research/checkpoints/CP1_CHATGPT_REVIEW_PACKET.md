@@ -312,10 +312,10 @@ func (m *Manager) flushLoop() {
     defer m.flushWg.Done()
     for {
         m.flushQueueMu.Lock()
-        for len(m.flushQueue) == 0 && !m.isClosed {
+        for len(m.flushQueue) == 0 && !m.flushQueueClosed {
             m.flushQueueCond.Wait()
         }
-        if len(m.flushQueue) == 0 && m.isClosed {
+        if len(m.flushQueue) == 0 && m.flushQueueClosed {
             m.flushQueueMu.Unlock()
             return // Clean shutdown drain completed
         }

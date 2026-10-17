@@ -2,6 +2,7 @@ package lsmengine
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -176,3 +177,109 @@ func TestCP1V3_TransactionCommit_ErrorPropagation_SSTableIOError(t *testing.T) {
 	}
 	t.Logf("Transaction.Commit properly rejected with: %v", commitErr)
 }
+
+// TestCP1V7_CleanShutdown_ActiveMemtableAndWALRecovery verifies that:
+// 1. Manager.Close() does NOT flush the active below-threshold Memtable to disk.
+// 2. Unflushed committed records remain durably in the WAL file on disk.
+// 3. When a new Manager recovers via RecoverFromWAL(walPath), all committed records
+//    and sequence numbers are restored accurately into the active Memtable.
+// 4. If a transaction releases Manager.Mu before invoking checkAndTriggerFlush(),
+//    and Manager.Close() completes first, checkAndTriggerFlush() exits cleanly without panic or deadlock.
+func TestCP1V7_CleanShutdown_ActiveMemtableAndWALRecovery(t *testing.T) {
+	testDir := "test_data_cp1v7_shutdown_wal"
+	os.RemoveAll(testDir)
+	os.MkdirAll(testDir, 0755)
+	defer os.RemoveAll(testDir)
+
+	walPath := testDir + "/wal.log"
+	cfg := Config{
+		Mode:    SyncModeApproachA,
+		WalPath: walPath,
+	}
+	man, err := CreateManagerWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	// Commit 5 keys with below-threshold payloads
+	for i := 1; i <= 5; i++ {
+		txn := man.Begin()
+		txn.Put(fmt.Sprintf("key_%d", i), fmt.Sprintf("val_%d", i))
+		if err := txn.Commit(); err != nil {
+			t.Fatalf("txn %d commit failed: %v", i, err)
+		}
+	}
+
+	// Verify pre-shutdown state: exactly 5 keys in active Memtable, 0 frozen, 0 SSTables
+	man.Mu.RLock()
+	activeSize := man.Mem.SizeBytes
+	frozenCount := len(man.Frozenmem)
+	sstCount := len(man.ActiveSSreaders)
+	lastSeq := man.CurrentSeqNo.Load()
+	man.Mu.RUnlock()
+
+	if activeSize == 0 || frozenCount != 0 || sstCount != 0 || lastSeq != 5 {
+		t.Fatalf("unexpected pre-shutdown state: activeSize=%d, frozen=%d, sst=%d, seq=%d",
+			activeSize, frozenCount, sstCount, lastSeq)
+	}
+
+	// Perform clean shutdown
+	if err := man.Close(); err != nil {
+		t.Fatalf("Manager.Close failed: %v", err)
+	}
+
+	// Verify post-shutdown invariants:
+	// 1. Active Memtable was NOT flushed to SSTable on Close (0 SSTables created)
+	man.Mu.RLock()
+	postSSTCount := len(man.ActiveSSreaders)
+	postState := man.state
+	man.Mu.RUnlock()
+
+	if postSSTCount != 0 {
+		t.Fatalf("expected 0 SSTables after clean shutdown of active Memtable, got %d", postSSTCount)
+	}
+	if postState != EngineClosed {
+		t.Fatalf("expected state EngineClosed, got %v", postState)
+	}
+
+	// Verify that late checkAndTriggerFlush() exits cleanly without deadlock or mutation
+	done := make(chan struct{})
+	go func() {
+		man.checkAndTriggerFlush()
+		close(done)
+	}()
+	select {
+	case <-done:
+		// Clean exit
+	case <-time.After(1 * time.Second):
+		t.Fatalf("DEADLOCK: late checkAndTriggerFlush hung after Close()")
+	}
+
+	// Recover into a fresh manager instance using the same WAL file
+	man2, err := CreateManagerWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("failed to create manager2: %v", err)
+	}
+	defer man2.Close()
+
+	if err := man2.RecoverFromWAL(walPath); err != nil {
+		t.Fatalf("RecoverFromWAL failed: %v", err)
+	}
+
+	// Verify recovered state: CurrentSeqNo restored to 5, all 5 keys visible via point read
+	if man2.CurrentSeqNo.Load() != 5 {
+		t.Fatalf("expected recovered CurrentSeqNo=5, got %d", man2.CurrentSeqNo.Load())
+	}
+
+	for i := 1; i <= 5; i++ {
+		val, err := man2.Get(fmt.Sprintf("key_%d", i), 100)
+		if err != nil {
+			t.Fatalf("failed to read recovered key_%d: %v", i, err)
+		}
+		expected := fmt.Sprintf("val_%d", i)
+		if val != expected {
+			t.Fatalf("key_%d mismatch: expected %q, got %q", i, expected, val)
+		}
+	}
+}
+
