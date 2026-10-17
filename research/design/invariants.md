@@ -197,6 +197,12 @@ Under Approach A, synchronization relies entirely on `Manager.Mu (*sync.RWMutex)
 - **Current Status**: **Adopted and Formalized (Sub-phase I2.6, Decisions D-023, D-024)**.
 - **Evidence / Justification**: Specified in `research/design/alternatives.md`. Eliminates premature file unlinking, Windows `ERROR_SHARING_VIOLATION`, and unintended SSTable deletion on shutdown.
 
+### INV-SNAP-7: Coordinated Flush Publication During EngineClosing (Approach B)
+- **Statement**: In Approach B, background flush tasks admitted while `m.state == EngineOpen` prior to `flushQueueClosed = true` hold valid task-admission tokens and are strictly permitted to publish completed SSTables and remove corresponding frozen Memtables during `m.state == EngineClosing`. Publication is rejected strictly when `m.state == EngineClosed`. This coordinates with `INV-LIFETIME-5` to ensure admitted Memtables drain and publish without data loss before final teardown.
+- **Current Status**: **Adopted and Formalized (Sub-phase I2.7, Decision D-025)**.
+- **Evidence / Justification**: Specified in `research/design/alternatives.md`. Eliminates premature rejection of admitted flushes during shutdown drain.
+
+
 
 
 

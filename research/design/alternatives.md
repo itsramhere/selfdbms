@@ -1,155 +1,57 @@
-# Approach B: Hardened Immutable Reader-Set Snapshots Protocol & Lifecycle Architecture
+# Approach B: Final Hardened Immutable Reader-Set Snapshots Protocol & Lifecycle Architecture
 
 ## 1. Executive Summary & Problem Scope
 
-This document provides the hardened, formal specification for **Approach B: Immutable SSTable Reader-Set Snapshots with Two-Tier Reference Ownership**, resolving all design gaps identified in the Checkpoint CP2 review.
+This document provides the finalized, comprehensive design and protocol closure for **Approach B: Immutable SSTable Reader-Set Snapshots with Two-Tier Reference Ownership**, resolving all protocol consistency items identified in the Checkpoint CP2a external review (Sub-phase I2.7).
 
-The primary architectural objective of Approach B is to eliminate reader–compactor contention across slow disk I/O operations (`Manager.Get` vs `CompactAll` / `flushToDisk`) while strictly preserving:
+Approach B eliminates reader–compactor contention across slow disk I/O operations (`Manager.Get` vs `CompactAll` / `flushToDisk`) while strictly preserving:
 1. **`INV-ORDER-1`**: Monotonic chronological SSTable search order (newest to oldest).
-2. **`INV-HANDOFF-1`**: Continuous key visibility across storage tiers with zero loss during memory-to-disk handoffs.
-3. **`INV-COMPACT-1`**: Contiguous prefix compaction integrity.
+2. **`INV-HANDOFF-1`**: Continuous key version visibility across storage tiers with zero loss during memory-to-disk handoffs.
+3. **`INV-COMPACT-1`**: Contiguous prefix compaction integrity starting at index 0.
 4. **`INV-FLUSH-FIFO-1` & `INV-FLUSH-FAIL-1`**: Strict FIFO flush processing and fail-stop error containment.
-5. **Windows NTFS Compatibility**: Strict two-phase closure before unlinking, eliminating `ERROR_SHARING_VIOLATION`.
+5. **`INV-LIFETIME-5`**: Coordinated 4-phase shutdown drain allowing previously admitted flushes to complete and publish safely during `EngineClosing`.
+6. **Windows NTFS Compatibility**: Strict two-phase handle closure before unlinking, eliminating `ERROR_SHARING_VIOLATION`.
 
 ---
 
-## 2. Separate State Machines for Snapshots and Shared Readers (I2.6.1)
+## 2. Coordinated Flush Publication During EngineClosing (I2.7.1)
 
-### 2.1 Logical ReaderSnapshot Lifecycle State Machine
+### 2.1 Distinction of Lifecycle Permissions Across Engine States
 
-A `ReaderSnapshot` represents an immutable point-in-time view of active SSTables:
+In Approach A, `Manager.Close()` coordinates background flushes via a 4-phase drain protocol (`INV-LIFETIME-5`): Memtables enqueued prior to shutdown MUST drain, complete disk builds, and publish before final engine termination. CP2a's preliminary check `if m.state != EngineOpen` prematurely rejected publications during `EngineClosing`. 
 
-```mermaid
-stateDiagram-v2
-    [*] --> Constructing: Private assembly by flush or compaction
-    Constructing --> Published: Atomically installed into Manager.currentSnapshot under Manager.Mu
-    Constructing --> Aborted: Build failure / construction rollback
-    Published --> Pinned: Reader acquires active pin (pins > 0)
-    Pinned --> Published: Last reader releases pin (pins == 0, still current)
-    Published --> Retired: Newer snapshot published (pins == 0)
-    Pinned --> Retired: Newer snapshot published while pins > 0
-    Retired --> Drained: Final active reader releases pin (pins == 0)
-    Drained --> Reclaimed: Owned SharedReader references decremented; snapshot discarded
-    Aborted --> [*]
-    Reclaimed --> [*]
-```
+The finalized protocol establishes explicit permissions per lifecycle stage:
 
-- **`Constructing`**: Private to creator thread. Gathers constituent `SharedReader`s and increments their reference count. Invisible to all readers.
-- **`Published`**: Installed as `Manager.currentSnapshot`. Available for query pinning.
-- **`Pinned`**: Active queries hold pins (`pins > 0`). Readers perform concurrent disk reads with zero locks.
-- **`Retired`**: Replaced by a newer snapshot. Retained in `Manager.retiredSnapshots`. No new pins permitted.
-- **`Drained`**: Pin count on a retired snapshot reaches zero.
-- **`Reclaimed`**: Constituent `SharedReader` reference counts decremented by 1. Snapshot pointer array released to GC.
-- **`Aborted`**: Construction failed; acquired references rolled back cleanly.
+| Lifecycle Action | `EngineOpen` | `EngineClosing` | `EngineClosed` | Guarding Authority |
+| :--- | :--- | :--- | :--- | :--- |
+| **New Write Commits** | **Admitted** | **Rejected** (`ErrClosed`) | **Rejected** (`ErrClosed`) | `Manager.Mu.Lock()` |
+| **New Flush Admission** (`enqueueFlushLocked`) | **Admitted** | **Rejected** | **Rejected** | `Manager.Mu.Lock()`, `m.flushQueueClosed` |
+| **Admitted Flush Execution & Publication** | **Permitted** | **Permitted (Drain Phase)** | **Rejected** | `m.flushQueueMu`, `m.flushWg` |
+| **New Query Pin Admission** (`AcquireSnapshot`) | **Admitted** | **Rejected** (`ErrClosed`) | **Rejected** (`ErrClosed`) | `m.snapshotAdmissionClosed atomic.Bool` |
+| **Active Query Execution & Release** | **Permitted** | **Permitted (Finishing)** | **Completed** | `m.snapshotMu` |
+| **Compaction Publication** | **Permitted** | **Serialized / Rejected** | **Rejected** | `m.compactionMu`, `Manager.Mu.Lock()` |
+| **Final Reader & WAL Teardown** | **Forbidden** | **Forbidden** | **Executed** | `Manager.Mu.Lock()` |
 
----
+### 2.2 Task-Admission Ownership and Generation Tokens
 
-### 2.2 Physical SharedReader Lifetime State Machine
+Every flush task receives an explicit task-admission token upon creation in `enqueueFlushLocked`:
+- A task is admitted if and only if it is appended to `m.flushQueue` while `m.flushQueueClosed == false` and `m.state == EngineOpen`.
+- Once `Manager.Close()` executes, it acquires `m.flushQueueMu.Lock()` and sets `m.flushQueueClosed = true`.
+- All tasks already in `m.flushQueue` hold valid admission tokens and are tracked by `m.flushWg`.
+- The background FIFO worker processes admitted tasks sequentially. When publishing, it calls `publishFlushLocked(mem, newSR)`.
 
-A `SharedReader` encapsulates an open `SSTableReader` file handle, file path, reference count, and disk unlinking metadata:
-
-```mermaid
-stateDiagram-v2
-    [*] --> Active: SSTable created and opened (refCount >= 1, obsolete=false)
-    Active --> Obsolete: Superseded by replacement snapshot (refCount >= 1, obsolete=true)
-    Obsolete --> Closing: Last reference released (refCount == 0, obsolete=true)
-    Closing --> Closed: Reader.Close() completes cleanly
-    Closed --> Unlinking: os.Remove(Path) called
-    Unlinking --> Reclaimed: Physical file unlinked from disk
-    
-    Active --> ClosedValid: Engine shutdown with non-obsolete file (refCount drops or manager closes)
-    ClosedValid --> [*]: File preserved on disk for recovery
-    
-    Closing --> Failed: Close() returns OS error
-    Unlinking --> Failed: os.Remove() returns OS error
-    Failed --> Retrying: Scheduled on cleanup retry queue
-    Retrying --> Closing: Retry close
-    Retrying --> Unlinking: Retry unlink
-    Reclaimed --> [*]
-```
-
-#### SharedReader State Definitions:
-1. **`SharedReaderActive`**: Actively referenced by one or more published or pinned snapshots (`refCount >= 1`, `obsolete == false`).
-2. **`SharedReaderObsolete`**: Compacted away by a newly committed snapshot. Marked `obsolete = true`, but still held open by older pinned retired snapshots or compaction tasks (`refCount >= 1`).
-3. **`SharedReaderClosing`**: Refcount has reached 0 while `obsolete == true`. Scheduled for asynchronous handle closure.
-4. **`SharedReaderClosed`**: `Reader.Close()` has executed cleanly. File handle is verified closed.
-5. **`SharedReaderUnlinking`**: `os.Remove(Path)` is actively executing.
-6. **`SharedReaderReclaimed`**: File is completely deleted from disk. Memory structure is released to GC.
-7. **`SharedReaderClosedValid`**: Engine shutdown cleanly closed the OS handle without unlinking the file. The SSTable remains intact for subsequent startup and recovery.
-8. **`SharedReaderFailed`**: Close or unlink failed due to an OS I/O error or Windows sharing violation. Added to `m.failedCleanups` for background retry or shutdown surfacing.
-
----
-
-### 2.3 Precise Ownership Rules for Each Reference
-
-To prevent reference leaks, double-decrements, and use-after-close bugs, every reference increment on a `SharedReader` must have an explicit, documented owner:
-
-| Reference Holder | Lifetime Boundary | Acquisition Point | Release Point |
-| :--- | :--- | :--- | :--- |
-| **Current Published Snapshot** | While snapshot remains `currentSnapshot` | Snapshot publication | Snapshot retirement and subsequent drainage |
-| **Pinned Retired Snapshot** | While snapshot remains in `retiredSnapshots` with `pins > 0` | Retained from publication | Draining of retired snapshot (`pins == 0`) |
-| **Constructing Snapshot** | During private slice assembly | `sr.Ref()` during snapshot construction | Publication (transfers to published snapshot) OR construction rollback on error |
-| **Compaction Borrowed Inputs** | While background compaction merge executes | `sr.Ref()` at compaction start under `compactionMu` | Compaction completion (or abort/error) under `compactionMu` |
-| **Active Query Pin** | Duration of single `Manager.Get` execution | Pins the snapshot (`snap.pins++`), does NOT increment individual `sr.refCount` | Query exit (`defer ReleaseSnapshot(snap)`) |
-| **Manager Shutdown** | Graceful shutdown teardown | Retained until final drain | Closed cleanly as `ClosedValid` (never unlinked) |
-
----
-
-### 2.4 Race Resolution: Combined Synchronization Protocol
-
-The race between reference release to zero, obsolete marking, and cleanup scheduling is resolved by enforcing a **single ownership lock (`m.snapshotMu`)**:
-
-```go
-// SharedReader definition
-type SharedReader struct {
-    Reader    *SSTableReader
-    Path      string
-    refCount  int64              // Guarded by m.snapshotMu
-    state     SharedReaderState  // Guarded by m.snapshotMu
-    obsolete  bool               // Guarded by m.snapshotMu
-    closeOnce sync.Once
-    closeErr  error
-    unlinkErr error
-}
-```
-
-#### Protocol Guarantees:
-1. **Exactly-Once Cleanup Scheduling**:
-   When a snapshot drains, `reclaimSnapshotLocked` decrements `sr.refCount` under `m.snapshotMu`.
-   Only the exact transition where `sr.refCount == 0 && sr.obsolete == true` transitions `sr.state` to `SharedReaderClosing` and enqueues `sr` to `m.pendingCleanupReaders`. No duplicate enqueue is possible.
-2. **Zero-Reference Resurrection Prevention**:
-   Snapshot construction requires `m.snapshotMu`. A constructing snapshot only selects active readers. If `sr.obsolete == true` or `sr.refCount == 0`, it is rejected. Once `refCount` reaches 0 and `obsolete == true`, no thread can ever increment `sr.refCount`.
-3. **Pre-Release Ownership Acquisition**:
-   A constructing snapshot increments `sr.refCount` under `m.snapshotMu` *before* the new snapshot is published. An older snapshot cannot drain and close the reader while the constructing snapshot holds a valid reference.
-4. **Construction Rollback**:
-   If building an SSTable or assembling a snapshot fails, `rollbackSnapshotConstructionLocked(candidateReaders)` decrements `sr.refCount` for each reader acquired during that aborted construction.
-5. **Obsolete Marking Timing**:
-   Compaction marks input readers as `obsolete = true` under `m.snapshotMu` **if and only if** the replacement snapshot has been successfully published to `m.currentSnapshot`. If compaction aborts, input readers remain `obsolete = false`.
-6. **Surviving Snapshot Isolation**:
-   Readers shared by surviving snapshots have `refCount >= 1` and `obsolete == false`. Retiring an older snapshot decrements `refCount` but never triggers closure.
-7. **Shutdown Safety for Valid Files**:
-   During `Manager.Close()`, non-obsolete readers have `sr.state = SharedReaderClosedValid`. The cleanup worker invokes `sr.Reader.Close()` but strictly skips `os.Remove(sr.Path)`.
-8. **Explicit Cleanup Error Policy**:
-   If `sr.Reader.Close()` fails, the error is recorded in `sr.closeErr`. If `os.Remove(sr.Path)` fails (e.g. temporary Windows anti-virus lock), `sr.unlinkErr` is recorded, `sr.state = SharedReaderFailed`, and `sr` is placed on `m.failedCleanups` with exponential backoff retry up to 3 times before surfacing an error on `Manager.Close()`.
-
----
-
-## 3. Atomic Memory-to-Disk Publication Protocol (I2.6.2)
-
-### 3.1 Linearization and Lock Coupling
-
-To eliminate the visibility gap during memory-to-disk handoffs (`INV-HANDOFF-1`), flush publication couples `Manager.Mu.Lock()` with snapshot publication:
+### 2.3 Corrected `publishFlushLocked` Pseudocode
 
 ```go
 func (m *Manager) publishFlushLocked(mem *Memtable, newSR *SharedReader) error {
     // PRECONDITION: m.Mu.Lock() is held by the caller (flushLoop / flushToDisk).
-    // Acquire leaf snapshot lock under Manager.Mu
     m.snapshotMu.Lock()
     defer m.snapshotMu.Unlock()
 
-    if m.state != EngineOpen {
-        // Rollback new shared reader
-        newSR.state = SharedReaderClosing
+    // Permitted in EngineOpen and EngineClosing.
+    // Strictly rejected ONLY in EngineClosed.
+    if m.state == EngineClosed {
+        newSR.SetState(SharedReaderClosing)
         m.pendingCleanupReaders = append(m.pendingCleanupReaders, newSR)
         return ErrClosed
     }
@@ -162,7 +64,7 @@ func (m *Manager) publishFlushLocked(mem *Memtable, newSR *SharedReader) error {
         copy(newReaders, oldSnap.readers)
         // Increment refCount for all surviving readers copied into new snapshot
         for _, sr := range oldSnap.readers {
-            sr.refCount++
+            sr.refCount.Add(1)
         }
         newReaders[len(oldSnap.readers)] = newSR
     } else {
@@ -183,50 +85,164 @@ func (m *Manager) publishFlushLocked(mem *Memtable, newSR *SharedReader) error {
     }
 
     // 4. Atomically remove corresponding flushed Memtable from Frozenmem
-    // LINEARIZATION POINT: After this line, key is absent in Frozenmem,
-    // but GUARANTEED present in m.currentSnapshot!
+    // LINEARIZATION POINT: Key is continuously discoverable in memory or snapshot.
     m.removeFrozenMemtableLocked(mem)
 
     return nil
 }
 ```
 
-### 3.2 Deterministic Two-Way Barrier Test Specification (`INV-HANDOFF-1`)
+### 2.4 Explicit Barrier Schedule: Admitted Flush During `EngineClosing`
 
 ```
-Goroutine 1 (Point Reader):
-  Barrier B1: Reader enters Manager.Get("key1", readTs) and acquires Manager.Mu.RLock().
-  Inspects m.Mem (miss) -> Inspects m.Frozenmem (hits if before flush, misses if after).
-  Barrier B2: Reader invokes acquireSnapshotLocked().
-  Releases Manager.Mu.RUnlock().
-  Searches pinned snapshot (hits if after flush).
-  Assert: value == "committed_val" ALWAYS. Value is NEVER ErrNotFound.
-
-Goroutine 2 (Flush Worker):
-  Worker completes SSTable write for "key1".
-  Barrier B1 reached: Worker blocks on Manager.Mu.Lock().
-  Worker acquires Manager.Mu.Lock(), publishes snapshot, removes Frozenmem, unlocks.
-  Barrier B2 released: Reader resumes.
+Time  Goroutine 1 (Transaction)      Goroutine 2 (Flush Worker)          Goroutine 3 (Manager.Close)
+ ───  ────────────────────────      ──────────────────────────          ───────────────────────────
+ T0   F0 enqueued under Open
+ T1   m.flushWg.Add(1)
+ T2                                  F0 begins SSTable disk write
+ T3                                                                      Close() acquires Manager.Mu
+ T4                                                                      m.state = EngineClosing
+ T5                                                                      m.snapshotAdmissionClosed = true
+ T6                                                                      m.flushQueueClosed = true
+ T7                                                                      Close() releases Manager.Mu
+ T8                                                                      Close() blocks on m.flushWg.Wait()
+ T9                                  F0 finishes SSTable write
+ T10                                 F0 acquires Manager.Mu.Lock()
+ T11                                 F0 calls publishFlushLocked()
+ T12                                 State is EngineClosing (PERMITTED!)
+ T13                                 Snapshot published; Frozenmem removed
+ T14                                 F0 releases Manager.Mu.Unlock()
+ T15                                 m.flushWg.Done()
+ T16                                                                     Close() wakes from flushWg.Wait()
+ T17                                                                     Close() drains snapshot pins
+ T18                                                                     Close() executes clean teardown
 ```
-*Proof*: Under all interleavings, the key is discovered either in `m.Frozenmem` or in `snap`, never in neither.
+*Proof*: F0 completes, publishes its SSTable, removes `mem` from `Frozenmem`, and signals completion to `Close()`. Zero data loss, zero premature rejection, zero file handle leak.
 
 ---
 
-## 4. Shutdown-State Locking and Pin Admission (I2.6.3)
+## 3. Finalized SharedReader Cleanup Transitions (I2.7.2)
 
-### 4.1 Authoritative Lock Rule
-- **`Manager.Mu` is the single authoritative lock** guarding `m.state` (`EngineOpen`, `EngineClosing`, `EngineClosed`) and `m.isClosed`.
-- To allow ultra-fast snapshot pin admission checks without acquiring `Manager.Mu`, `m.snapshotAdmissionClosed atomic.Bool` is introduced, synchronized as follows:
-  - When `Manager.Close()` sets `m.state = EngineClosing` under `m.Mu.Lock()`, it acquires `m.snapshotMu.Lock()` and sets `m.snapshotAdmissionClosed.Store(true)`.
-  - `AcquireSnapshot()` checks `m.snapshotAdmissionClosed.Load()`. If `true`, it immediately returns `ErrClosed`.
+### 3.1 The Unified `checkCleanupEligibilityLocked` Helper
 
-### 4.2 Point Read Admission Policy
-- A point read `Manager.Get` is admitted **strictly when `m.state == EngineOpen`**.
-- If `m.state != EngineOpen`, `Get` returns `ErrClosed` immediately before inspecting memory tiers or disk snapshots. This ensures 100% consistent behavior between RAM hits and SSTable misses.
+To prevent duplicate cleanup scheduling, race conditions, and reference resurrection, all state transitions affecting references or obsolescence funnel through a single lock-protected helper under `m.snapshotMu`:
 
-### 4.3 Safe Shutdown Pin Draining
+```go
+// checkCleanupEligibilityLocked evaluates whether a SharedReader has become eligible
+// for handle closure or physical unlinking.
+// PRECONDITION: m.snapshotMu MUST be held by the caller.
+func (m *Manager) checkCleanupEligibilityLocked(sr *SharedReader) {
+    if sr == nil {
+        return
+    }
+
+    refs := sr.refCount.Load()
+    isObsolete := sr.obsolete.Load()
+    currentState := sr.State()
+
+    // Case A: Obsolete superseded table whose references have all drained to zero.
+    // Eligible for handle closure followed by physical unlinking.
+    if refs == 0 && isObsolete {
+        if currentState == SharedReaderActive || currentState == SharedReaderObsolete {
+            sr.SetState(SharedReaderClosing)
+            m.pendingCleanupReaders = append(m.pendingCleanupReaders, sr)
+            m.hasPendingCleanups = true
+        }
+        return
+    }
+
+    // Case B: Engine shutdown with valid surviving table.
+    // The published snapshot reference was released (refs == 0), but the table is NOT obsolete.
+    // Eligible for handle closure, but physical file MUST be preserved on disk!
+    if m.state >= EngineClosing && refs == 0 && !isObsolete {
+        if currentState == SharedReaderActive {
+            sr.SetState(SharedReaderClosedValid)
+            m.pendingShutdownCloses = append(m.pendingShutdownCloses, sr)
+        }
+        return
+    }
+
+    // Case C: Abandoned unpublished table (e.g. failed snapshot construction or build error).
+    // Never published; refs == 0; must be closed and deleted.
+    if refs == 0 && currentState == SharedReaderClosing {
+        // Already queued for cleanup; no-op to prevent duplicate scheduling.
+        return
+    }
+}
+```
+
+### 3.2 Invocation Points for `checkCleanupEligibilityLocked`:
+1. Whenever a snapshot drains and decrements constituent reader refcounts (`reclaimSnapshotLocked`).
+2. Whenever compaction commits and marks input readers `obsolete = true`.
+3. Whenever compaction releases its borrowed input leases (`sr.refCount.Add(-1)`).
+4. Whenever snapshot construction rolls back candidate readers after an error.
+5. During `Manager.Close()` when `m.currentSnapshot` is retired and drained.
+
+### 3.3 Why a Valid `SharedReader` May Have `refCount == 0 && obsolete == false`
+- **Under Normal Runtime**: Every valid SSTable is referenced by at least `m.currentSnapshot` (`refCount >= 1`).
+- **During Graceful Shutdown**: `Manager.Close()` sets `m.currentSnapshot = nil` to release memory structures. This decrements each surviving table's snapshot reference from 1 to 0. Because `obsolete == false`, Case B triggers: the reader transitions to `SharedReaderClosedValid`. The handle is closed cleanly, but `os.Remove(Path)` is **strictly skipped**. The file remains durable on disk for subsequent startup and recovery.
+
+---
+
+## 4. Reconciling Close Retries with `sync.Once` (I2.7.3)
+
+In Go, `sync.Once` guarantees exactly-once execution and cannot be reset. Retrying `Close()` on an already-closed `os.File` returns `os.ErrClosed`.
+
+The protocol resolves physical handle closure vs file unlinking as follows:
+
+```
+Step 1: Physical File Handle Close
+        ┌─────────────────────────┐
+        │ sr.closeOnce.Do(Close)  │
+        └────────────┬────────────┘
+                     │
+            Success  │  Failure
+        ┌────────────┴────────────┐
+        ▼                         ▼
+   Handle Closed             Terminal Error
+ (sr.closeErr == nil)      (sr.closeErr != nil)
+        │                  (sr.state = Failed)
+        ▼                         │
+Step 2: File Unlink               ▼
+ ┌───────────────┐         Reported on Shutdown
+ │ os.Remove()   │
+ └───────┬───────┘
+         │
+Success  │  Failure (Windows sharing violation)
+ ┌───────┴───────┐
+ ▼               ▼
+Reclaimed   Retry Unlink (Bounded: 3 attempts, 10ms backoff)
+                 │
+                 ├─► Success: Reclaimed
+                 └─► Exhausted: sr.state = Failed (Reported on Shutdown)
+```
+
+### Rules:
+1. **Handle `Close()`**: Attempted **exactly once** via `sr.closeOnce`. If `Close()` fails, it is an unrecoverable terminal OS I/O failure on that descriptor; `sr.closeErr` is recorded, and unlinking is abandoned.
+2. **File `os.Remove()`**: Executed **only after** `sr.closeErr == nil`. If `os.Remove()` fails due to a temporary Windows sharing violation or antivirus lock, unlinking is retried independently up to 3 times with a 10ms sleep. If retries are exhausted, `sr.unlinkErr` is recorded, `sr.state = SharedReaderFailed`, and the error is surfaced on `Manager.Close()`.
+3. **No Unbounded Goroutines**: Retries are executed synchronously within the serialized `drainPendingCleanups()` worker, never in unbounded background goroutines.
+
+---
+
+## 5. Authoritative Synchronization Contract (I2.7.4)
+
+### The Single Authority Rule
+- **`Manager.snapshotMu sync.Mutex` is the sole authoritative guard** for all compound lifecycle transitions, reference mutations, and cleanup scheduling on both `ReaderSnapshot` and `SharedReader`.
+- **Role of Atomic Fields**: Atomic types (`atomic.Int64`, `atomic.Int32`, `atomic.Bool`) are retained strictly for thread-safe, lock-free **read-only observability** (e.g. diagnostic logging, testing assertions, metrics). They **do not** provide compound atomicity for multi-field decisions.
+- **Audit of Accessors**:
+  - `ReaderSnapshot.State()`: Thread-safe read accessor (`SnapshotState(rs.state.Load())`).
+  - `ReaderSnapshot.Pins()`: Thread-safe read accessor (`rs.pins.Load()`).
+  - `ReaderSnapshot.SetState()`: Internal state mutator. In production code, caller MUST hold `m.snapshotMu`.
+  - `SharedReader.RefCount()` / `State()`: Thread-safe read accessors.
+  - `SharedReader.Ref()` / `SetState()`: Internal state mutators. In production code, caller MUST hold `m.snapshotMu`.
+
+---
+
+## 6. Complete Shutdown Ordering Pseudocode (I2.7.5)
+
 ```go
 func (m *Manager) Close() error {
+    // 1. Close write and flush admission under Manager.Mu
     m.Mu.Lock()
     if m.state != EngineOpen {
         m.Mu.Unlock()
@@ -235,162 +251,70 @@ func (m *Manager) Close() error {
     m.state = EngineClosing
     m.isClosed = true
 
-    // Close pin admission
+    // Close query pin admission under snapshotMu
     m.snapshotMu.Lock()
     m.snapshotAdmissionClosed.Store(true)
-    
-    // Check if pins are already zero
-    activePins := m.countTotalActivePinsLocked()
     m.snapshotMu.Unlock()
-    m.Mu.Unlock() // Crucial: Release Manager.Mu before waiting!
+    m.Mu.Unlock() // Crucial: Release Manager.Mu before drain waits!
 
-    // Drain background flushes
+    // 2. Drain previously admitted flushes
     m.flushQueueMu.Lock()
     m.flushQueueClosed = true
     m.flushQueueCond.Broadcast()
     m.flushQueueMu.Unlock()
-    m.flushWg.Wait()
+    m.flushWg.Wait() // Waits for admitted flushes (publishFlushLocked succeeds in EngineClosing!)
 
-    // Wait for in-flight snapshot pins to drain
+    // 3. Coordinate background compaction
+    m.compactionMu.Lock() // Waits for any active compaction merge to complete or abort
+
+    // 4. Retire current published snapshot and wait for query pins
     m.snapshotMu.Lock()
-    for m.countTotalActivePinsLocked() > 0 {
-        m.snapshotDrainCond.Wait() // Releases snapshotMu while waiting!
+    if m.currentSnapshot != nil {
+        m.retireSnapshotLocked(m.currentSnapshot)
+        m.currentSnapshot = nil
     }
-    
-    // All pins drained; close all valid and obsolete readers
-    m.closeAllReadersOnShutdownLocked()
+
+    // Wait for in-flight pins to reach zero across all retired snapshots
+    for m.countTotalActivePinsLocked() > 0 {
+        // sync.Cond.Wait releases snapshotMu while sleeping!
+        // Does NOT hold Manager.Mu, compactionMu, or flushQueueMu.
+        m.snapshotDrainCond.Wait()
+    }
+
+    // 5. All pins drained: evaluate cleanup eligibility for all readers
+    m.evaluateShutdownReaderCleanupLocked()
     m.snapshotMu.Unlock()
+    m.compactionMu.Unlock()
 
-    // Execute physical handle closes outside locks
-    m.drainPendingCleanups()
+    // 6. Execute physical handle closures and unlinks outside all locks
+    cleanupErr := m.drainPendingCleanups()
 
+    // 7. Transition to final EngineClosed state
     m.Mu.Lock()
     m.state = EngineClosed
     m.Mu.Unlock()
-    return nil
-}
-```
-*Deadlock Freedom Proof*: `Close()` releases `Manager.Mu` and `snapshotMu` while waiting. In-flight readers call `ReleaseSnapshot()`, acquire `snapshotMu`, decrement pins to zero, and signal `m.snapshotDrainCond.Broadcast()`. Circular wait is impossible.
 
----
-
-## 5. Corrected Reclamation and Normal Runtime Cleanup (I2.6.4)
-
-Reclamation does not wait for `Manager.Close()`. Drained snapshots trigger immediate asynchronous cleanup during normal runtime:
-
-```go
-func (m *Manager) ReleaseSnapshot(snap *ReaderSnapshot) {
-    if snap == nil {
-        return
+    // 8. Close WAL file and surface errors
+    walErr := m.Log.File.Close()
+    if m.flushErr != nil {
+        return m.flushErr
     }
-
-    m.snapshotMu.Lock()
-    pins := snap.pins.Add(-1)
-    if pins < 0 {
-        m.snapshotMu.Unlock()
-        panic("FATAL: snapshot pin underflow detected")
+    if cleanupErr != nil {
+        return cleanupErr
     }
-
-    if pins == 0 && snap.State() == SnapshotRetired {
-        snap.SetState(SnapshotDrained)
-        hasCleanups := m.reclaimSnapshotLocked(snap)
-        m.snapshotMu.Unlock()
-
-        if hasCleanups {
-            // Trigger asynchronous physical handle close and unlink outside snapshotMu
-            go m.drainPendingCleanups()
-        }
-        return
-    }
-    m.snapshotMu.Unlock()
+    return walErr
 }
 ```
 
-### Physical Cleanup Protocol (Zero Locks Held During File I/O):
-1. `drainPendingCleanups()` acquires `m.cleanupMu` to serialize cleanup workers.
-2. Extracts readers from `m.pendingCleanupReaders` under a brief `snapshotMu` lock.
-3. For each reader:
-   - If `sr.state == SharedReaderClosing`:
-     1. Calls `sr.Reader.Close()` (Windows NTFS handle closure).
-     2. Sets `sr.state = SharedReaderClosed`.
-     3. Calls `os.Remove(sr.Path)`.
-     4. Sets `sr.state = SharedReaderReclaimed`.
-   - If `sr.state == SharedReaderClosedValid`:
-     1. Calls `sr.Reader.Close()`.
-     2. Sets `sr.state = SharedReaderClosedValid`.
-     3. Skips `os.Remove()` (preserves file on disk).
+### Lock and Wait Safety Invariants:
+1. `m.snapshotDrainCond` is initialized with `&m.snapshotMu`.
+2. While `m.snapshotDrainCond.Wait()` sleeps, `m.snapshotMu` is completely unlocked.
+3. `ReleaseSnapshot` acquires `m.snapshotMu`, decrements `snap.pins`, and calls `m.snapshotDrainCond.Broadcast()`.
+4. Neither caller holds `Manager.Mu` during the wait. Circular wait is eliminated.
 
 ---
 
-## 6. Reader Ordering and Empty-Snapshot Behavior (I2.6.5)
-
-### 6.1 Codified Slice Representation
-`ReaderSnapshot.readers` strictly mirrors `ActiveSSreaders`:
-- **Index 0 is the OLDEST SSTable**.
-- **Index `len-1` is the NEWEST SSTable**.
-- **Point read iteration**: Loops in reverse from `len-1` down to `0`, evaluating newest SSTables first (`INV-ORDER-1`).
-- **Compaction prefix**: Compaction merges contiguous prefix $[0 \dots k]$ (`INV-COMPACT-1`). The compacted output table replaces index 0, followed by surviving newer tables $[k+1 \dots len-1]$.
-
-### 6.2 Empty Database Representation
-- An engine with no SSTables initializes `m.currentSnapshot` with an **explicitly allocated empty snapshot**:
-  ```go
-  m.currentSnapshot = &ReaderSnapshot{
-      readers: make([]*SharedReader, 0),
-  }
-  m.currentSnapshot.SetState(SnapshotPublished)
-  ```
-- `m.currentSnapshot` is NEVER nil during `EngineOpen`.
-- `Get` on an empty snapshot iterates zero times and returns `ErrNotFound` safely with zero nil dereferences.
-
-### 6.3 Complete Result Handling
-- **Value Found**: Returns `val, nil`.
-- **`ErrKeyDeleted` (Tombstone)**: Terminal return `"", ErrKeyDeleted` immediately. Does not scan older SSTables.
-- **`ErrNotFound`**: Continues reverse scan to older SSTables. If loop exhausts, returns `"", ErrNotFound`.
-- **Physical I/O Error**: Aborts search immediately and returns wrapped error (preserving E-011 / D-019 fix).
-- **Active Memtable Precedence**: Memtable is scanned *before* disk snapshot. Newer active mutations mask older snapshot entries.
-
----
-
-## 7. Correct and Extended Phase I3 Deterministic Test Plan (I2.6.6)
-
-1. **`TestApproachB_SnapshotLifecycle_LinearProgression`**:
-   Verify complete state machine progression from `Constructing` $\to$ `Published` $\to$ `Pinned` $\to$ `Retired` $\to$ `Drained` $\to$ `Reclaimed`.
-2. **`TestApproachB_PinningUnderflowPanic`**:
-   Simulate duplicate `ReleaseSnapshot` call; assert runtime panic with `FATAL: snapshot pin underflow detected` (`INV-SNAP-4`).
-3. **`TestApproachB_RefcountZeroAndObsoleteOrdering`**:
-   - Case A: `refCount` drops to 0, then `obsolete` set to true.
-   - Case B: `obsolete` set to true, then `refCount` drops to 0.
-   - Assert: In both cases, cleanup is scheduled exactly once and executes cleanly.
-4. **`TestApproachB_NoResurrectionAfterZeroRef`**:
-   Verify that a reader in `SharedReaderClosing` is rejected by snapshot construction and cannot be resurrected.
-5. **`TestApproachB_ConstructionRollback`**:
-   Simulate SSTable builder failure during snapshot creation; assert acquired references are rolled back to exact prior counts.
-6. **`TestApproachB_UnchangedSSTableSharedAcrossSnapshots`**:
-   Create Snapshot 1 with $[S_1, S_2]$, Snapshot 2 with $[S_3, S_2, S_1]$. Retire and drain Snapshot 1. Assert $S_2$ and $S_1$ remain open with `refCount == 1` in Snapshot 2.
-7. **`TestApproachB_ObsoleteReaderRetainedByOldPinnedSnapshot`**:
-   Compaction replaces $S_1, S_2$ with $S_c$, publishing Snapshot 2. Reader holding pin on Snapshot 1 continues reading $S_1, S_2$. Assert $S_1, S_2$ are not closed or unlinked until pin is released.
-8. **`TestApproachB_NormalRuntimeCleanupWithoutClose`**:
-   Trigger flush and snapshot retirement under normal runtime. Assert obsolete reader files are closed and unlinked without calling `Manager.Close()`.
-9. **`TestApproachB_Shutdown_CloseValidWithoutUnlink`**:
-   Initiate clean shutdown with active valid SSTables. Assert all file handles are closed, but all `.sst` files remain present on disk.
-10. **`TestApproachB_CleanupFailure_RetryPolicy`**:
-    Simulate temporary Windows file locking during `os.Remove`. Assert reader state transitions to `SharedReaderFailed` and is retried.
-11. **`TestApproachB_EmptySnapshotLookup`**:
-    Query empty database snapshot; assert immediate `ErrNotFound` without panic or nil dereference.
-12. **`TestApproachB_Shutdown_OverlapWithActivePinsAndCompaction`**:
-    Initiate `Manager.Close()` while queries hold pins and compaction holds reader leases. Assert shutdown waits cleanly and exits with zero leaks.
-13. **`TestApproachB_FrozenMemtableHandoff_ZeroVisibilityGap`**:
-    Two-way barrier test interleaving point reads with flush publication; assert key is never missed across the handoff (`INV-HANDOFF-1`).
-14. **`TestApproachB_VersionOrderingAndTombstoneMasking`**:
-    Verify that an active Memtable tombstone correctly masks older values in a pinned SSTable snapshot.
-15. **`TestApproachB_MultipleRetiredSnapshotsQueued` (Corrected)**:
-    Hold pins on 5 distinct snapshot generations ($S_0 \dots S_4$). Trigger 5 flushes. Assert all 5 snapshots remain in `retiredSnapshots`. Release pins sequentially and assert each drains and reclaims independently.
-
----
-
-## 8. Complete Lock and Wait Dependency Graph (I2.6.7)
-
-To establish mathematical proof of circular-wait deadlock freedom across the entire storage engine:
+## 7. Complete Lock and Wait Dependency Graph (I2.7.6)
 
 ```
 Level 1: compactionMu     (sync.Mutex: serializes background compaction routines)
@@ -401,7 +325,30 @@ Level 5: Wal.mu           (sync.Mutex: append-only WAL disk append and sync)
 Leaf:    cleanupMu        (sync.Mutex: serialized background file cleanup)
 ```
 
-### Invariants:
-1. **Strict Ascending Acquisition**: Locks must always be acquired in order: `compactionMu` $\to$ `Manager.Mu` $\to$ `snapshotMu` $\to$ `flushQueueMu` $\to$ `Wal.mu`.
-2. **Zero Lock Across Slow Disk I/O**: `Manager.Get` holds zero locks during SSTable block reads. `compactionMu` and `flushLoop` execute disk I/O outside `Manager.Mu` and `snapshotMu`.
-3. **Wait Synchronization**: `m.snapshotDrainCond.Wait()` and `m.flushQueueCond.Wait()` always release their respective mutexes before waiting, eliminating sleep-while-holding-lock deadlocks.
+*Properties*:
+- Strict ascending lock acquisition order.
+- Zero locks held across slow disk reads or writes.
+- Wait conditions (`flushQueueCond.Wait()`, `snapshotDrainCond.Wait()`) release their guarding mutexes before blocking.
+
+---
+
+## 8. Corrected and Extended Phase I3 Deterministic Test Matrix
+
+The test matrix contains **16 deterministic test specifications** with named synchronization barriers:
+
+1. `TestApproachB_SnapshotLifecycle_LinearProgression`
+2. `TestApproachB_PinningUnderflowPanic`
+3. `TestApproachB_RefcountZeroAndObsoleteOrdering_CaseA` (refCount to 0, then obsolete=true)
+4. `TestApproachB_RefcountZeroAndObsoleteOrdering_CaseB` (obsolete=true, then refCount to 0)
+5. `TestApproachB_NoResurrectionAfterZeroRef`
+6. `TestApproachB_ConstructionRollback`
+7. `TestApproachB_UnchangedSSTableSharedAcrossSnapshots`
+8. `TestApproachB_ObsoleteReaderRetainedByOldPinnedSnapshot`
+9. `TestApproachB_NormalRuntimeCleanupWithoutClose`
+10. `TestApproachB_Shutdown_CloseValidWithoutUnlink`
+11. `TestApproachB_CleanupFailure_RetryPolicy`
+12. `TestApproachB_EmptySnapshotLookup`
+13. `TestApproachB_Shutdown_OverlapWithActivePinsAndCompaction`
+14. `TestApproachB_FrozenMemtableHandoff_ZeroVisibilityGap` (two-way barrier test)
+15. `TestApproachB_VersionOrderingAndTombstoneMasking`
+16. `TestApproachB_Shutdown_AdmittedFlushCompletesDuringEngineClosing` (admitted flush publishes safely during drain)
