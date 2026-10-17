@@ -1,0 +1,7 @@
+=== RUN   TestCP1V3_TransactionCommit_ErrorPropagation_SSTableIOError
+    cp1_verification_test.go:133: Confirmed latestValueLocked returns unexpected error: read data_1792251135190318049_1.sst: file already closed
+    cp1_verification_test.go:142: DEFECT CONFIRMED: Transaction.Commit succeeded silently despite unexpected I/O error during conflict validation!
+--- FAIL: TestCP1V3_TransactionCommit_ErrorPropagation_SSTableIOError (0.05s)
+FAIL
+FAIL	owndbms/lsmengine	0.090s
+FAIL

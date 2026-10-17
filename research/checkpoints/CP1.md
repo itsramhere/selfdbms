@@ -17,17 +17,17 @@ Beginning from an initial broken baseline (which deadlocked on write commits and
 $$\text{I0} \longrightarrow \text{I1.1} \longrightarrow \text{I1.1a (CP0.5)} \longrightarrow \text{I1.1b (CP0.75)} \longrightarrow \text{I1.2 (CP1.2)} \longrightarrow \text{I1.3 (CP1.3)} \longrightarrow \text{I1.3.6 (CP1.3a)} \longrightarrow \text{I1.3.7 (CP1.3b)} \longrightarrow \text{I1.3.8 (CP1.3c)} \longrightarrow \text{I1.4 (CP1.4)} \longrightarrow \text{I1.4.7 (CP1.4a)} \longrightarrow \text{I1.5.1-I1.5.6 (CP1)}$$
 
 ### Major Scientific & Engineering Accomplishments:
-1. **10 Identified Correctness Defects Resolved (`E-001` through `E-010`)**: Every defect was captured in deterministic reproduction tests with failing-before logs preserved, repaired via minimal non-disruptive diffs, and verified across both Windows 11 NTFS native and WSL2 Linux (`-race`).
-2. **18 Architectural Decisions Codified (`D-001` through `D-018`)**: Every structural change is documented chronologically with alternatives considered, trade-offs, rationale, and commit hashes in `research/logs/DECISIONS.md`.
-3. **16 Formal Invariants Codified & Enforced**: Fully formalized in `research/design/invariants.md`, covering concurrency (`INV-SYNC-1..3`), reader lifetimes (`INV-LIFETIME-1..5`), MVCC versioning (`INV-MVCC-1..6`), slice ordering (`INV-ORDER-1`), compaction contiguity (`INV-COMPACT-1`), unbounded queue admission (`INV-QUEUE-1`), frozen memory immutability (`INV-MUTABLE-1`), tier handoff visibility (`INV-HANDOFF-1`), fail-stop flush precedence (`INV-FLUSH-FAIL-1`), and explicit baseline mode configuration (`INV-APPROACH-A`).
+1. **11 Identified Correctness Defects Resolved (`E-001` through `E-011`)**: Every defect was captured in deterministic reproduction tests with failing-before logs preserved, repaired via minimal non-disruptive diffs, and verified across both Windows 11 NTFS native and WSL2 Linux (`-race`).
+2. **19 Architectural Decisions Codified (`D-001` through `D-019`)**: Every structural change is documented chronologically with alternatives considered, trade-offs, rationale, and commit hashes in `research/logs/DECISIONS.md`.
+3. **23 Formal Invariants Codified & Enforced**: Fully formalized in `research/design/invariants.md`, covering concurrency (`INV-SYNC-1..3`), reader lifetimes (`INV-LIFETIME-1..5`), MVCC versioning (`INV-MVCC-1..6`), slice ordering (`INV-ORDER-1`), compaction contiguity (`INV-COMPACT-1`), durability & recovery boundaries (`INV-DUR-1..2`), unbounded queue admission (`INV-QUEUE-1`), frozen memory immutability (`INV-MUTABLE-1`), tier handoff visibility (`INV-HANDOFF-1`), fail-stop flush precedence (`INV-FLUSH-FAIL-1`), and explicit baseline mode configuration (`INV-APPROACH-A`). 22 invariants are verified; 1 is unproven across rotations (`INV-DUR-2`).
 4. **Explicit Mode Selection Seam (`D-018`)**: Configurable `SyncMode` (`SyncModeApproachA` vs `SyncModeApproachB`) via `CreateManagerWithConfig(cfg)`. Default initialization selects Approach A, preserving 100% backward compatibility for existing callers. Unimplemented Approach B is cleanly rejected with `ErrUnsupportedSyncMode`.
-5. **Comprehensive Cross-Platform Test Suite**: **98/98 unit tests (104 total runnable tests including 6 benchmarks)** pass with 100% pass rate:
-   - Windows 11 NTFS native: 7.70s (`go test -count=1 ./...`).
-   - WSL2 Ubuntu Linux (`go test -race`): 14.52s, 0 data races, 0 deadlocks.
+5. **Comprehensive Cross-Platform Test Suite**: **100/100 unit tests (106 total runnable tests including 6 benchmarks)** pass with 100% pass rate:
+   - Windows 11 NTFS native: 7.74s (`go test -count=1 ./...`).
+   - WSL2 Ubuntu Linux (`go test -race`): 14.65s, 0 data races, 0 deadlocks.
    - Concurrency stress tests (`-count=5`): Windows native 10.12s, WSL2 `-race` 23.64s.
    - Static analysis: Clean `go vet ./...` in both operating environments.
 6. **Codified Operational Recovery Scenarios**: Documented operational behavior across Scenarios A through E (normal shutdown, queued flush drain, fatal flush fail-stop, single-WAL replay, and ungraceful crash recovery) with explicit architectural boundaries (`RISK-001` through `RISK-003`).
-7. **Immutable Baseline Freeze**: Tagged `baseline-approach-a` on commit `c697d7d`, establishing an immutable reference point before implementing Approach B.
+7. **Immutable Baseline Freeze**: Tagged `baseline-approach-a` on commit `d6909a7` (code-identical in `lsmengine/` to pre-commit report generation hash `c697d7d`), establishing an immutable reference point before implementing Approach B. Post-verification fixes (E-011 and documentation errata) are cleanly tracked in the verification addendum.
 
 ---
 
@@ -231,7 +231,8 @@ ok  	owndbms/lsmengine	14.518s
 
 ### 8.1 Point Query (`Manager.Get`)
 ```go
-func (m *Manager) Get(key []byte, readTs uint64) (string, error) {
+func (m *Manager) Get(key string, readTs uint64) (string, error) {
+    byteKey := []byte(key)
     m.Mu.RLock()
     defer m.Mu.RUnlock()
 
@@ -239,8 +240,12 @@ func (m *Manager) Get(key []byte, readTs uint64) (string, error) {
         return "", ErrClosed
     }
 
+    if m.duringMemtableReadHook != nil {
+        m.duringMemtableReadHook()
+    }
+
     // Tier 1: Active Memtable
-    val, err := m.Mem.Get(key, readTs)
+    val, err := m.Mem.Get(byteKey, readTs)
     if err == nil {
         return val, nil
     }
@@ -250,7 +255,7 @@ func (m *Manager) Get(key []byte, readTs uint64) (string, error) {
 
     // Tier 2: Frozen Memtables (Reverse Chronological: Newest to Oldest)
     for i := len(m.Frozenmem) - 1; i >= 0; i-- {
-        val, err := m.Frozenmem[i].Get(key, readTs)
+        val, err := m.Frozenmem[i].Get(byteKey, readTs)
         if err == nil {
             return val, nil
         }
@@ -261,7 +266,7 @@ func (m *Manager) Get(key []byte, readTs uint64) (string, error) {
 
     // Tier 3: Active SSTables (Reverse Chronological: Newest to Oldest)
     for i := len(m.ActiveSSreaders) - 1; i >= 0; i-- {
-        val, err := m.ActiveSSreaders[i].Get(key, readTs)
+        val, err := m.ActiveSSreaders[i].Get(byteKey, readTs)
         if err == nil {
             return val, nil
         }
@@ -269,7 +274,7 @@ func (m *Manager) Get(key []byte, readTs uint64) (string, error) {
             return "", ErrKeyDeleted
         }
         if !errors.Is(err, ErrNotFound) {
-            return "", err // Surface I/O error
+            return "", err // Surface physical I/O error
         }
     }
 
@@ -281,36 +286,56 @@ func (m *Manager) Get(key []byte, readTs uint64) (string, error) {
 ```go
 func (t *Transaction) Commit() error {
     t.Man.Mu.Lock()
-    defer t.Man.Mu.Unlock()
 
     if t.Man.state != EngineOpen {
+        t.Man.Mu.Unlock()
+        t.Abort()
         return ErrClosed
     }
 
     // 1. Snapshot Isolation Conflict Validation
-    for _, write := range t.Writes {
-        maxSeq, err := t.Man.latestValueLocked(write.Key)
-        if err == nil && maxSeq > t.ReadTs {
+    for key := range t.WriteSet {
+        latestSeqNo, err := t.Man.latestValueLocked([]byte(key))
+        if err != nil && !errors.Is(err, ErrNotFound) {
+            t.Man.Mu.Unlock()
+            t.Abort()
+            return fmt.Errorf("conflict validation failed for key %q: %w", key, err)
+        }
+        if err == nil && latestSeqNo > t.ReadTs {
+            t.Man.Mu.Unlock()
+            t.Abort()
             return errors.New("Write-write conflict detected. Transaction aborted.")
         }
     }
 
+    if t.Man.Log == nil || t.Man.Log.File == nil {
+        t.Man.Mu.Unlock()
+        return errors.New("wal is unavailable")
+    }
+
     // 2. Allocate Monotonic Commit Sequence Number
-    commitSeq := t.Man.CurrentSeqNo.Add(1)
+    t.Man.CurrentSeqNo.Add(1)
+    t.AllocatedSeqNo = t.Man.CurrentSeqNo.Load()
 
-    // 3. Write-Ahead Log Append & Sync
-    for _, write := range t.Writes {
-        if err := t.Man.Log.Append(commitSeq, write.Key, write.Val, write.IsDelete); err != nil {
-            return fmt.Errorf("WAL append failed: %w", err)
+    // 3. Write-Ahead Log Append & Sync, and Memory Mutation
+    for key, pendingWrite := range t.WriteSet {
+        encodedKey := EncodeInternalKey([]byte(key), t.AllocatedSeqNo, pendingWrite.IsDelete)
+        err := t.Man.Log.Append(encodedKey, pendingWrite.Data)
+        if err != nil {
+            t.Man.Mu.Unlock()
+            return err
         }
+
+        t.Man.Mem.Put(encodedKey, pendingWrite.Data)
+        t.Man.Mem.SizeBytes += int64(len(encodedKey) + len(pendingWrite.Data))
     }
 
-    // 4. Memory Mutation (Active Memtable)
-    for _, write := range t.Writes {
-        t.Man.Mem.Put(write.Key, write.Val, commitSeq, write.IsDelete)
-    }
+    t.WriteSet = nil
 
-    // 5. Trigger Memory Flush if Size Exceeds Limit
+    // 4. Release Manager.Mu before invoking flush check to prevent deadlocks
+    t.Man.Mu.Unlock()
+
+    // 5. Trigger Memory Flush if Size Exceeds Threshold
     t.Man.checkAndTriggerFlush()
     return nil
 }

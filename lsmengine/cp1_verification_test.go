@@ -1,0 +1,178 @@
+package lsmengine
+
+import (
+	"errors"
+	"os"
+	"testing"
+	"time"
+)
+
+// TestCP1V2_TransactionCommit_FlushTrigger_NoDeadlock verifies that when Transaction.Commit
+// triggers checkAndTriggerFlush (e.g. when Mem.SizeBytes >= 64MB), it executes cleanly
+// without self-deadlock on Manager.Mu.
+func TestCP1V2_TransactionCommit_FlushTrigger_NoDeadlock(t *testing.T) {
+	testDir := "test_data_cp1v2_nodeadlock"
+	os.RemoveAll(testDir)
+	os.MkdirAll(testDir, 0755)
+	defer os.RemoveAll(testDir)
+
+	walPath := testDir + "/wal.log"
+	cfg := Config{
+		Mode:    SyncModeApproachA,
+		WalPath: walPath,
+	}
+	man, err := CreateManagerWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+	var sstFiles []string
+	defer func() {
+		man.Close()
+		for _, f := range sstFiles {
+			os.Remove(f)
+		}
+	}()
+
+	// Artificially prime active Memtable size to meet the 64MB threshold
+	man.Mu.Lock()
+	man.Mem.SizeBytes = 64 * 1024 * 1024
+	man.Mu.Unlock()
+
+	// Run commit with a strict timeout to catch any circular wait or recursive mutex lock
+	done := make(chan error, 1)
+	go func() {
+		txn := man.Begin()
+		txn.Put("trigger_key", "trigger_val")
+		done <- txn.Commit()
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Transaction.Commit failed: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("DEADLOCK DETECTED: Transaction.Commit timed out while executing checkAndTriggerFlush")
+	}
+
+	// Verify that checkAndTriggerFlush executed: active Memtable was rotated
+	man.Mu.RLock()
+	frozenCount := len(man.Frozenmem)
+	man.Mu.RUnlock()
+
+	if frozenCount == 0 {
+		t.Fatalf("expected at least 1 frozen Memtable after threshold flush trigger, got 0")
+	}
+
+	// Verify point read still accesses the committed key
+	val, err := man.Get("trigger_key", 100)
+	if err != nil || val != "trigger_val" {
+		t.Fatalf("expected 'trigger_val', got val=%q, err=%v", val, err)
+	}
+
+	// Wait for background flush worker to publish SSTable so it can be cleaned up
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		man.Mu.RLock()
+		readerCount := len(man.ActiveSSreaders)
+		if readerCount > 0 {
+			for _, r := range man.ActiveSSreaders {
+				if r != nil && r.File != nil {
+					sstFiles = append(sstFiles, r.File.Name())
+				}
+			}
+			man.Mu.RUnlock()
+			break
+		}
+		man.Mu.RUnlock()
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestCP1V3_TransactionCommit_ErrorPropagation_SSTableIOError tests whether
+// Transaction.Commit aborts and returns an error when latestValueLocked encounters
+// an unexpected I/O error reading an SSTable.
+func TestCP1V3_TransactionCommit_ErrorPropagation_SSTableIOError(t *testing.T) {
+	testDir := "test_data_cp1v3_errorprop"
+	os.RemoveAll(testDir)
+	os.MkdirAll(testDir, 0755)
+	defer os.RemoveAll(testDir)
+
+	walPath := testDir + "/wal.log"
+	cfg := Config{
+		Mode:    SyncModeApproachA,
+		WalPath: walPath,
+	}
+	man, err := CreateManagerWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+	var sstFiles []string
+	defer func() {
+		man.Close()
+		for _, f := range sstFiles {
+			os.Remove(f)
+		}
+	}()
+
+	// Commit a key and flush it to disk as an SSTable
+	txn0 := man.Begin()
+	txn0.Put("audit_key", "val0")
+	if err := txn0.Commit(); err != nil {
+		t.Fatalf("initial commit failed: %v", err)
+	}
+	if err := man.TriggerFlush(); err != nil {
+		t.Fatalf("flush failed: %v", err)
+	}
+
+	// Wait for background worker to publish the SSTable
+	pubDeadline := time.Now().Add(2 * time.Second)
+	for {
+		man.Mu.RLock()
+		readerCount := len(man.ActiveSSreaders)
+		man.Mu.RUnlock()
+		if readerCount > 0 {
+			break
+		}
+		if time.Now().After(pubDeadline) {
+			t.Fatalf("timed out waiting for SSTable publication")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Induce an unexpected I/O error by prematurely closing the SSTable file descriptor
+	man.Mu.Lock()
+	if len(man.ActiveSSreaders) == 0 {
+		man.Mu.Unlock()
+		t.Fatalf("expected at least 1 active SSTable reader")
+	}
+	targetReader := man.ActiveSSreaders[0]
+	sstFiles = append(sstFiles, targetReader.File.Name())
+	// Close the file handle to force subsequent Read operations to fail with os.ErrClosed
+	targetReader.File.Close()
+	man.Mu.Unlock()
+
+	// Verify that latestValueLocked now returns an I/O error (not ErrNotFound)
+	man.Mu.RLock()
+	_, lookupErr := man.latestValueLocked([]byte("audit_key"))
+	man.Mu.RUnlock()
+
+	if lookupErr == nil || errors.Is(lookupErr, ErrNotFound) {
+		t.Fatalf("expected unexpected I/O error from latestValueLocked, got %v", lookupErr)
+	}
+	t.Logf("Confirmed latestValueLocked returns unexpected error: %v", lookupErr)
+
+	// Now attempt a transaction commit that touches audit_key
+	txn1 := man.Begin()
+	txn1.Put("audit_key", "val1")
+	commitErr := txn1.Commit()
+
+	// EXPECTATION: Transaction must NOT commit when conflict validation fails with I/O error!
+	if commitErr == nil {
+		t.Fatalf("DEFECT CONFIRMED: Transaction.Commit succeeded silently despite unexpected I/O error during conflict validation!")
+	}
+	t.Logf("Transaction.Commit properly rejected with: %v", commitErr)
+}

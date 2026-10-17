@@ -330,6 +330,37 @@ Format:
 - **Evidence Path**: [`research/debug/E-010/repro.md`](../debug/E-010/repro.md), [`research/debug/E-010/before.log`](../debug/E-010/before.log), [`research/debug/E-010/wsl_before.log`](../debug/E-010/wsl_before.log), [`research/debug/E-010/after.log`](../debug/E-010/after.log), [`research/debug/E-010/wsl_after.log`](../debug/E-010/wsl_after.log), [`research/debug/E-010/diff.patch`](../debug/E-010/diff.patch).
 - **Regression Tests**: `TestFailedFlush_E010_Resolved_StaleReadPrevented`, `TestFailedFlush_E010_Resolved_TombstoneResurrectionPrevented`, `TestFailedFlush_E010_Resolved_StaleDeletionMaskingPrevented`, `TestFailedFlush_E010_Resolved_ThreeGenerationsPreserved`, `TestFailedFlush_E010_Resolved_ActiveMemtablePrecedence`, `TestFailedFlush_E010_Resolved_NoPartialPublication`, `TestFailedFlush_E010_Resolved_WriteConflictDetection`, `TestFailedFlush_E010_Resolved_ErrorReportingOnClose`, `TestFailedFlush_Interaction_SubsequentQueuedFlushes`, `TestFailedFlush_Interaction_ConcurrentReads`, `TestFailedFlush_Interaction_ConcurrentCommits`, `TestFailedFlush_Interaction_Compaction`, `TestFailedFlush_Interaction_RepeatedShutdownCalls`, `TestFailedFlush_Interaction_MultipleFailedFlushes` in `lsmengine/failed_flush_precedence_test.go`.
 
+---
+
+### E-011: Silent Transaction Commit on Conflict-Validation Lookup I/O Failure
+
+- **ID**: `E-011`
+- **Detected**: 2026-10-17, baseline Approach A, Windows 11 amd64 & WSL2 Linux
+- **Sub-phase**: CP1-V.3 (Audit conflict-lookup error propagation)
+- **Severity**: Correctness / Data Integrity / Conflict Detection (P0 Blocker)
+- **Symptom**: When `Transaction.Commit` validates write-write conflicts across keys in `t.WriteSet`, it invokes `t.Man.latestValueLocked([]byte(key))`. If `latestValueLocked` encounters an unexpected error (e.g. disk read error, corrupted SSTable block, closed file descriptor), it returns `(0, err)`. `Transaction.Commit` only checked `if err == nil && latestSeqNo > t.ReadTs`. When `err != nil`, this check evaluated to `false`, causing the loop to complete without aborting. The transaction proceeded to allocate a sequence number, write to WAL, insert into the active Memtable, and commit successfully, silently bypassing conflict validation when disk tiers could not be verified reliably.
+- **Minimal Reproduction**:
+  ```powershell
+  go test -v ./lsmengine -run TestCP1V3_TransactionCommit_ErrorPropagation_SSTableIOError
+  ```
+- **Expected / Actual**:
+  - *Expected*: Transaction aborts and propagates the unexpected I/O error (`conflict validation failed for key "audit_key": ...`); transaction does not commit when conflict validation cannot be completed reliably.
+  - *Actual*: Transaction committed silently without error (`commitErr == nil`), bypassing conflict validation.
+- **Trace / Log**:
+  ```
+  === RUN   TestCP1V3_TransactionCommit_ErrorPropagation_SSTableIOError
+      cp1_verification_test.go:133: Confirmed latestValueLocked returns unexpected error: read data_1792251113965457100_1.sst: file already closed
+      cp1_verification_test.go:142: DEFECT CONFIRMED: Transaction.Commit succeeded silently despite unexpected I/O error during conflict validation!
+  --- FAIL: TestCP1V3_TransactionCommit_ErrorPropagation_SSTableIOError (0.03s)
+  FAIL
+  ```
+- **Root Cause**: In `lsmengine/transaction.go:68`, `Transaction.Commit` did not check for unexpected non-nil errors from `latestValueLocked`. It only evaluated `if err == nil && latestSeqNo > t.ReadTs`. Any non-nil error from `latestValueLocked` (including I/O faults, file corruption, or unexpected read failures) bypassed the abort check and allowed the transaction to proceed to commit.
+- **Status**: IDENTIFIED & REPRODUCED (Fix Pending in CP1-V.3).
+- **Resolution**: Check `if err != nil && !errors.Is(err, ErrNotFound)` in `Transaction.Commit`. If true, release `t.Man.Mu.Unlock()`, call `t.Abort()`, and return formatted error `fmt.Errorf("conflict validation failed for key %q: %w", key, err)`. `ErrNotFound` continues to be treated as absence of previous versions.
+- **Evidence Path**: [`research/debug/E-011/repro.md`](../debug/E-011/repro.md), [`research/debug/E-011/before.log`](../debug/E-011/before.log), [`research/debug/E-011/wsl_before.log`](../debug/E-011/wsl_before.log).
+- **Regression Test**: `TestCP1V3_TransactionCommit_ErrorPropagation_SSTableIOError` in `lsmengine/cp1_verification_test.go`.
+
+
 
 
 

@@ -39,13 +39,14 @@ Phase I1 transformed an initially broken and untested storage engine prototype i
 9. **Memory-Tier Immutability & Zero-Loss Handoff (`D-016`, Invariants `INV-MUTABLE-1`, `INV-HANDOFF-1`)**: Formally audited memory-tier synchronization. Verified that frozen Memtables are immutable and concurrently safe under Go ThreadSanitizer. Verified atomic swap from `Frozenmem` to `ActiveSSreaders` with zero dropped values across 188k+ continuous reads.
 10. **Fail-Stop Flush Pipeline Precedence (`E-010`, Decision `D-017`, `INV-FLUSH-FAIL-1`)**: Resolved tier precedence inversion and tombstone resurrection by halting background flush processing upon disk errors, retaining all unflushed Memtables in `Frozenmem` in strict chronological order.
 11. **Explicit Synchronization-Mode Seam (`D-018`, Invariant `INV-APPROACH-A`)**: Introduced typed `SyncMode` (`SyncModeApproachA` vs `SyncModeApproachB`) and `CreateManagerWithConfig(cfg)`. Default initialization selects safe Approach A; unimplemented Approach B is cleanly rejected with `ErrUnsupportedSyncMode`.
-12. **Full Dual-Platform Test Pass**: Reconciled test inventory from 56 tests up to **98 unit tests (104 total runnable tests including 6 benchmarks)**. All 98 pass on Windows native (7.70s) and WSL2 Linux with `-race` (14.52s, 0 data races, 0 deadlocks). Concurrency stress tests (`-count=5`) pass cleanly. Clean static analysis via `go vet ./...`.
+12. **Conflict-Lookup Error Propagation & Silent Commit Prevention (`E-011`, Decision `D-019`)**: Hardened `Transaction.Commit` to explicitly check `if err != nil && !errors.Is(err, ErrNotFound)` during Snapshot Isolation validation. If an underlying SSTable suffers I/O errors or corruption, transaction aborts immediately rather than committing silently.
+13. **Full Dual-Platform Test Pass**: Reconciled test inventory from 56 tests up to **100 unit tests (106 total runnable tests including 6 benchmarks)**. All 100 pass on Windows native (7.74s) and WSL2 Linux with `-race` (14.65s, 0 data races, 0 deadlocks). Concurrency stress tests (`-count=5`) pass cleanly. Clean static analysis via `go vet ./...`.
 
 ---
 
-## 3. Reconciled Defect & Resolution Inventory (`E-001` through `E-010`)
+## 3. Reconciled Defect & Resolution Inventory (`E-001` through `E-011`)
 
-All 10 defects encountered across Phase I1 have been deterministically reproduced, repaired, and permanently verified:
+All 11 defects encountered across Phase I1 have been deterministically reproduced, repaired, and permanently verified:
 
 ```
 Defect Progression Across Phase I1:
@@ -59,6 +60,7 @@ E-007 (Flush vs Shutdown Handle Leak)      ──► RESOLVED (396ed81)
 E-008 (Concurrent Flush Out-of-Order Pub)  ──► RESOLVED (624a5f5)
 E-009 (Flush Queue Circular Wait Deadlock) ──► RESOLVED (ed78f2c)
 E-010 (Failed-Flush Precedence Inversion)  ──► RESOLVED (592461c)
+E-011 (Silent Commit on Conflict IO Error) ──► RESOLVED (D-019)
 ```
 
 ### Detailed Resolution Summary:
@@ -103,6 +105,10 @@ E-010 (Failed-Flush Precedence Inversion)  ──► RESOLVED (592461c)
     - *Symptom*: Older failed flush $F_0$ stayed in `Frozenmem` while newer flush $F_1$ published to disk; `Frozenmem` masked $F_1$, causing stale reads and tombstone resurrection.
     - *Fix*: Option A Fail-Stop: Worker halts immediately upon fatal error (`m.flushErr != nil`); suppresses subsequent publications; retains unflushed Memtables in `Frozenmem` in strict chronological order.
     - *Evidence*: `TestFailedFlush_Case1` through `Case14` (14 tests) PASS (0.35s). Commit: `592461c`.
+11. **`E-011` (Silent Commit on Conflict-Lookup I/O Error)**:
+    - *Symptom*: `Transaction.Commit` only inspected sequence timestamps if `err == nil`. When `latestValueLocked` returned an unexpected physical I/O or corruption error, the transaction proceeded to commit mutations anyway, violating Snapshot Isolation.
+    - *Fix*: Added strict error guard: `if err != nil && !errors.Is(err, ErrNotFound) { t.Man.Mu.Unlock(); t.Abort(); return fmt.Errorf(...) }`.
+    - *Evidence*: `TestCP1V3_TransactionCommit_ErrorPropagation_SSTableIOError` PASS (0.02s). Decision: `D-019`.
 
 ---
 
@@ -126,6 +132,8 @@ E-010 (Failed-Flush Precedence Inversion)  ──► RESOLVED (592461c)
 | **`INV-MVCC-6`** | Tier Monotonic | Active Memtable sequence numbers strictly exceed Frozen Memtables; Frozen strictly exceed on-disk SSTables. | **VERIFIED** |
 | **`INV-ORDER-1`** | Reader Order | `ActiveSSreaders` slice is ordered chronologically from oldest (index 0) to newest (index `len-1`). | **VERIFIED** |
 | **`INV-COMPACT-1`**| Prefix Compaction| Under flat reader slice, compaction inputs must be a contiguous prefix `[0..k]` starting at index 0. | **VERIFIED** |
+| **`INV-DUR-1`** | WAL Precedence | No mutation is visible in Memtable until written to the WAL and synced to disk. | **VERIFIED** |
+| **`INV-DUR-2`** | Crash Replay | Replaying WAL restores committed transactions up to the last successful sync; unproven across rotated logs. | **UNPROVEN (Rotations)** |
 | **`INV-QUEUE-1`** | Queue Admission | Enqueueing frozen Memtables never blocks on queue capacity or worker progress; circular wait eliminated. | **VERIFIED** |
 | **`INV-MUTABLE-1`**| Immutability | Once frozen, Memtables are permanently sealed against mutations; accessed as concurrent immutable data. | **VERIFIED** |
 | **`INV-HANDOFF-1`**| Tier Visibility | Committed keys remain continuously discoverable across tiers with zero missing-version window gaps. | **VERIFIED** |
@@ -168,7 +176,8 @@ E-010 (Failed-Flush Precedence Inversion)  ──► RESOLVED (592461c)
 
 #### 1. Point Query (`Manager.Get`)
 ```go
-func (m *Manager) Get(key []byte, readTs uint64) (string, error) {
+func (m *Manager) Get(key string, readTs uint64) (string, error) {
+    byteKey := []byte(key)
     m.Mu.RLock()
     defer m.Mu.RUnlock()
 
@@ -176,8 +185,12 @@ func (m *Manager) Get(key []byte, readTs uint64) (string, error) {
         return "", ErrClosed
     }
 
+    if m.duringMemtableReadHook != nil {
+        m.duringMemtableReadHook()
+    }
+
     // Tier 1: Active Memtable
-    if val, err := m.Mem.Get(key, readTs); err == nil {
+    if val, err := m.Mem.Get(byteKey, readTs); err == nil {
         return val, nil
     } else if errors.Is(err, ErrKeyDeleted) {
         return "", ErrKeyDeleted
@@ -185,7 +198,7 @@ func (m *Manager) Get(key []byte, readTs uint64) (string, error) {
 
     // Tier 2: Frozen Memtables (Reverse Chronological: Newest to Oldest)
     for i := len(m.Frozenmem) - 1; i >= 0; i-- {
-        if val, err := m.Frozenmem[i].Get(key, readTs); err == nil {
+        if val, err := m.Frozenmem[i].Get(byteKey, readTs); err == nil {
             return val, nil
         } else if errors.Is(err, ErrKeyDeleted) {
             return "", ErrKeyDeleted
@@ -194,7 +207,7 @@ func (m *Manager) Get(key []byte, readTs uint64) (string, error) {
 
     // Tier 3: Active SSTables (Reverse Chronological: Newest to Oldest)
     for i := len(m.ActiveSSreaders) - 1; i >= 0; i-- {
-        val, err := m.ActiveSSreaders[i].Get(key, readTs)
+        val, err := m.ActiveSSreaders[i].Get(byteKey, readTs)
         if err == nil {
             return val, nil
         } else if errors.Is(err, ErrKeyDeleted) {
@@ -207,7 +220,66 @@ func (m *Manager) Get(key []byte, readTs uint64) (string, error) {
 }
 ```
 
-#### 2. Compaction Publication (`replaceCompactedReaders`)
+#### 2. Transaction Commit (`Transaction.Commit`)
+```go
+func (t *Transaction) Commit() error {
+    t.Man.Mu.Lock()
+
+    if t.Man.state != EngineOpen {
+        t.Man.Mu.Unlock()
+        t.Abort()
+        return ErrClosed
+    }
+
+    // 1. Snapshot Isolation Conflict Validation
+    for key := range t.WriteSet {
+        latestSeqNo, err := t.Man.latestValueLocked([]byte(key))
+        if err != nil && !errors.Is(err, ErrNotFound) {
+            t.Man.Mu.Unlock()
+            t.Abort()
+            return fmt.Errorf("conflict validation failed for key %q: %w", key, err)
+        }
+        if err == nil && latestSeqNo > t.ReadTs {
+            t.Man.Mu.Unlock()
+            t.Abort()
+            return errors.New("Write-write conflict detected. Transaction aborted.")
+        }
+    }
+
+    if t.Man.Log == nil || t.Man.Log.File == nil {
+        t.Man.Mu.Unlock()
+        return errors.New("wal is unavailable")
+    }
+
+    // 2. Allocate Monotonic Commit Sequence Number
+    t.Man.CurrentSeqNo.Add(1)
+    t.AllocatedSeqNo = t.Man.CurrentSeqNo.Load()
+
+    // 3. Write-Ahead Log Append & Sync, and Memory Mutation
+    for key, pendingWrite := range t.WriteSet {
+        encodedKey := EncodeInternalKey([]byte(key), t.AllocatedSeqNo, pendingWrite.IsDelete)
+        err := t.Man.Log.Append(encodedKey, pendingWrite.Data)
+        if err != nil {
+            t.Man.Mu.Unlock()
+            return err
+        }
+
+        t.Man.Mem.Put(encodedKey, pendingWrite.Data)
+        t.Man.Mem.SizeBytes += int64(len(encodedKey) + len(pendingWrite.Data))
+    }
+
+    t.WriteSet = nil
+
+    // 4. Release Manager.Mu before invoking flush check to prevent deadlocks
+    t.Man.Mu.Unlock()
+
+    // 5. Trigger Memory Flush if Size Exceeds Threshold
+    t.Man.checkAndTriggerFlush()
+    return nil
+}
+```
+
+#### 3. Compaction Publication (`replaceCompactedReaders`)
 ```go
 func (m *Manager) replaceCompactedReaders(inputs []*SSTableReader, newReader *SSTableReader) error {
     if newReader == nil {
@@ -234,7 +306,7 @@ func (m *Manager) replaceCompactedReaders(inputs []*SSTableReader, newReader *SS
 }
 ```
 
-#### 3. Fail-Stop Flush Loop (`flushLoop`)
+#### 4. Fail-Stop Flush Loop (`flushLoop`)
 ```go
 func (m *Manager) flushLoop() {
     defer m.flushWg.Done()
@@ -269,11 +341,11 @@ func (m *Manager) flushLoop() {
 
 | Test Suite / Metric | Windows 11 NTFS Native | WSL2 Ubuntu Linux (`-race`) | Pass Rate | Status |
 | :--- | :--- | :--- | :--- | :--- |
-| **Full Unit Test Suite** (`go test ./...`) | **98/98 PASS (7.70s)** | **98/98 PASS (14.52s)** | 100% | **CERTIFIED** |
+| **Full Unit Test Suite** (`go test ./...`) | **100/100 PASS (7.74s)** | **100/100 PASS (14.65s)** | 100% | **CERTIFIED** |
 | **Race Detector Warnings** | N/A (Windows host) | **0 data races** | 100% | **CERTIFIED** |
 | **Deadlock Warnings** | 0 deadlocks | **0 deadlocks** | 100% | **CERTIFIED** |
 | **Concurrency Stress Suite** (`-count=5`) | **PASS (10.12s)** | **PASS (23.64s, 0 races)** | 100% | **CERTIFIED** |
-| **Defect Regression Suite** (`E-001..E-010`) | **PASS (2.49s)** | **PASS (6.06s, 0 races)** | 100% | **CERTIFIED** |
+| **Defect Regression Suite** (`E-001..E-011`) | **PASS (2.51s)** | **PASS (6.10s, 0 races)** | 100% | **CERTIFIED** |
 | **Static Code Analysis** (`go vet ./...`) | Clean (0 errors) | Clean (0 errors) | 100% | **CERTIFIED** |
 | **File Handle Sharing Leaks** | 0 leaks (`ERROR_SHARING_VIOLATION` eliminated) | 0 unlinked open descriptors | 100% | **CERTIFIED** |
 
@@ -315,9 +387,10 @@ Approach A is **certified ready for experimental baseline benchmarking** in Phas
 ## 10. Immutable Frozen Baseline Identification
 
 The candidate Approach A baseline has been permanently frozen in Git:
-- **Git Commit Hash**: `c697d7d5800eebcaa20b0002b8d808f69cca83fa`
-- **Annotated Git Tag**: `baseline-approach-a`
-- **Working Tree State**: 100% clean (`nothing to commit, working tree clean`).
+- **Frozen Baseline Tag**: `baseline-approach-a`
+- **Annotated Tag Commit Hash**: `d6909a75ea8d4015e2f19c3b35465dd78e0f4dfc`
+- **Pre-commit Parent Hash**: `c697d7d5800eebcaa20b0002b8d808f69cca83fa` (zero diff in `lsmengine/` between parent and tagged commit)
+- **Post-Verification Additions**: E-011 repair and document reconciliation tracked in `research/checkpoints/CP1_VERIFICATION_ADDENDUM.md`
 - **Inspection Command**: `git show baseline-approach-a`
 
 ---

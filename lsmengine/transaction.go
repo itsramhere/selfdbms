@@ -2,7 +2,9 @@ package lsmengine
 
 import (
 	"errors"
+	"fmt"
 )
+
 
 type Transaction struct {
 	WriteSet       map[string]PendingWrite
@@ -64,6 +66,11 @@ func (t *Transaction) Commit() error {
 	for key := range t.WriteSet {
 		// Use internal unexported latestValueLocked since t.Man.Mu is already locked
 		latestSeqNo, err := t.Man.latestValueLocked([]byte(key))
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			t.Man.Mu.Unlock()
+			t.Abort()
+			return fmt.Errorf("conflict validation failed for key %q: %w", key, err)
+		}
 
 		if err == nil && latestSeqNo > t.ReadTs {
 			t.Man.Mu.Unlock()
@@ -71,6 +78,7 @@ func (t *Transaction) Commit() error {
 			return errors.New("Write-write conflict detected. Transaction aborted.")
 		}
 	}
+
 
 	if t.Man.Log == nil || t.Man.Log.File == nil {
 		t.Man.Mu.Unlock()
