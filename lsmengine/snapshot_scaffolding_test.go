@@ -27,6 +27,29 @@ func TestSnapshotState_String(t *testing.T) {
 	}
 }
 
+func TestSharedReaderState_String(t *testing.T) {
+	tests := []struct {
+		state    SharedReaderState
+		expected string
+	}{
+		{SharedReaderActive, "Active"},
+		{SharedReaderObsolete, "Obsolete"},
+		{SharedReaderClosing, "Closing"},
+		{SharedReaderClosed, "Closed"},
+		{SharedReaderUnlinking, "Unlinking"},
+		{SharedReaderReclaimed, "Reclaimed"},
+		{SharedReaderClosedValid, "ClosedValid"},
+		{SharedReaderFailed, "Failed"},
+		{SharedReaderState(99), "Unknown"},
+	}
+
+	for _, tt := range tests {
+		if got := tt.state.String(); got != tt.expected {
+			t.Errorf("SharedReaderState(%d).String() = %q, expected %q", int(tt.state), got, tt.expected)
+		}
+	}
+}
+
 func TestSharedReader_RefAndCount(t *testing.T) {
 	sr := &SharedReader{
 		Path: "test_sstable.sst",
@@ -39,6 +62,26 @@ func TestSharedReader_RefAndCount(t *testing.T) {
 	sr.Ref()
 	if count := sr.RefCount(); count != 2 {
 		t.Fatalf("expected RefCount to be 2, got %d", count)
+	}
+
+	sr.SetState(SharedReaderActive)
+	if sr.State() != SharedReaderActive {
+		t.Fatalf("expected state SharedReaderActive, got %v", sr.State())
+	}
+}
+
+func TestReaderSnapshot_AtomicAccessors(t *testing.T) {
+	snap := &ReaderSnapshot{}
+	if snap.State() != SnapshotConstructing {
+		t.Fatalf("expected initial state SnapshotConstructing, got %v", snap.State())
+	}
+	if snap.Pins() != 0 {
+		t.Fatalf("expected initial pins 0, got %d", snap.Pins())
+	}
+
+	snap.SetState(SnapshotPublished)
+	if snap.State() != SnapshotPublished {
+		t.Fatalf("expected state SnapshotPublished, got %v", snap.State())
 	}
 }
 

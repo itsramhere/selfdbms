@@ -192,6 +192,12 @@ Under Approach A, synchronization relies entirely on `Manager.Mu (*sync.RWMutex)
 - **Current Status**: **Adopted and Formalized (Phase I2, Decision D-022)**.
 - **Evidence / Justification**: Specified in `research/design/alternatives.md`. Eliminates the visibility gap between memory tiers and disk tiers.
 
+### INV-SNAP-6: Obsolete Marking and Exactly-Once Physical Cleanup (Approach B)
+- **Statement**: An SSTable reader may only be marked `obsolete = true` after a replacement snapshot incorporating its replacement has committed. An obsolete reader shall be scheduled for physical cleanup exactly once when its global `refCount` reaches zero under `m.snapshotMu`. Under Windows NTFS, the OS file descriptor must be verified closed before invoking `os.Remove(Path)`. During engine shutdown (`Manager.Close`), valid non-obsolete readers shall have their handles closed (`SharedReaderClosedValid`), while their physical files are strictly preserved on disk for subsequent engine startup and recovery.
+- **Current Status**: **Adopted and Formalized (Sub-phase I2.6, Decisions D-023, D-024)**.
+- **Evidence / Justification**: Specified in `research/design/alternatives.md`. Eliminates premature file unlinking, Windows `ERROR_SHARING_VIOLATION`, and unintended SSTable deletion on shutdown.
+
+
 
 
 
