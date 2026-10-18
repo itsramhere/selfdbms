@@ -87,6 +87,14 @@ type Manager struct {
 	flushBuildHook              func() error
 	walRotationHook             func() error
 
+	// Deterministic interleaving hooks for regression verification (nil in production builds).
+	// afterReleaseSnapshotUnlockHook runs in ReleaseSnapshot immediately after m.snapshotMu
+	// is released, exposing the window between the unlock and asynchronous cleanup launch.
+	afterReleaseSnapshotUnlockHook func()
+	// beforeAsyncCleanupDrainHook runs at the very start of a scheduled asynchronous
+	// cleanup goroutine, before any pending cleanup is drained.
+	beforeAsyncCleanupDrainHook func()
+
 	// Approach B Snapshot Fields
 	snapshotMu                sync.Mutex
 	snapshotPhase             SnapshotShutdownPhase

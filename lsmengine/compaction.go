@@ -486,10 +486,12 @@ func (m *Manager) compactAllApproachB() error {
 		m.checkCleanupEligibilityLocked(sr)
 	}
 
-	m.snapshotMu.Unlock()
+	// Trigger asynchronous cleanup for any now-eligible obsolete readers.
+	// Registered under m.snapshotMu so the positive cleanupWg.Add is strictly ordered
+	// before closeApproachB's final cleanupWg.Wait() (CP3a-V.2 / E-013).
+	m.scheduleAsyncCleanupLocked()
 
-	// Trigger asynchronous cleanup for any now-eligible obsolete readers
-	m.scheduleAsyncCleanup()
+	m.snapshotMu.Unlock()
 
 	return nil
 }

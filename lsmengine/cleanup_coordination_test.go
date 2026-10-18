@@ -320,3 +320,144 @@ func TestCleanup_HandleClosurePrecedesUnlink_WindowsNTFS(t *testing.T) {
 		t.Fatalf("expected file to be unlinked, got err=%v", err)
 	}
 }
+
+// TestCleanup_InterleavedFinalPinReleaseAndConcurrentClose validates CP3a-V.2:
+// A deterministic test interleaving a final pin release, cleanup registration (cleanupWg.Add),
+// and concurrent Close calls. Verifies that:
+// 1. cleanupWg.Add strictly happens-before cleanupWg.Wait().
+// 2. Close cannot complete before the required asynchronous cleanup finishes.
+// 3. All concurrent Close callers unblock together and receive the exact same final result.
+func TestCleanup_InterleavedFinalPinReleaseAndConcurrentClose(t *testing.T) {
+	testDir := t.TempDir()
+	walPath := filepath.Join(testDir, "wal.log")
+	cfg := Config{
+		Mode:    SyncModeApproachB,
+		WalPath: walPath,
+	}
+	man, err := CreateManagerWithConfig(cfg)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	// 1. Commit and flush SSTable 1
+	tx1 := man.Begin()
+	tx1.Put("k1", "v1")
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("tx1 commit failed: %v", err)
+	}
+	if err := man.TriggerFlush(); err != nil {
+		t.Fatalf("flush 1 failed: %v", err)
+	}
+	drainFlushes(man)
+
+	// 2. Reader acquires pin on snapshot 1 (holds lease on SSTable 1)
+	snap1, err := man.AcquireSnapshot()
+	if err != nil {
+		t.Fatalf("failed to acquire snapshot: %v", err)
+	}
+	obsoleteSR := snap1.Readers()[0]
+	obsoletePath := obsoleteSR.Path
+
+	// 3. Simulate replacement: publish new snapshot, mark obsoleteSR obsolete, retire snap1
+	man.snapshotMu.Lock()
+	newSnap := &ReaderSnapshot{
+		id: atomic.AddUint64(&man.snapshotSeq, 1),
+	}
+	newSnap.SetState(SnapshotPublished)
+	man.currentSnapshot = newSnap
+
+	obsoleteSR.MarkObsoleteLocked()
+	man.retireSnapshotLocked(snap1)
+	man.snapshotMu.Unlock()
+
+	// 4. Install deterministic hook in beforeAsyncCleanupDrainHook
+	cleanupStarted := make(chan struct{})
+	cleanupBarrier := make(chan struct{})
+	man.beforeAsyncCleanupDrainHook = func() {
+		close(cleanupStarted)
+		<-cleanupBarrier
+	}
+
+	// 5. Launch multiple concurrent Close() callers
+	const numCloseCallers = 5
+	var closeWg sync.WaitGroup
+	closeResults := make([]error, numCloseCallers)
+	closeDoneCh := make(chan struct{})
+
+	for i := 0; i < numCloseCallers; i++ {
+		closeWg.Add(1)
+		go func(idx int) {
+			defer closeWg.Done()
+			closeResults[idx] = man.Close()
+		}(i)
+	}
+
+	go func() {
+		closeWg.Wait()
+		close(closeDoneCh)
+	}()
+
+	// Allow Close() callers to reach the snapshot pin drain wait (snapshotDrainCond.Wait())
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify that Close() has NOT finished while the snapshot pin is held
+	select {
+	case <-closeDoneCh:
+		t.Fatalf("DEFECT: Close() finished while snapshot pin was still held!")
+	default:
+	}
+
+	// 6. Release the final snapshot pin
+	// This will:
+	// - Decrement pins to 0.
+	// - Reclaim retired snap1.
+	// - Call scheduleAsyncCleanupLocked() (under snapshotMu) which calls cleanupWg.Add(1).
+	// - Spawn runAsyncCleanup goroutine which hits beforeAsyncCleanupDrainHook.
+	// - Signal snapshotDrainCond.Broadcast() to wake up closeApproachB().
+	man.ReleaseSnapshot(snap1)
+
+	// 7. Wait for the async cleanup goroutine to start and enter the barrier
+	select {
+	case <-cleanupStarted:
+		// Async cleanup has started and called cleanupWg.Add(1)
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for async cleanup goroutine to enter hook")
+	}
+
+	// 8. Verify that Close() is STILL NOT finished because it is waiting on cleanupWg.Wait()!
+	select {
+	case <-closeDoneCh:
+		t.Fatalf("DEFECT: Close() finished before async cleanup was released!")
+	case <-time.After(100 * time.Millisecond):
+		// Expected: Close() is waiting on cleanupWg
+	}
+
+	// 9. Unblock the async cleanup
+	close(cleanupBarrier)
+
+	// 10. Now, and only now, all Close() callers must finish!
+	select {
+	case <-closeDoneCh:
+		// Succeeded!
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Close() timed out waiting for cleanup completion")
+	}
+
+	// 11. Assert all concurrent Close callers received the same result (nil error)
+	for i, err := range closeResults {
+		if err != nil {
+			t.Errorf("caller %d got non-nil error: %v", i, err)
+		}
+	}
+
+	// 12. Verify obsolete SSTable file was unlinked from disk
+	if _, err := os.Stat(obsoletePath); !os.IsNotExist(err) {
+		t.Fatalf("expected obsolete file %q to be unlinked, got err=%v", obsoletePath, err)
+	}
+
+	// 13. Verify reader transitioned to Reclaimed
+	if obsoleteSR.State() != SharedReaderReclaimed {
+		t.Fatalf("expected state SharedReaderReclaimed, got %v", obsoleteSR.State())
+	}
+}
+

@@ -329,17 +329,24 @@ func (m *Manager) AcquireSnapshot() (*ReaderSnapshot, error) {
 
 // ReleaseSnapshot releases an active pin on a snapshot.
 // PRECONDITION: Zero locks held at entry; acquires m.snapshotMu internally.
+//
+// Cleanup scheduling linearization (CP3a-V.2 / E-013): when the final pin release
+// makes readers eligible for physical cleanup, the positive cleanupWg.Add is executed
+// strictly under m.snapshotMu (via scheduleAsyncCleanupLocked). Because closeApproachB
+// performs its final snapshotMu critical section (phase transition to SnapshotPhaseClosed)
+// before calling cleanupWg.Wait(), every positive Add strictly happens-before the final
+// Wait, satisfying the Go WaitGroup contract ("calls with a positive delta that occur
+// when the counter is zero must happen before a Wait").
 func (m *Manager) ReleaseSnapshot(snap *ReaderSnapshot) {
 	if snap == nil {
 		return
 	}
 
-	var shouldCleanup bool
 	m.snapshotMu.Lock()
 	defer func() {
 		m.snapshotMu.Unlock()
-		if shouldCleanup {
-			m.scheduleAsyncCleanup()
+		if m.afterReleaseSnapshotUnlockHook != nil {
+			m.afterReleaseSnapshotUnlockHook()
 		}
 	}()
 
@@ -351,7 +358,9 @@ func (m *Manager) ReleaseSnapshot(snap *ReaderSnapshot) {
 		if m.snapshotDrainCond != nil {
 			m.snapshotDrainCond.Broadcast()
 		}
-		shouldCleanup = m.hasPendingCleanups
+		if m.hasPendingCleanups {
+			m.scheduleAsyncCleanupLocked()
+		}
 	}
 }
 
@@ -486,13 +495,29 @@ func (m *Manager) evaluateShutdownReaderCleanupLocked() {
 	}
 }
 
-// scheduleAsyncCleanup schedules an asynchronous cleanup goroutine tracked by cleanupWg.
-func (m *Manager) scheduleAsyncCleanup() {
+// scheduleAsyncCleanupLocked registers and launches an asynchronous cleanup goroutine.
+// PRECONDITION: Manager.snapshotMu MUST be held by the caller.
+//
+// The positive cleanupWg.Add executes under m.snapshotMu, guaranteeing it strictly
+// happens-before closeApproachB's final cleanupWg.Wait() (see ReleaseSnapshot for the
+// full linearization argument). Callers include the final pin-release path and the
+// Approach B compaction publication path.
+func (m *Manager) scheduleAsyncCleanupLocked() {
+	if m.snapshotPhase == SnapshotPhaseClosed || m.state == EngineClosed {
+		return
+	}
 	m.cleanupWg.Add(1)
-	go func() {
-		defer m.cleanupWg.Done()
-		m.drainPendingCleanups()
-	}()
+	go m.runAsyncCleanup()
+}
+
+// runAsyncCleanup drains pending cleanups and releases the cleanupWg registration
+// performed by scheduleAsyncCleanupLocked.
+func (m *Manager) runAsyncCleanup() {
+	defer m.cleanupWg.Done()
+	if m.beforeAsyncCleanupDrainHook != nil {
+		m.beforeAsyncCleanupDrainHook()
+	}
+	m.drainPendingCleanups()
 }
 
 // drainPendingCleanups executes handle closures and unlinks outside all engine locks.

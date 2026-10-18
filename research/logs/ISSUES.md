@@ -397,6 +397,32 @@ Format:
 - **Status**: Fixed (Sub-phase I3.7.1, Decision D-031).
 - **Evidence Path**: [`research/debug/E-012/before.log`](../debug/E-012/before.log), [`research/debug/E-012/after.log`](../debug/E-012/after.log), [`research/debug/E-012/diff.patch`](../debug/E-012/diff.patch), [`research/debug/E-012/repro.md`](../debug/E-012/repro.md).
 
+---
+
+### E-013: Asynchronous Cleanup WaitGroup Registration Ordering and ReleaseSnapshot Panic-Safety
+
+- **ID**: `E-013`
+- **Detected**: 2026-10-18, commit `494b586`, Approach B mode
+- **Sub-phase**: CP3a-V.2
+- **Severity**: Concurrency / Deadlock / Synchronization Risk (P2)
+- **Symptom**:
+  1. Under the standard Go `sync.WaitGroup` contract, positive `Add` calls when the counter is zero must strictly happen-before `Wait()`. Unconstrained asynchronous cleanup scheduling outside `m.snapshotMu` could theoretically interleave with `closeApproachB`'s final `cleanupWg.Wait()`.
+  2. In `ReleaseSnapshot`, manual mutex unlock before `snap.ReleasePinLocked()` risked leaving `m.snapshotMu` permanently locked if `ReleasePinLocked()` panicked on pin underflow, causing subsequent `man.Close()` calls to deadlock.
+- **Root Cause**:
+  1. `scheduleAsyncCleanup` was previously invoked without checking if shutdown had already transitioned to `SnapshotPhaseClosed`.
+  2. `ReleaseSnapshot` lacked a deferred mutex release to protect against panic recovery during pin underflow testing.
+- **Fix**:
+  1. Implemented `scheduleAsyncCleanupLocked()` strictly under `m.snapshotMu` with an explicit phase boundary guard: `if m.snapshotPhase == SnapshotPhaseClosed || m.state == EngineClosed { return }`.
+  2. Ensured `m.cleanupWg.Add(1)` executes synchronously within the caller's `m.snapshotMu` critical section before spawning the cleanup goroutine, guaranteeing happens-before relationship with `closeApproachB`'s `cleanupWg.Wait()`.
+  3. Restored panic-safe deferred mutex release in `ReleaseSnapshot`: `defer func() { m.snapshotMu.Unlock(); ... }()`.
+- **Regression Test**:
+  - `TestCleanup_InterleavedFinalPinReleaseAndConcurrentClose` in `lsmengine/cleanup_coordination_test.go` (PASS, 0.16s).
+  - `TestSnapshotPinning_UnderflowPanic` in `lsmengine/snapshot_pinning_test.go` (PASS, 0.00s).
+- **Validation**:
+  - Windows Native: `go test -count=1 ./...` (169/169 unit tests PASS, 9.45s).
+  - WSL2 Linux: `go test -race -count=1 ./...` (169/169 unit tests PASS, 0 races, 18.97s).
+- **Status**: Fixed (Sub-phase CP3a-V.2, Decision D-034).
+
 
 
 

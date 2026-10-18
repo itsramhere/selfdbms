@@ -185,15 +185,17 @@
 ---
 
 ## 2. Summary of Findings
-1. **Current Test Pass Rate**: **163/163 unit tests (169 total runnable tests including 6 benchmarks)** passing on Windows 11 NTFS native (`go1.26.3`), **163/163 unit tests passing under WSL2 `go test -race` with zero data races and zero deadlocks** (`go1.27.2`). Clean `go vet ./...` in both environments.
+1. **Current Test Pass Rate**: **169/169 unit tests (175 total runnable tests including 6 benchmarks)** passing on Windows 11 NTFS native (`go1.26.3`), **169/169 unit tests passing under WSL2 `go test -race` with zero data races and zero deadlocks** (`go1.27.2`). Clean `go vet ./...` in both environments.
 2. **Reconciled Test Inventory**:
-   - Pre-I3 (Approach A baseline + Phase I2 scaffolding): **107 unit tests**.
+   - Pre-I3 (Approach A baseline + Phase I2 scaffolding): **107 unit tests** (101 verified baseline + 6 scaffolding in `snapshot_scaffolding_test.go`).
    - Phase I3 Implementation: **30 unit tests** (across `snapshot_construction_test.go` [7], `snapshot_pinning_test.go` [7], `snapshot_publication_test.go` [5], `snapshot_shutdown_test.go` [6], `approach_b_mvcc_test.go` [5]).
    - Sub-phase I3.7 Verification & Minimal Repair: **26 unit tests** (across `sstable_read_error_test.go` [3], `snapshot_conflict_test.go` [3], `snapshot_admission_test.go` [2], `approach_b_parity_test.go` [11], `shared_reader_resurrection_test.go` [3], `cleanup_coordination_test.go` [4]).
-   - Grand Total: 107 + 30 + 26 = **163 unit tests**.
+   - Sub-phase CP3a-V Verification Addendum: **6 unit tests** (across `per_key_conflict_timestamp_test.go` [5], `cleanup_coordination_test.go` [1]).
+   - Grand Total: 107 + 30 + 26 + 6 = **169 unit tests** (175 total runnable tests).
 3. **Reconciled Invariant Ledger**: 33 defined architectural invariants (32 verified, 1 unproven across rotated WALs: `INV-DUR-2`).
-4. **Statement Qualifications**: Universal race freedom is verified empirically under ThreadSanitizer across 163 tests; deadlock freedom is verified across all audited engine paths; crash durability across rotated WALs remains unproven (`INV-DUR-2`); performance benefits are architectural by design with formal measurements deferred to Phase I4/I5.
+4. **Statement Qualifications**: Universal race freedom is verified empirically under ThreadSanitizer across 169 tests; deadlock freedom is verified across all audited engine paths; crash durability across rotated WALs remains unproven (`INV-DUR-2`); performance benefits are architectural by design with formal measurements deferred to Phase I4/I5.
 5. **Compaction Lock Clarification**: During compaction merge, `Manager.Mu` and `snapshotMu` are released to permit concurrent reads and flushes, while `compactionMu` remains held throughout the entire compaction routine to serialize compactions.
+
 
 
 
