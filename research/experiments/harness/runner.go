@@ -1,0 +1,486 @@
+package harness
+
+import (
+	"encoding/json"
+	"fmt"
+	"math"
+	"math/rand"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"owndbms/lsmengine"
+)
+
+// EnvironmentInfo captures machine and OS runtime characteristics.
+type EnvironmentInfo struct {
+	OS             string `json:"os"`
+	Kernel         string `json:"kernel"`
+	CPUModel       string `json:"cpu_model"`
+	PhysicalCores  int    `json:"physical_cores"`
+	LogicalCores   int    `json:"logical_cores"`
+	TotalRAMBytes  int64  `json:"total_ram_bytes"`
+	FreeRAMBytes   int64  `json:"free_ram_bytes"`
+	GoVersion      string `json:"go_version"`
+	GOMAXPROCS     int    `json:"gomaxprocs"`
+	FilesystemType string `json:"filesystem_type"`
+	DataDirPath    string `json:"data_dir_path"`
+}
+
+// TimestampInfo captures trial timing boundaries.
+type TimestampInfo struct {
+	StartISO              string `json:"start_iso"`
+	FinishISO             string `json:"finish_iso"`
+	WarmupDurationMs      int    `json:"warmup_duration_ms"`
+	MeasurementDurationMs int    `json:"measurement_duration_ms"`
+	TotalDurationMs       int    `json:"total_duration_ms"`
+}
+
+// OperationCounts tracks attempted and completed operations across all workers.
+type OperationCounts struct {
+	ReadOpsAttempted       int64 `json:"read_ops_attempted"`
+	ReadOpsCompleted       int64 `json:"read_ops_completed"`
+	WriteOpsAttempted      int64 `json:"write_ops_attempted"`
+	WriteOpsCompleted      int64 `json:"write_ops_completed"`
+	ErrorOpsCount          int64 `json:"error_ops_count"`
+	TimeoutOpsCount        int64 `json:"timeout_ops_count"`
+	ValidationErrorsCount  int64 `json:"validation_errors_count"`
+}
+
+// ThroughputInfo captures completed operations per second.
+type ThroughputInfo struct {
+	ReadOpsPerSec  float64 `json:"read_ops_per_sec"`
+	WriteOpsPerSec float64 `json:"write_ops_per_sec"`
+	TotalOpsPerSec float64 `json:"total_ops_per_sec"`
+}
+
+// LSMDiagnostics tracks internal LSM-tree counters and snapshot health.
+type LSMDiagnostics struct {
+	InitialSSTables      int    `json:"initial_sstables"`
+	FinalSSTables        int    `json:"final_sstables"`
+	FlushesCompleted     uint64 `json:"flushes_completed"`
+	CompactionsCompleted uint64 `json:"compactions_completed"`
+	SSTablePointReads    uint64 `json:"sstable_point_reads"`
+	MemtablePointReads   uint64 `json:"memtable_point_reads"`
+	SnapshotSeq          uint64 `json:"snapshot_seq"`
+	ActiveSnapshotPins   int64  `json:"active_snapshot_pins"`
+	RetiredSnapshots     int    `json:"retired_snapshots_count"`
+	PendingCleanupCount  int    `json:"pending_cleanup_count"`
+	LivePhysicalReaders  int    `json:"live_physical_readers"`
+}
+
+// HostDiagnostics records memory and GC metrics during the trial.
+type HostDiagnostics struct {
+	HeapAllocBytes  uint64 `json:"heap_alloc_bytes"`
+	HeapSysBytes    uint64 `json:"heap_sys_bytes"`
+	NumGC           uint32 `json:"num_gc"`
+	GCPauseTotalNs  uint64 `json:"gc_pause_total_ns"`
+}
+
+// TrialConfig specifies parameters for an individual experimental run.
+type TrialConfig struct {
+	SchemaVersion               string     `json:"schema_version"`
+	TrialID                     string     `json:"trial_id"`
+	TrialIndex                  int        `json:"trial_index"`
+	WorkloadID                  WorkloadID `json:"workload_id"`
+	SyncMode                    string     `json:"sync_mode"`
+	Seed                        int64      `json:"seed"`
+	ReaderConcurrency           int        `json:"reader_concurrency"`
+	WriterConcurrency           int        `json:"writer_concurrency"`
+	MeasurementDurationMs       int        `json:"measurement_duration_ms"`
+	WarmupDurationMs            int        `json:"warmup_duration_ms"`
+	CooldownDurationMs          int        `json:"cooldown_duration_ms"`
+	KeySizeBytes                int        `json:"key_size_bytes"`
+	ValSizeBytes                int        `json:"val_size_bytes"`
+	KeyspaceCardinality         int        `json:"keyspace_cardinality"`
+	InitialSSTableCount         int        `json:"initial_sstable_count"`
+	InitialKeysPerSSTable       int        `json:"initial_keys_per_sstable"`
+	ReadDistribution            string     `json:"read_distribution"`
+	ZipfS                       float64    `json:"zipf_s"`
+	TargetReadHitRatio          float64    `json:"target_read_hit_ratio"`
+	MemtableThresholdBytes      int        `json:"memtable_threshold_bytes"`
+	DataDir                     string     `json:"data_dir"`
+	WalSync                     bool       `json:"wal_sync"`
+	CompactionTriggerIntervalMs int        `json:"compaction_trigger_interval_ms"`
+}
+
+// DefaultTrialConfig returns a robust default configuration for testing and smoke verification.
+func DefaultTrialConfig(workload WorkloadID, mode string, readers int) TrialConfig {
+	return TrialConfig{
+		SchemaVersion:               "1.0.0",
+		TrialID:                     fmt.Sprintf("trial_%s_%s_r%d_%d", workload, mode, readers, time.Now().UnixNano()),
+		TrialIndex:                  0,
+		WorkloadID:                  workload,
+		SyncMode:                    mode,
+		Seed:                        42,
+		ReaderConcurrency:           readers,
+		WriterConcurrency:           0,
+		MeasurementDurationMs:       2000,
+		WarmupDurationMs:            200,
+		CooldownDurationMs:          100,
+		KeySizeBytes:                16,
+		ValSizeBytes:                128,
+		KeyspaceCardinality:         10000,
+		InitialSSTableCount:         4,
+		InitialKeysPerSSTable:       2000,
+		ReadDistribution:            "uniform",
+		ZipfS:                       0.99,
+		TargetReadHitRatio:          0.95,
+		MemtableThresholdBytes:      64 * 1024 * 1024,
+		DataDir:                     "",
+		WalSync:                     true,
+		CompactionTriggerIntervalMs: 0,
+	}
+}
+
+// TrialResult captures complete outputs and diagnostics from an individual run.
+type TrialResult struct {
+	SchemaVersion    string          `json:"schema_version"`
+	TrialID          string          `json:"trial_id"`
+	TrialIndex       int             `json:"trial_index"`
+	WorkloadID       string          `json:"workload_id"`
+	SyncMode         string          `json:"sync_mode"`
+	GitRevision      string          `json:"git_revision"`
+	Environment      EnvironmentInfo `json:"environment"`
+	Config           TrialConfig     `json:"config"`
+	Timestamps       TimestampInfo   `json:"timestamps"`
+	Operations       OperationCounts `json:"operations"`
+	Throughput       ThroughputInfo  `json:"throughput"`
+	LatencyRead      LatencyStats    `json:"latency_read_nanos"`
+	LatencyWrite     LatencyStats    `json:"latency_write_nanos"`
+	LSMDiagnostics   LSMDiagnostics  `json:"lsm_diagnostics"`
+	HostDiagnostics  HostDiagnostics `json:"host_diagnostics"`
+	Status           string          `json:"status"`
+	ExclusionReason  *string         `json:"exclusion_reason"`
+}
+
+// RunTrial executes a single controlled experiment trial under strict isolation.
+func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult, error) {
+	if cfg.DataDir == "" {
+		tmp, err := os.MkdirTemp("", "selfdbms_trial_*")
+		if err != nil {
+			return nil, fmt.Errorf("failed to create temporary data dir: %w", err)
+		}
+		cfg.DataDir = tmp
+	}
+	defer os.RemoveAll(cfg.DataDir)
+
+	var lsmMode lsmengine.SyncMode
+	switch cfg.SyncMode {
+	case "ApproachA_RWMutexBaseline", "A":
+		lsmMode = lsmengine.SyncModeApproachA
+		cfg.SyncMode = "ApproachA_RWMutexBaseline"
+	case "ApproachB_ReaderSnapshot", "B":
+		lsmMode = lsmengine.SyncModeApproachB
+		cfg.SyncMode = "ApproachB_ReaderSnapshot"
+	default:
+		return nil, fmt.Errorf("unsupported sync mode: %s", cfg.SyncMode)
+	}
+
+	manCfg := lsmengine.Config{
+		Mode:                   lsmMode,
+		WalPath:                filepath.Join(cfg.DataDir, "wal.log"),
+		DataDir:                cfg.DataDir,
+		MemtableThresholdBytes: cfg.MemtableThresholdBytes,
+	}
+
+	man, err := lsmengine.CreateManagerWithConfig(manCfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create manager: %w", err)
+	}
+
+	// 1. Pre-populate fixtures
+	baseSeed := cfg.Seed + int64(cfg.TrialIndex)*10007
+	if cfg.InitialSSTableCount > 0 && cfg.WorkloadID != WorkloadE_NegativeControlMemtable {
+		currKey := 0
+		for t := 0; t < cfg.InitialSSTableCount; t++ {
+			targetFlushes := man.FlushesCompleted() + 1
+			for k := 0; k < cfg.InitialKeysPerSSTable; k++ {
+				keyStr := FormatKey(currKey)
+				valStr := FormatVal(currKey, cfg.ValSizeBytes)
+				tx := man.Begin()
+				tx.Put(keyStr, valStr)
+				if err := tx.Commit(); err != nil {
+					man.Close()
+					return nil, fmt.Errorf("fixture initialization commit failed: %w", err)
+				}
+				currKey = (currKey + 1) % cfg.KeyspaceCardinality
+			}
+			if err := man.TriggerFlush(); err != nil {
+				man.Close()
+				return nil, fmt.Errorf("fixture flush trigger failed: %w", err)
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for man.FlushesCompleted() < targetFlushes && time.Now().Before(deadline) {
+				time.Sleep(2 * time.Millisecond)
+			}
+			if man.FlushesCompleted() < targetFlushes {
+				man.Close()
+				return nil, fmt.Errorf("fixture flush timed out for table %d", t)
+			}
+		}
+	} else if cfg.WorkloadID == WorkloadE_NegativeControlMemtable {
+		// Populate active Memtable directly without flushing
+		for k := 0; k < 2000; k++ {
+			keyStr := FormatKey(k)
+			valStr := FormatVal(k, cfg.ValSizeBytes)
+			tx := man.Begin()
+			tx.Put(keyStr, valStr)
+			if err := tx.Commit(); err != nil {
+				man.Close()
+				return nil, fmt.Errorf("workload E memtable population failed: %w", err)
+			}
+		}
+	}
+
+	initialSSTables := man.ActiveSSTableCount()
+
+	// 2. Warm-up Phase
+	if cfg.WarmupDurationMs > 0 {
+		warmupStop := make(chan struct{})
+		var warmupWg sync.WaitGroup
+		for r := 0; r < cfg.ReaderConcurrency; r++ {
+			warmupWg.Add(1)
+			wSeed := baseSeed + int64(r)*101 + 999
+			go func(seed int64) {
+				defer warmupWg.Done()
+				warmupSampler := NewKeySampler(seed, cfg.KeyspaceCardinality, cfg.TargetReadHitRatio, cfg.ReadDistribution, cfg.ZipfS)
+				for {
+					select {
+					case <-warmupStop:
+						return
+					default:
+						k, _ := warmupSampler.SampleKey()
+						_, _ = man.Get(k, math.MaxUint64)
+					}
+				}
+			}(wSeed)
+		}
+		time.Sleep(time.Duration(cfg.WarmupDurationMs) * time.Millisecond)
+		close(warmupStop)
+		warmupWg.Wait()
+	}
+
+	// 3. Steady-State Measurement Phase
+	readLatency := NewLatencyRecorder(500000)
+	writeLatency := NewLatencyRecorder(100000)
+	var (
+		readAttempted   atomic.Int64
+		readCompleted   atomic.Int64
+		writeAttempted  atomic.Int64
+		writeCompleted  atomic.Int64
+		errorOps        atomic.Int64
+		timeoutOps      atomic.Int64
+		validationErrs  atomic.Int64
+		stopMeasure     = make(chan struct{})
+		startBarrier    = make(chan struct{})
+		workerWg        sync.WaitGroup
+	)
+
+	// Launch reader workers
+	for r := 0; r < cfg.ReaderConcurrency; r++ {
+		workerWg.Add(1)
+		readerSeed := baseSeed + int64(r)*101 + 1
+		go func(seed int64) {
+			defer workerWg.Done()
+			sampler := NewKeySampler(seed, cfg.KeyspaceCardinality, cfg.TargetReadHitRatio, cfg.ReadDistribution, cfg.ZipfS)
+			<-startBarrier
+			for {
+				select {
+				case <-stopMeasure:
+					return
+				default:
+					key, expectHit := sampler.SampleKey()
+					readAttempted.Add(1)
+					t0 := time.Now()
+					val, err := man.Get(key, math.MaxUint64)
+					dur := time.Since(t0)
+					readLatency.Record(dur)
+					if err == nil {
+						readCompleted.Add(1)
+						if !expectHit && len(val) == 0 {
+							validationErrs.Add(1)
+						}
+					} else if err == lsmengine.ErrNotFound {
+						readCompleted.Add(1)
+						if expectHit {
+							validationErrs.Add(1)
+						}
+					} else {
+						errorOps.Add(1)
+					}
+				}
+			}
+		}(readerSeed)
+	}
+
+	// Launch writer workers if configured
+	if cfg.WriterConcurrency > 0 {
+		for w := 0; w < cfg.WriterConcurrency; w++ {
+			workerWg.Add(1)
+			writerSeed := baseSeed + int64(w)*503 + 2000
+			go func(seed int64, workerID int) {
+				defer workerWg.Done()
+				rnd := rand.New(rand.NewSource(seed))
+				<-startBarrier
+				counter := 0
+				for {
+					select {
+					case <-stopMeasure:
+						return
+					default:
+						counter++
+						keyIdx := rnd.Intn(cfg.KeyspaceCardinality)
+						key := FormatKey(keyIdx)
+						val := FormatVal(keyIdx, cfg.ValSizeBytes)
+						writeAttempted.Add(1)
+						t0 := time.Now()
+						tx := man.Begin()
+						tx.Put(key, val)
+						err := tx.Commit()
+						dur := time.Since(t0)
+						writeLatency.Record(dur)
+						if err == nil {
+							writeCompleted.Add(1)
+						} else {
+							errorOps.Add(1)
+						}
+					}
+				}
+			}(writerSeed, w)
+		}
+	}
+
+	// Launch background compactor if interval configured
+	if cfg.CompactionTriggerIntervalMs > 0 {
+		workerWg.Add(1)
+		go func() {
+			defer workerWg.Done()
+			<-startBarrier
+			ticker := time.NewTicker(time.Duration(cfg.CompactionTriggerIntervalMs) * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stopMeasure:
+					return
+				case <-ticker.C:
+					_ = man.CompactAll()
+				}
+			}
+		}()
+	}
+
+	// Trigger measurement start
+	startISO := time.Now().UTC().Format(time.RFC3339Nano)
+	measureStart := time.Now()
+	close(startBarrier)
+
+	// Measure for configured duration
+	time.Sleep(time.Duration(cfg.MeasurementDurationMs) * time.Millisecond)
+	close(stopMeasure)
+	workerWg.Wait()
+	measureDuration := time.Since(measureStart)
+	finishISO := time.Now().UTC().Format(time.RFC3339Nano)
+
+	// Cooldown and shutdown
+	if cfg.CooldownDurationMs > 0 {
+		time.Sleep(time.Duration(cfg.CooldownDurationMs) * time.Millisecond)
+	}
+
+	// Extract diagnostics before close
+	flushes := man.FlushesCompleted()
+	compactions := man.CompactionsCompleted()
+	sstableReads := man.SSTablePointReads()
+	memtableReads := man.MemtablePointReads()
+	finalSSTables := man.ActiveSSTableCount()
+	snapSeq := man.SnapshotSeq()
+	activePins := man.ActiveSnapshotPins()
+	retiredSnaps := man.RetiredSnapshotCount()
+	pendingClean := man.PendingCleanupCount()
+	livePhysical := man.LivePhysicalReaders()
+
+	var mStats runtime.MemStats
+	runtime.ReadMemStats(&mStats)
+
+	// Close engine cleanly
+	closeErr := man.Close()
+	if closeErr != nil {
+		errorOps.Add(1)
+	}
+
+	secs := measureDuration.Seconds()
+	readOps := readCompleted.Load()
+	writeOps := writeCompleted.Load()
+
+	result := &TrialResult{
+		SchemaVersion: "1.0.0",
+		TrialID:       cfg.TrialID,
+		TrialIndex:    cfg.TrialIndex,
+		WorkloadID:    string(cfg.WorkloadID),
+		SyncMode:      cfg.SyncMode,
+		GitRevision:   gitRev,
+		Environment:   env,
+		Config:        cfg,
+		Timestamps: TimestampInfo{
+			StartISO:              startISO,
+			FinishISO:             finishISO,
+			WarmupDurationMs:      cfg.WarmupDurationMs,
+			MeasurementDurationMs: cfg.MeasurementDurationMs,
+			TotalDurationMs:       int(measureDuration.Milliseconds()),
+		},
+		Operations: OperationCounts{
+			ReadOpsAttempted:      readAttempted.Load(),
+			ReadOpsCompleted:      readOps,
+			WriteOpsAttempted:     writeAttempted.Load(),
+			WriteOpsCompleted:     writeOps,
+			ErrorOpsCount:         errorOps.Load(),
+			TimeoutOpsCount:       timeoutOps.Load(),
+			ValidationErrorsCount: validationErrs.Load(),
+		},
+		Throughput: ThroughputInfo{
+			ReadOpsPerSec:  float64(readOps) / secs,
+			WriteOpsPerSec: float64(writeOps) / secs,
+			TotalOpsPerSec: float64(readOps+writeOps) / secs,
+		},
+		LatencyRead:  readLatency.Snapshot(),
+		LatencyWrite: writeLatency.Snapshot(),
+		LSMDiagnostics: LSMDiagnostics{
+			InitialSSTables:      initialSSTables,
+			FinalSSTables:        finalSSTables,
+			FlushesCompleted:     flushes,
+			CompactionsCompleted: compactions,
+			SSTablePointReads:    sstableReads,
+			MemtablePointReads:   memtableReads,
+			SnapshotSeq:          snapSeq,
+			ActiveSnapshotPins:   activePins,
+			RetiredSnapshots:     retiredSnaps,
+			PendingCleanupCount:  pendingClean,
+			LivePhysicalReaders:  livePhysical,
+		},
+		HostDiagnostics: HostDiagnostics{
+			HeapAllocBytes: mStats.HeapAlloc,
+			HeapSysBytes:   mStats.HeapSys,
+			NumGC:          mStats.NumGC,
+			GCPauseTotalNs: mStats.PauseTotalNs,
+		},
+		Status:          "SUCCESS",
+		ExclusionReason: nil,
+	}
+
+	return result, nil
+}
+
+// SaveResultJSON writes the trial result to disk formatted as indentation-spaced JSON.
+func SaveResultJSON(res *TrialResult, targetFile string) error {
+	if err := os.MkdirAll(filepath.Dir(targetFile), 0755); err != nil {
+		return err
+	}
+	bytes, err := json.MarshalIndent(res, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(targetFile, bytes, 0644)
+}

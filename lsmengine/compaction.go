@@ -235,6 +235,7 @@ func (m *Manager) CompactAll() error {
 		return err
 	}
 	m.ActiveSSreaders = updatedReaders
+	m.compactionsCompleted.Add(1)
 	m.Mu.Unlock()
 
 	// Retirement and resource cleanup
@@ -476,6 +477,7 @@ func (m *Manager) compactAllApproachB() error {
 	}
 	newSnap.SetState(SnapshotPublished)
 	m.currentSnapshot = newSnap
+	m.compactionsCompleted.Add(1)
 
 	m.retireSnapshotLocked(currSnap)
 

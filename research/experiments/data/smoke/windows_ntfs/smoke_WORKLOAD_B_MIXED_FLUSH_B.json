@@ -1,0 +1,108 @@
+{
+  "schema_version": "1.0.0",
+  "trial_id": "trial_WORKLOAD_B_MIXED_FLUSH_B_r4_1792341584851924100",
+  "trial_index": 0,
+  "workload_id": "WORKLOAD_B_MIXED_FLUSH",
+  "sync_mode": "ApproachB_ReaderSnapshot",
+  "git_revision": "c58bc6177b5a925a0b25ba795957839866d0b040",
+  "environment": {
+    "os": "windows",
+    "kernel": "windows_amd64",
+    "cpu_model": "AMD Ryzen 7 7445HS w/ Radeon 740M Graphics",
+    "physical_cores": 6,
+    "logical_cores": 12,
+    "total_ram_bytes": 17179869184,
+    "free_ram_bytes": 12348928,
+    "go_version": "go1.26.3",
+    "gomaxprocs": 12,
+    "filesystem_type": "NTFS",
+    "data_dir_path": "C:\\Users\\ramst\\AppData\\Local\\Temp\\smoke_WORKLOAD_B_MIXED_FLUSH_B_2842195190"
+  },
+  "config": {
+    "schema_version": "1.0.0",
+    "trial_id": "trial_WORKLOAD_B_MIXED_FLUSH_B_r4_1792341584851924100",
+    "trial_index": 0,
+    "workload_id": "WORKLOAD_B_MIXED_FLUSH",
+    "sync_mode": "ApproachB_ReaderSnapshot",
+    "seed": 42,
+    "reader_concurrency": 4,
+    "writer_concurrency": 2,
+    "measurement_duration_ms": 1500,
+    "warmup_duration_ms": 200,
+    "cooldown_duration_ms": 100,
+    "key_size_bytes": 16,
+    "val_size_bytes": 128,
+    "keyspace_cardinality": 10000,
+    "initial_sstable_count": 4,
+    "initial_keys_per_sstable": 2000,
+    "read_distribution": "uniform",
+    "zipf_s": 0.99,
+    "target_read_hit_ratio": 0.95,
+    "memtable_threshold_bytes": 1048576,
+    "data_dir": "C:\\Users\\ramst\\AppData\\Local\\Temp\\smoke_WORKLOAD_B_MIXED_FLUSH_B_2842195190",
+    "wal_sync": true,
+    "compaction_trigger_interval_ms": 0
+  },
+  "timestamps": {
+    "start_iso": "2026-10-18T16:40:01.935186Z",
+    "finish_iso": "2026-10-18T16:40:03.4984955Z",
+    "warmup_duration_ms": 200,
+    "measurement_duration_ms": 1500,
+    "total_duration_ms": 1563
+  },
+  "operations": {
+    "read_ops_attempted": 43,
+    "read_ops_completed": 43,
+    "write_ops_attempted": 311,
+    "write_ops_completed": 311,
+    "error_ops_count": 0,
+    "timeout_ops_count": 0,
+    "validation_errors_count": 8
+  },
+  "throughput": {
+    "read_ops_per_sec": 27.506203768388296,
+    "write_ops_per_sec": 198.94021795276188,
+    "total_ops_per_sec": 226.4464217211502
+  },
+  "latency_read_nanos": {
+    "sample_count": 43,
+    "min": 0,
+    "max": 469833100,
+    "mean": 142653646.5116279,
+    "p50": 27308200,
+    "p95": 463188600,
+    "p99": 469833100,
+    "p999": 469833100
+  },
+  "latency_write_nanos": {
+    "sample_count": 311,
+    "min": 0,
+    "max": 27329200,
+    "mean": 9679014.147909967,
+    "p50": 9806300,
+    "p95": 20063100,
+    "p99": 23621800,
+    "p999": 27329200
+  },
+  "lsm_diagnostics": {
+    "initial_sstables": 4,
+    "final_sstables": 4,
+    "flushes_completed": 4,
+    "compactions_completed": 0,
+    "sstable_point_reads": 37,
+    "memtable_point_reads": 0,
+    "snapshot_seq": 5,
+    "active_snapshot_pins": 0,
+    "retired_snapshots_count": 0,
+    "pending_cleanup_count": 0,
+    "live_physical_readers": 4
+  },
+  "host_diagnostics": {
+    "heap_alloc_bytes": 8341864,
+    "heap_sys_bytes": 16285696,
+    "num_gc": 108,
+    "gc_pause_total_ns": 2747200
+  },
+  "status": "SUCCESS",
+  "exclusion_reason": null
+}

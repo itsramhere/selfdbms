@@ -8,6 +8,7 @@ import (
 	"hash/crc32"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -51,8 +52,10 @@ var ErrClosed = errors.New("engine is closed")
 var ErrUnsupportedSyncMode = errors.New("unsupported synchronization mode: Approach B is not implemented")
 
 type Config struct {
-	Mode    SyncMode
-	WalPath string
+	Mode                   SyncMode
+	WalPath                string
+	DataDir                string // Optional directory for SSTables and WAL files
+	MemtableThresholdBytes int    // Optional flush threshold in bytes (default: 64MB if <= 0)
 }
 
 func DefaultConfig() Config {
@@ -112,6 +115,14 @@ type Manager struct {
 	compactionAdmissionClosed bool
 	closeDone                 chan struct{}
 	closeErr                  error
+
+	// Harness & Diagnostic Instrumentation Fields (CP4 / Decision D-036)
+	dataDir                string
+	memtableThresholdBytes int
+	flushesCompleted       atomic.Uint64
+	compactionsCompleted   atomic.Uint64
+	sstablePointReads      atomic.Uint64
+	memtablePointReads     atomic.Uint64
 }
 
 var sstableFileSeq atomic.Uint64
@@ -125,9 +136,14 @@ func CreateManagerWithConfig(cfg Config) (*Manager, error) {
 	if walPath == "" {
 		walPath = "wal.log"
 	}
+	if cfg.DataDir != "" && !filepath.IsAbs(walPath) && filepath.Dir(walPath) == "." {
+		walPath = filepath.Join(cfg.DataDir, walPath)
+	}
 
 	man := new(Manager)
 	man.syncMode = cfg.Mode
+	man.dataDir = cfg.DataDir
+	man.memtableThresholdBytes = cfg.MemtableThresholdBytes
 	man.CurrentSeqNo.Store(0)
 	man.Mu = &sync.RWMutex{}
 	man.closeDone = make(chan struct{})
@@ -196,12 +212,14 @@ func (m *Manager) Get(key string, readTs uint64) (string, error) {
 	sol, err := m.Mem.Get(byteKey, readTs)
 	if err != nil {
 		if errors.Is(err, ErrKeyDeleted) {
+			m.memtablePointReads.Add(1)
 			return "Key is Deleted", err
 		} else if errors.Is(err, ErrNotFound) {
 		} else {
 			return "", err
 		}
 	} else {
+		m.memtablePointReads.Add(1)
 		return string(sol), nil
 	}
 
@@ -209,6 +227,7 @@ func (m *Manager) Get(key string, readTs uint64) (string, error) {
 		val, err := m.Frozenmem[i].Get(byteKey, readTs)
 		if err != nil {
 			if errors.Is(err, ErrKeyDeleted) {
+				m.memtablePointReads.Add(1)
 				return " ", err
 			} else if errors.Is(err, ErrNotFound) {
 				continue
@@ -216,6 +235,7 @@ func (m *Manager) Get(key string, readTs uint64) (string, error) {
 				return "", err
 			}
 		} else {
+			m.memtablePointReads.Add(1)
 			return string(val), nil
 		}
 	}
@@ -231,6 +251,7 @@ func (m *Manager) Get(key string, readTs uint64) (string, error) {
 		val, err := m.ActiveSSreaders[i].Get(byteKey, readTs)
 		if err != nil {
 			if errors.Is(err, ErrKeyDeleted) {
+				m.sstablePointReads.Add(1)
 				return " ", err
 			} else if errors.Is(err, ErrNotFound) {
 				continue
@@ -238,6 +259,7 @@ func (m *Manager) Get(key string, readTs uint64) (string, error) {
 				return "", err
 			}
 		} else {
+			m.sstablePointReads.Add(1)
 			return string(val), nil
 		}
 	}
@@ -476,6 +498,9 @@ func (m *Manager) TriggerFlush() error {
 		}
 
 		newWalPath := fmt.Sprintf("wal_%d.log", time.Now().UnixNano())
+		if m.dataDir != "" {
+			newWalPath = filepath.Join(m.dataDir, newWalPath)
+		}
 		newWal, err := NewWal(newWalPath)
 		if err != nil {
 			if m.flushErr == nil {
@@ -513,8 +538,11 @@ func (m *Manager) checkAndTriggerFlush() {
 		return
 	}
 
-	// 64MB threshold
-	if m.Mem.SizeBytes < 64*1024*1024 {
+	threshold := m.memtableThresholdBytes
+	if threshold <= 0 {
+		threshold = 64 * 1024 * 1024
+	}
+	if m.Mem.SizeBytes < int64(threshold) {
 		m.Mu.Unlock()
 		return
 	}
@@ -532,6 +560,9 @@ func (m *Manager) checkAndTriggerFlush() {
 		}
 
 		newWalPath := fmt.Sprintf("wal_%d.log", time.Now().UnixNano())
+		if m.dataDir != "" {
+			newWalPath = filepath.Join(m.dataDir, newWalPath)
+		}
 		newWal, err := NewWal(newWalPath)
 		if err != nil {
 			if m.flushErr == nil {
@@ -577,6 +608,9 @@ func (m *Manager) flushToDisk(mem *Memtable) {
 	}
 
 	filename := fmt.Sprintf("data_%d_%d.sst", time.Now().UnixNano(), sstableFileSeq.Add(1))
+	if m.dataDir != "" {
+		filename = filepath.Join(m.dataDir, filename)
+	}
 	file, err := os.Create(filename)
 	if err != nil {
 		m.Mu.Lock()
@@ -647,6 +681,7 @@ func (m *Manager) flushToDisk(mem *Memtable) {
 
 	m.ActiveSSreaders = append(m.ActiveSSreaders, reader)
 	m.removeFrozenMemtableLocked(mem)
+	m.flushesCompleted.Add(1)
 }
 
 func (m *Manager) removeFrozenMemtableLocked(mem *Memtable) {
@@ -731,3 +766,39 @@ func (m *Manager) RecoverFromWAL(walPath string) error {
 
 	return nil
 }
+
+// FlushesCompleted returns the total number of successful Memtable-to-SSTable flush publications.
+func (m *Manager) FlushesCompleted() uint64 {
+	return m.flushesCompleted.Load()
+}
+
+// CompactionsCompleted returns the total number of successful SSTable compaction publications.
+func (m *Manager) CompactionsCompleted() uint64 {
+	return m.compactionsCompleted.Load()
+}
+
+// SSTablePointReads returns the total number of point reads resolved in the SSTable disk tier.
+func (m *Manager) SSTablePointReads() uint64 {
+	return m.sstablePointReads.Load()
+}
+
+// MemtablePointReads returns the total number of point reads resolved in the active or frozen Memtables.
+func (m *Manager) MemtablePointReads() uint64 {
+	return m.memtablePointReads.Load()
+}
+
+// ActiveSSTableCount returns the current count of active SSTable readers.
+func (m *Manager) ActiveSSTableCount() int {
+	if m.syncMode == SyncModeApproachB {
+		m.snapshotMu.Lock()
+		defer m.snapshotMu.Unlock()
+		if m.currentSnapshot == nil {
+			return 0
+		}
+		return len(m.currentSnapshot.readers)
+	}
+	m.Mu.RLock()
+	defer m.Mu.RUnlock()
+	return len(m.ActiveSSreaders)
+}
+

@@ -656,6 +656,7 @@ func (m *Manager) publishFlushLockedApproachB(mem *Memtable, newSR *SharedReader
 	}
 	newSnap.SetState(SnapshotPublished)
 	m.currentSnapshot = newSnap
+	m.flushesCompleted.Add(1)
 
 	// 3. Retire old snapshot
 	if oldSnap != nil {
@@ -689,9 +690,11 @@ func (m *Manager) getApproachB(key string, readTs uint64) (string, error) {
 	// 1a. Check active Memtable
 	sol, err := m.Mem.Get(byteKey, readTs)
 	if err == nil {
+		m.memtablePointReads.Add(1)
 		m.Mu.RUnlock()
 		return string(sol), nil
 	} else if errors.Is(err, ErrKeyDeleted) {
+		m.memtablePointReads.Add(1)
 		m.Mu.RUnlock()
 		return "Key is Deleted", err
 	} else if !errors.Is(err, ErrNotFound) {
@@ -703,9 +706,11 @@ func (m *Manager) getApproachB(key string, readTs uint64) (string, error) {
 	for i := len(m.Frozenmem) - 1; i >= 0; i-- {
 		val, err := m.Frozenmem[i].Get(byteKey, readTs)
 		if err == nil {
+			m.memtablePointReads.Add(1)
 			m.Mu.RUnlock()
 			return string(val), nil
 		} else if errors.Is(err, ErrKeyDeleted) {
+			m.memtablePointReads.Add(1)
 			m.Mu.RUnlock()
 			return " ", err
 		} else if !errors.Is(err, ErrNotFound) {
@@ -737,8 +742,10 @@ func (m *Manager) getApproachB(key string, readTs uint64) (string, error) {
 		}
 		val, err := sr.Reader.Get(byteKey, readTs)
 		if err == nil {
+			m.sstablePointReads.Add(1)
 			return string(val), nil
 		} else if errors.Is(err, ErrKeyDeleted) {
+			m.sstablePointReads.Add(1)
 			return " ", err
 		} else if errors.Is(err, ErrNotFound) {
 			continue

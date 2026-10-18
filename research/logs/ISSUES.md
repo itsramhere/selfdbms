@@ -445,6 +445,27 @@ Format:
 - **Status**: Fixed (Sub-phase CP3a-V.5, Decision D-035).
 - **Evidence Path**: [`research/debug/E-014/wsl_before.log`](../debug/E-014/wsl_before.log), [`research/debug/E-014/wsl_after.log`](../debug/E-014/wsl_after.log), [`research/debug/E-014/diff.patch`](../debug/E-014/diff.patch), [`research/debug/E-014/repro.md`](../debug/E-014/repro.md).
 
+---
+
+### E-015: Shared math/rand.Rand Instance Concurrency Race Across Harness Warmup Workers
+
+- **ID**: `E-015`
+- **Detected**: 2026-10-18, commit `HEAD`, harness execution under WSL2 `-race`
+- **Sub-phase**: I4.2 / I4.6
+- **Severity**: Data Race / Harness Implementation Defect (P2)
+- **Symptom**: During `TestHarness_WorkloadA_SmokeParity`, WSL2 ThreadSanitizer flagged a data race on `math/rand.(*rngSource).Uint64()` and `math/rand.(*Rand).Float64()` across concurrent warmup goroutines.
+- **Minimal Reproduction**:
+  ```powershell
+  wsl -- /snap/bin/go test -race -run TestHarness_WorkloadA_SmokeParity ./research/experiments/harness/...
+  ```
+- **Root Cause**: In `RunTrial()`, `warmupSampler := NewKeySampler(...)` was instantiated once and shared across all reader goroutines during the warm-up phase. `math/rand.Rand` is not safe for concurrent usage without external synchronization. In contrast, steady-state reader goroutines each initialized their own private `KeySampler` instance.
+- **Fix**: Updated `RunTrial()` warm-up loop to allocate an independent `KeySampler` per warmup worker goroutine with distinct deterministic seeds: `wSeed := baseSeed + int64(r)*101 + 999`.
+- **Regression Test**: `TestHarness_WorkloadA_SmokeParity` through `TestHarness_WorkloadE_NegativeControlSmoke` in `research/experiments/harness/harness_test.go` (PASS under WSL2 `-race`, 29.94s).
+- **Validation**: Full harness test suite clean under `-race` with 0 warnings.
+- **Status**: Fixed (Sub-phase I4.2).
+- **Commit**: `HEAD`.
+
+
 
 
 

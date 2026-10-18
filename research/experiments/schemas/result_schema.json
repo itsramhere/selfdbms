@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExperimentRunResult",
+  "description": "Output result specification for LSM synchronization benchmark runs",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "trial_id",
+    "trial_index",
+    "workload_id",
+    "sync_mode",
+    "git_revision",
+    "environment",
+    "config",
+    "timestamps",
+    "operations",
+    "throughput",
+    "latency_read_nanos",
+    "lsm_diagnostics",
+    "host_diagnostics",
+    "status"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0"]
+    },
+    "trial_id": {
+      "type": "string"
+    },
+    "trial_index": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "workload_id": {
+      "type": "string"
+    },
+    "sync_mode": {
+      "type": "string"
+    },
+    "git_revision": {
+      "type": "string"
+    },
+    "environment": {
+      "type": "object",
+      "required": [
+        "os",
+        "kernel",
+        "cpu_model",
+        "physical_cores",
+        "logical_cores",
+        "total_ram_bytes",
+        "go_version",
+        "gomaxprocs",
+        "filesystem_type",
+        "data_dir_path"
+      ],
+      "properties": {
+        "os": { "type": "string" },
+        "kernel": { "type": "string" },
+        "cpu_model": { "type": "string" },
+        "physical_cores": { "type": "integer" },
+        "logical_cores": { "type": "integer" },
+        "total_ram_bytes": { "type": "integer" },
+        "free_ram_bytes": { "type": "integer" },
+        "go_version": { "type": "string" },
+        "gomaxprocs": { "type": "integer" },
+        "filesystem_type": { "type": "string" },
+        "data_dir_path": { "type": "string" }
+      }
+    },
+    "config": {
+      "type": "object"
+    },
+    "timestamps": {
+      "type": "object",
+      "required": [
+        "start_iso",
+        "finish_iso",
+        "warmup_duration_ms",
+        "measurement_duration_ms",
+        "total_duration_ms"
+      ],
+      "properties": {
+        "start_iso": { "type": "string" },
+        "finish_iso": { "type": "string" },
+        "warmup_duration_ms": { "type": "integer" },
+        "measurement_duration_ms": { "type": "integer" },
+        "total_duration_ms": { "type": "integer" }
+      }
+    },
+    "operations": {
+      "type": "object",
+      "required": [
+        "read_ops_attempted",
+        "read_ops_completed",
+        "write_ops_attempted",
+        "write_ops_completed",
+        "error_ops_count",
+        "timeout_ops_count",
+        "validation_errors_count"
+      ],
+      "properties": {
+        "read_ops_attempted": { "type": "integer" },
+        "read_ops_completed": { "type": "integer" },
+        "write_ops_attempted": { "type": "integer" },
+        "write_ops_completed": { "type": "integer" },
+        "error_ops_count": { "type": "integer" },
+        "timeout_ops_count": { "type": "integer" },
+        "validation_errors_count": { "type": "integer" }
+      }
+    },
+    "throughput": {
+      "type": "object",
+      "required": [
+        "read_ops_per_sec",
+        "write_ops_per_sec",
+        "total_ops_per_sec"
+      ],
+      "properties": {
+        "read_ops_per_sec": { "type": "number" },
+        "write_ops_per_sec": { "type": "number" },
+        "total_ops_per_sec": { "type": "number" }
+      }
+    },
+    "latency_read_nanos": {
+      "type": "object",
+      "required": [
+        "p50",
+        "p95",
+        "p99",
+        "p999",
+        "max",
+        "min",
+        "mean",
+        "sample_count"
+      ],
+      "properties": {
+        "p50": { "type": "number" },
+        "p95": { "type": "number" },
+        "p99": { "type": "number" },
+        "p999": { "type": "number" },
+        "max": { "type": "number" },
+        "min": { "type": "number" },
+        "mean": { "type": "number" },
+        "sample_count": { "type": "integer" }
+      }
+    },
+    "latency_write_nanos": {
+      "type": "object",
+      "properties": {
+        "p50": { "type": "number" },
+        "p95": { "type": "number" },
+        "p99": { "type": "number" },
+        "p999": { "type": "number" },
+        "max": { "type": "number" },
+        "min": { "type": "number" },
+        "mean": { "type": "number" },
+        "sample_count": { "type": "integer" }
+      }
+    },
+    "lsm_diagnostics": {
+      "type": "object",
+      "required": [
+        "initial_sstables",
+        "final_sstables",
+        "flushes_completed",
+        "compactions_completed",
+        "sstable_point_reads",
+        "memtable_point_reads"
+      ],
+      "properties": {
+        "initial_sstables": { "type": "integer" },
+        "final_sstables": { "type": "integer" },
+        "flushes_completed": { "type": "integer" },
+        "compactions_completed": { "type": "integer" },
+        "sstable_point_reads": { "type": "integer" },
+        "memtable_point_reads": { "type": "integer" },
+        "snapshot_seq": { "type": "integer" },
+        "active_snapshot_pins": { "type": "integer" },
+        "retired_snapshots_count": { "type": "integer" },
+        "pending_cleanup_count": { "type": "integer" },
+        "live_physical_readers": { "type": "integer" }
+      }
+    },
+    "host_diagnostics": {
+      "type": "object",
+      "required": [
+        "heap_alloc_bytes",
+        "heap_sys_bytes",
+        "num_gc",
+        "gc_pause_total_ns"
+      ],
+      "properties": {
+        "heap_alloc_bytes": { "type": "integer" },
+        "heap_sys_bytes": { "type": "integer" },
+        "num_gc": { "type": "integer" },
+        "gc_pause_total_ns": { "type": "integer" }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": ["SUCCESS", "FAILED", "EXCLUDED"]
+    },
+    "exclusion_reason": {
+      "type": ["string", "null"]
+    }
+  },
+  "additionalProperties": false
+}
