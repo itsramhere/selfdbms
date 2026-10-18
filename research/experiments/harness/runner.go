@@ -41,13 +41,13 @@ type TimestampInfo struct {
 
 // OperationCounts tracks attempted and completed operations across all workers.
 type OperationCounts struct {
-	ReadOpsAttempted       int64 `json:"read_ops_attempted"`
-	ReadOpsCompleted       int64 `json:"read_ops_completed"`
-	WriteOpsAttempted      int64 `json:"write_ops_attempted"`
-	WriteOpsCompleted      int64 `json:"write_ops_completed"`
-	ErrorOpsCount          int64 `json:"error_ops_count"`
-	TimeoutOpsCount        int64 `json:"timeout_ops_count"`
-	ValidationErrorsCount  int64 `json:"validation_errors_count"`
+	ReadOpsAttempted      int64 `json:"read_ops_attempted"`
+	ReadOpsCompleted      int64 `json:"read_ops_completed"`
+	WriteOpsAttempted     int64 `json:"write_ops_attempted"`
+	WriteOpsCompleted     int64 `json:"write_ops_completed"`
+	ErrorOpsCount         int64 `json:"error_ops_count"`
+	TimeoutOpsCount       int64 `json:"timeout_ops_count"`
+	ValidationErrorsCount int64 `json:"validation_errors_count"`
 }
 
 // ThroughputInfo captures completed operations per second.
@@ -57,27 +57,59 @@ type ThroughputInfo struct {
 	TotalOpsPerSec float64 `json:"total_ops_per_sec"`
 }
 
-// LSMDiagnostics tracks internal LSM-tree counters and snapshot health.
+// PhaseCounters records initial, final, and delta values of LSM counters across an experiment phase.
+type PhaseCounters struct {
+	StartFlushes       uint64 `json:"start_flushes"`
+	EndFlushes         uint64 `json:"end_flushes"`
+	DeltaFlushes       uint64 `json:"delta_flushes"`
+	StartCompactions   uint64 `json:"start_compactions"`
+	EndCompactions     uint64 `json:"end_compactions"`
+	DeltaCompactions   uint64 `json:"delta_compactions"`
+	StartSSTableReads  uint64 `json:"start_sstable_reads"`
+	EndSSTableReads    uint64 `json:"end_sstable_reads"`
+	DeltaSSTableReads  uint64 `json:"delta_sstable_reads"`
+	StartMemtableReads uint64 `json:"start_memtable_reads"`
+	EndMemtableReads   uint64 `json:"end_memtable_reads"`
+	DeltaMemtableReads uint64 `json:"delta_memtable_reads"`
+}
+
+// PhaseMetrics captures phase-scoped counter accounting across all experiment phases.
+type PhaseMetrics struct {
+	FixtureSetup PhaseCounters `json:"fixture_setup"`
+	Warmup       PhaseCounters `json:"warmup"`
+	Measured     PhaseCounters `json:"measured"`
+	Cooldown     PhaseCounters `json:"cooldown"`
+	Shutdown     PhaseCounters `json:"shutdown"`
+}
+
+// LSMDiagnostics tracks internal LSM-tree counters, phase metrics, and snapshot health.
 type LSMDiagnostics struct {
-	InitialSSTables      int    `json:"initial_sstables"`
-	FinalSSTables        int    `json:"final_sstables"`
-	FlushesCompleted     uint64 `json:"flushes_completed"`
-	CompactionsCompleted uint64 `json:"compactions_completed"`
-	SSTablePointReads    uint64 `json:"sstable_point_reads"`
-	MemtablePointReads   uint64 `json:"memtable_point_reads"`
-	SnapshotSeq          uint64 `json:"snapshot_seq"`
-	ActiveSnapshotPins   int64  `json:"active_snapshot_pins"`
-	RetiredSnapshots     int    `json:"retired_snapshots_count"`
-	PendingCleanupCount  int    `json:"pending_cleanup_count"`
-	LivePhysicalReaders  int    `json:"live_physical_readers"`
+	InitialSSTables           int          `json:"initial_sstables"`
+	FinalSSTables             int          `json:"final_sstables"`
+	FlushesCompleted          uint64       `json:"flushes_completed"`
+	CompactionsCompleted      uint64       `json:"compactions_completed"`
+	SSTablePointReads         uint64       `json:"sstable_point_reads"`
+	MemtablePointReads        uint64       `json:"memtable_point_reads"`
+	MeasuredFlushes           uint64       `json:"measured_flushes"`
+	MeasuredCompactions       uint64       `json:"measured_compactions"`
+	MeasuredSSTablePointReads uint64       `json:"measured_sstable_point_reads"`
+	MeasuredMemtablePointReads uint64      `json:"measured_memtable_point_reads"`
+	SnapshotSeq               uint64       `json:"snapshot_seq"`
+	ActiveSnapshotPins        int64        `json:"active_snapshot_pins"`
+	RetiredSnapshots          int          `json:"retired_snapshots_count"`
+	PendingCleanupCount       int          `json:"pending_cleanup_count"`
+	LivePhysicalReaders       int          `json:"live_physical_readers"`
+	CompactionActiveOverlapMs int64        `json:"compaction_active_overlap_ms"`
+	ReadsDuringCompaction     int64        `json:"reads_during_compaction_count"`
+	PhaseMetrics              PhaseMetrics `json:"phase_metrics"`
 }
 
 // HostDiagnostics records memory and GC metrics during the trial.
 type HostDiagnostics struct {
-	HeapAllocBytes  uint64 `json:"heap_alloc_bytes"`
-	HeapSysBytes    uint64 `json:"heap_sys_bytes"`
-	NumGC           uint32 `json:"num_gc"`
-	GCPauseTotalNs  uint64 `json:"gc_pause_total_ns"`
+	HeapAllocBytes uint64 `json:"heap_alloc_bytes"`
+	HeapSysBytes   uint64 `json:"heap_sys_bytes"`
+	NumGC          uint32 `json:"num_gc"`
+	GCPauseTotalNs uint64 `json:"gc_pause_total_ns"`
 }
 
 // TrialConfig specifies parameters for an individual experimental run.
@@ -138,23 +170,47 @@ func DefaultTrialConfig(workload WorkloadID, mode string, readers int) TrialConf
 
 // TrialResult captures complete outputs and diagnostics from an individual run.
 type TrialResult struct {
-	SchemaVersion    string          `json:"schema_version"`
-	TrialID          string          `json:"trial_id"`
-	TrialIndex       int             `json:"trial_index"`
-	WorkloadID       string          `json:"workload_id"`
-	SyncMode         string          `json:"sync_mode"`
-	GitRevision      string          `json:"git_revision"`
-	Environment      EnvironmentInfo `json:"environment"`
-	Config           TrialConfig     `json:"config"`
-	Timestamps       TimestampInfo   `json:"timestamps"`
-	Operations       OperationCounts `json:"operations"`
-	Throughput       ThroughputInfo  `json:"throughput"`
-	LatencyRead      LatencyStats    `json:"latency_read_nanos"`
-	LatencyWrite     LatencyStats    `json:"latency_write_nanos"`
-	LSMDiagnostics   LSMDiagnostics  `json:"lsm_diagnostics"`
-	HostDiagnostics  HostDiagnostics `json:"host_diagnostics"`
-	Status           string          `json:"status"`
-	ExclusionReason  *string         `json:"exclusion_reason"`
+	SchemaVersion   string          `json:"schema_version"`
+	TrialID         string          `json:"trial_id"`
+	TrialIndex      int             `json:"trial_index"`
+	WorkloadID      string          `json:"workload_id"`
+	SyncMode        string          `json:"sync_mode"`
+	GitRevision     string          `json:"git_revision"`
+	Environment     EnvironmentInfo `json:"environment"`
+	Config          TrialConfig     `json:"config"`
+	Timestamps      TimestampInfo   `json:"timestamps"`
+	Operations      OperationCounts `json:"operations"`
+	Throughput      ThroughputInfo  `json:"throughput"`
+	LatencyRead     LatencyStats    `json:"latency_read_nanos"`
+	LatencyWrite    LatencyStats    `json:"latency_write_nanos"`
+	LSMDiagnostics  LSMDiagnostics  `json:"lsm_diagnostics"`
+	HostDiagnostics HostDiagnostics `json:"host_diagnostics"`
+	Status          string          `json:"status"`
+	ExclusionReason *string         `json:"exclusion_reason"`
+}
+
+func captureLSMCounts(man *lsmengine.Manager) (flushes, compactions, sstReads, memReads uint64) {
+	if man == nil {
+		return 0, 0, 0, 0
+	}
+	return man.FlushesCompleted(), man.CompactionsCompleted(), man.SSTablePointReads(), man.MemtablePointReads()
+}
+
+func makePhaseCounters(sFlushes, sCompactions, sSstReads, sMemReads, eFlushes, eCompactions, eSstReads, eMemReads uint64) PhaseCounters {
+	return PhaseCounters{
+		StartFlushes:       sFlushes,
+		EndFlushes:         eFlushes,
+		DeltaFlushes:       eFlushes - sFlushes,
+		StartCompactions:   sCompactions,
+		EndCompactions:     eCompactions,
+		DeltaCompactions:   eCompactions - sCompactions,
+		StartSSTableReads:  sSstReads,
+		EndSSTableReads:    eSstReads,
+		DeltaSSTableReads:  eSstReads - sSstReads,
+		StartMemtableReads: sMemReads,
+		EndMemtableReads:   eMemReads,
+		DeltaMemtableReads: eMemReads - sMemReads,
+	}
 }
 
 // RunTrial executes a single controlled experiment trial under strict isolation.
@@ -192,7 +248,8 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 		return nil, fmt.Errorf("failed to create manager: %w", err)
 	}
 
-	// 1. Pre-populate fixtures
+	// Phase 1: Fixture Setup Phase
+	f0, c0, s0, m0 := captureLSMCounts(man)
 	baseSeed := cfg.Seed + int64(cfg.TrialIndex)*10007
 	if cfg.InitialSSTableCount > 0 && cfg.WorkloadID != WorkloadE_NegativeControlMemtable {
 		currKey := 0
@@ -235,10 +292,11 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 			}
 		}
 	}
-
+	f1, c1, s1, m1 := captureLSMCounts(man)
+	phaseSetup := makePhaseCounters(f0, c0, s0, m0, f1, c1, s1, m1)
 	initialSSTables := man.ActiveSSTableCount()
 
-	// 2. Warm-up Phase
+	// Phase 2: Warm-up Phase
 	if cfg.WarmupDurationMs > 0 {
 		warmupStop := make(chan struct{})
 		var warmupWg sync.WaitGroup
@@ -263,21 +321,26 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 		close(warmupStop)
 		warmupWg.Wait()
 	}
+	f2, c2, s2, m2 := captureLSMCounts(man)
+	phaseWarmup := makePhaseCounters(f1, c1, s1, m1, f2, c2, s2, m2)
 
-	// 3. Steady-State Measurement Phase
+	// Phase 3: Steady-State Measurement Phase
 	readLatency := NewLatencyRecorder(500000)
 	writeLatency := NewLatencyRecorder(100000)
 	var (
-		readAttempted   atomic.Int64
-		readCompleted   atomic.Int64
-		writeAttempted  atomic.Int64
-		writeCompleted  atomic.Int64
-		errorOps        atomic.Int64
-		timeoutOps      atomic.Int64
-		validationErrs  atomic.Int64
-		stopMeasure     = make(chan struct{})
-		startBarrier    = make(chan struct{})
-		workerWg        sync.WaitGroup
+		readAttempted          atomic.Int64
+		readCompleted          atomic.Int64
+		writeAttempted         atomic.Int64
+		writeCompleted         atomic.Int64
+		errorOps               atomic.Int64
+		timeoutOps             atomic.Int64
+		validationErrs         atomic.Int64
+		compactionActive       atomic.Bool
+		compactionOverlapNanos atomic.Int64
+		readsDuringCompaction  atomic.Int64
+		stopMeasure            = make(chan struct{})
+		startBarrier           = make(chan struct{})
+		workerWg               sync.WaitGroup
 	)
 
 	// Launch reader workers
@@ -295,10 +358,15 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 				default:
 					key, expectHit := sampler.SampleKey()
 					readAttempted.Add(1)
-					t0 := time.Now()
+					t0 := NowPrecision()
 					val, err := man.Get(key, math.MaxUint64)
-					dur := time.Since(t0)
-					readLatency.Record(dur)
+					durNanos := SincePrecisionNanos(t0)
+					readLatency.RecordNanos(durNanos)
+
+					if compactionActive.Load() {
+						readsDuringCompaction.Add(1)
+					}
+
 					if err == nil {
 						readCompleted.Add(1)
 						if !expectHit && len(val) == 0 {
@@ -337,12 +405,12 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 						key := FormatKey(keyIdx)
 						val := FormatVal(keyIdx, cfg.ValSizeBytes)
 						writeAttempted.Add(1)
-						t0 := time.Now()
+						t0 := NowPrecision()
 						tx := man.Begin()
 						tx.Put(key, val)
 						err := tx.Commit()
-						dur := time.Since(t0)
-						writeLatency.Record(dur)
+						durNanos := SincePrecisionNanos(t0)
+						writeLatency.RecordNanos(durNanos)
 						if err == nil {
 							writeCompleted.Add(1)
 						} else {
@@ -367,7 +435,12 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 				case <-stopMeasure:
 					return
 				case <-ticker.C:
+					compactionActive.Store(true)
+					cStart := NowPrecision()
 					_ = man.CompactAll()
+					cDurNanos := SincePrecisionNanos(cStart)
+					compactionActive.Store(false)
+					compactionOverlapNanos.Add(cDurNanos)
 				}
 			}
 		}()
@@ -385,16 +458,17 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 	measureDuration := time.Since(measureStart)
 	finishISO := time.Now().UTC().Format(time.RFC3339Nano)
 
-	// Cooldown and shutdown
+	f3, c3, s3, m3 := captureLSMCounts(man)
+	phaseMeasured := makePhaseCounters(f2, c2, s2, m2, f3, c3, s3, m3)
+
+	// Phase 4: Cooldown Phase
 	if cfg.CooldownDurationMs > 0 {
 		time.Sleep(time.Duration(cfg.CooldownDurationMs) * time.Millisecond)
 	}
+	f4, c4, s4, m4 := captureLSMCounts(man)
+	phaseCooldown := makePhaseCounters(f3, c3, s3, m3, f4, c4, s4, m4)
 
-	// Extract diagnostics before close
-	flushes := man.FlushesCompleted()
-	compactions := man.CompactionsCompleted()
-	sstableReads := man.SSTablePointReads()
-	memtableReads := man.MemtablePointReads()
+	// Extract pre-close diagnostics
 	finalSSTables := man.ActiveSSTableCount()
 	snapSeq := man.SnapshotSeq()
 	activePins := man.ActiveSnapshotPins()
@@ -405,15 +479,25 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 	var mStats runtime.MemStats
 	runtime.ReadMemStats(&mStats)
 
-	// Close engine cleanly
+	// Phase 5: Shutdown Phase
 	closeErr := man.Close()
 	if closeErr != nil {
 		errorOps.Add(1)
 	}
+	f5, c5, s5, m5 := captureLSMCounts(man)
+	phaseShutdown := makePhaseCounters(f4, c4, s4, m4, f5, c5, s5, m5)
 
 	secs := measureDuration.Seconds()
 	readOps := readCompleted.Load()
 	writeOps := writeCompleted.Load()
+
+	status := "SUCCESS"
+	var exclusionReason *string
+	if closeErr != nil {
+		status = "FAILED"
+		msg := fmt.Sprintf("engine close failed: %v", closeErr)
+		exclusionReason = &msg
+	}
 
 	result := &TrialResult{
 		SchemaVersion: "1.0.0",
@@ -448,17 +532,30 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 		LatencyRead:  readLatency.Snapshot(),
 		LatencyWrite: writeLatency.Snapshot(),
 		LSMDiagnostics: LSMDiagnostics{
-			InitialSSTables:      initialSSTables,
-			FinalSSTables:        finalSSTables,
-			FlushesCompleted:     flushes,
-			CompactionsCompleted: compactions,
-			SSTablePointReads:    sstableReads,
-			MemtablePointReads:   memtableReads,
-			SnapshotSeq:          snapSeq,
-			ActiveSnapshotPins:   activePins,
-			RetiredSnapshots:     retiredSnaps,
-			PendingCleanupCount:  pendingClean,
-			LivePhysicalReaders:  livePhysical,
+			InitialSSTables:           initialSSTables,
+			FinalSSTables:             finalSSTables,
+			FlushesCompleted:          f5,
+			CompactionsCompleted:      c5,
+			SSTablePointReads:         s5,
+			MemtablePointReads:        m5,
+			MeasuredFlushes:           phaseMeasured.DeltaFlushes,
+			MeasuredCompactions:       phaseMeasured.DeltaCompactions,
+			MeasuredSSTablePointReads: phaseMeasured.DeltaSSTableReads,
+			MeasuredMemtablePointReads: phaseMeasured.DeltaMemtableReads,
+			SnapshotSeq:               snapSeq,
+			ActiveSnapshotPins:        activePins,
+			RetiredSnapshots:          retiredSnaps,
+			PendingCleanupCount:       pendingClean,
+			LivePhysicalReaders:       livePhysical,
+			CompactionActiveOverlapMs: compactionOverlapNanos.Load() / 1_000_000,
+			ReadsDuringCompaction:     readsDuringCompaction.Load(),
+			PhaseMetrics: PhaseMetrics{
+				FixtureSetup: phaseSetup,
+				Warmup:       phaseWarmup,
+				Measured:     phaseMeasured,
+				Cooldown:     phaseCooldown,
+				Shutdown:     phaseShutdown,
+			},
 		},
 		HostDiagnostics: HostDiagnostics{
 			HeapAllocBytes: mStats.HeapAlloc,
@@ -466,8 +563,8 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 			NumGC:          mStats.NumGC,
 			GCPauseTotalNs: mStats.PauseTotalNs,
 		},
-		Status:          "SUCCESS",
-		ExclusionReason: nil,
+		Status:          status,
+		ExclusionReason: exclusionReason,
 	}
 
 	return result, nil

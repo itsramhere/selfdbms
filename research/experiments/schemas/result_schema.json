@@ -129,21 +129,24 @@
         "p50",
         "p95",
         "p99",
-        "p999",
         "max",
         "min",
         "mean",
-        "sample_count"
+        "sample_count",
+        "zero_sample_count",
+        "overflow_count"
       ],
       "properties": {
         "p50": { "type": "number" },
         "p95": { "type": "number" },
         "p99": { "type": "number" },
-        "p999": { "type": "number" },
+        "p999": { "type": ["number", "null"] },
         "max": { "type": "number" },
         "min": { "type": "number" },
         "mean": { "type": "number" },
-        "sample_count": { "type": "integer" }
+        "sample_count": { "type": "integer" },
+        "zero_sample_count": { "type": "integer" },
+        "overflow_count": { "type": "integer" }
       }
     },
     "latency_write_nanos": {
@@ -152,11 +155,13 @@
         "p50": { "type": "number" },
         "p95": { "type": "number" },
         "p99": { "type": "number" },
-        "p999": { "type": "number" },
+        "p999": { "type": ["number", "null"] },
         "max": { "type": "number" },
         "min": { "type": "number" },
         "mean": { "type": "number" },
-        "sample_count": { "type": "integer" }
+        "sample_count": { "type": "integer" },
+        "zero_sample_count": { "type": "integer" },
+        "overflow_count": { "type": "integer" }
       }
     },
     "lsm_diagnostics": {
@@ -167,7 +172,14 @@
         "flushes_completed",
         "compactions_completed",
         "sstable_point_reads",
-        "memtable_point_reads"
+        "memtable_point_reads",
+        "measured_flushes",
+        "measured_compactions",
+        "measured_sstable_point_reads",
+        "measured_memtable_point_reads",
+        "compaction_active_overlap_ms",
+        "reads_during_compaction_count",
+        "phase_metrics"
       ],
       "properties": {
         "initial_sstables": { "type": "integer" },
@@ -176,11 +188,34 @@
         "compactions_completed": { "type": "integer" },
         "sstable_point_reads": { "type": "integer" },
         "memtable_point_reads": { "type": "integer" },
+        "measured_flushes": { "type": "integer" },
+        "measured_compactions": { "type": "integer" },
+        "measured_sstable_point_reads": { "type": "integer" },
+        "measured_memtable_point_reads": { "type": "integer" },
         "snapshot_seq": { "type": "integer" },
         "active_snapshot_pins": { "type": "integer" },
         "retired_snapshots_count": { "type": "integer" },
         "pending_cleanup_count": { "type": "integer" },
-        "live_physical_readers": { "type": "integer" }
+        "live_physical_readers": { "type": "integer" },
+        "compaction_active_overlap_ms": { "type": "integer" },
+        "reads_during_compaction_count": { "type": "integer" },
+        "phase_metrics": {
+          "type": "object",
+          "required": [
+            "fixture_setup",
+            "warmup",
+            "measured",
+            "cooldown",
+            "shutdown"
+          ],
+          "properties": {
+            "fixture_setup": { "$ref": "#/$defs/PhaseCounters" },
+            "warmup": { "$ref": "#/$defs/PhaseCounters" },
+            "measured": { "$ref": "#/$defs/PhaseCounters" },
+            "cooldown": { "$ref": "#/$defs/PhaseCounters" },
+            "shutdown": { "$ref": "#/$defs/PhaseCounters" }
+          }
+        }
       }
     },
     "host_diagnostics": {
@@ -204,6 +239,39 @@
     },
     "exclusion_reason": {
       "type": ["string", "null"]
+    }
+  },
+  "$defs": {
+    "PhaseCounters": {
+      "type": "object",
+      "required": [
+        "start_flushes",
+        "end_flushes",
+        "delta_flushes",
+        "start_compactions",
+        "end_compactions",
+        "delta_compactions",
+        "start_sstable_reads",
+        "end_sstable_reads",
+        "delta_sstable_reads",
+        "start_memtable_reads",
+        "end_memtable_reads",
+        "delta_memtable_reads"
+      ],
+      "properties": {
+        "start_flushes": { "type": "integer" },
+        "end_flushes": { "type": "integer" },
+        "delta_flushes": { "type": "integer" },
+        "start_compactions": { "type": "integer" },
+        "end_compactions": { "type": "integer" },
+        "delta_compactions": { "type": "integer" },
+        "start_sstable_reads": { "type": "integer" },
+        "end_sstable_reads": { "type": "integer" },
+        "delta_sstable_reads": { "type": "integer" },
+        "start_memtable_reads": { "type": "integer" },
+        "end_memtable_reads": { "type": "integer" },
+        "delta_memtable_reads": { "type": "integer" }
+      }
     }
   },
   "additionalProperties": false

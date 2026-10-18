@@ -51,7 +51,7 @@ func main() {
 		outputFlag     = flag.String("output", "", "Output JSON file path")
 		smokeFlag      = flag.Bool("smoke", false, "Execute standard preliminary smoke validation suite")
 		smokeOutputDir = flag.String("smoke-dir", "research/experiments/data/smoke", "Directory to store smoke test results")
-		gitRevFlag     = flag.String("git-rev", "c58bc6177b5a925a0b25ba795957839866d0b040", "Git revision identifier")
+		gitRevFlag     = flag.String("git-rev", "0b0021ef3a16c918e19812d8c8322015755396bd", "Git revision identifier")
 	)
 	flag.Parse()
 
@@ -70,19 +70,25 @@ func main() {
 		switch wID {
 		case harness.WorkloadA_ReadOnly:
 			cfg.WriterConcurrency = 0
+			cfg.InitialSSTableCount = 4
 		case harness.WorkloadB_MixedFlush:
 			cfg.WriterConcurrency = 2
-			cfg.MemtableThresholdBytes = 1 * 1024 * 1024 // 1MB threshold to force flushes
+			cfg.InitialSSTableCount = 4
+			cfg.MemtableThresholdBytes = 256 // 256B threshold to force measured flushes
 		case harness.WorkloadC_CompactionOverlap:
 			cfg.WriterConcurrency = 1
-			cfg.CompactionTriggerIntervalMs = 500
+			cfg.InitialSSTableCount = 4
+			cfg.MemtableThresholdBytes = 32 * 1024
+			cfg.CompactionTriggerIntervalMs = 300
 		case harness.WorkloadD_ReaderChurn:
 			cfg.WriterConcurrency = 3
-			cfg.MemtableThresholdBytes = 512 * 1024
-			cfg.CompactionTriggerIntervalMs = 500
+			cfg.InitialSSTableCount = 4
+			cfg.MemtableThresholdBytes = 32 * 1024
+			cfg.CompactionTriggerIntervalMs = 300
 		case harness.WorkloadE_NegativeControlMemtable:
 			cfg.WriterConcurrency = 2
 			cfg.InitialSSTableCount = 0
+			cfg.MemtableThresholdBytes = 64 * 1024 * 1024
 		}
 	}
 	cfg.DataDir = *dirFlag
@@ -95,10 +101,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	p99Val := 0.0
+	if res.LatencyRead.P99Nanos > 0 {
+		p99Val = float64(res.LatencyRead.P99Nanos) / 1000.0
+	}
 	fmt.Printf("[RUNNER] Trial completed: %d reads, %d writes in %dms (%.1f read ops/sec, p50: %.2f µs, p99: %.2f µs)\n",
 		res.Operations.ReadOpsCompleted, res.Operations.WriteOpsCompleted,
 		res.Timestamps.TotalDurationMs, res.Throughput.ReadOpsPerSec,
-		float64(res.LatencyRead.P50Nanos)/1000.0, float64(res.LatencyRead.P99Nanos)/1000.0)
+		float64(res.LatencyRead.P50Nanos)/1000.0, p99Val)
+	fmt.Printf("[RUNNER] Measured LSM activity: Flushes=%d, Compactions=%d, SSTableReads=%d, MemtableReads=%d | OverlapMs=%d, ReadsInOverlap=%d\n",
+		res.LSMDiagnostics.MeasuredFlushes, res.LSMDiagnostics.MeasuredCompactions,
+		res.LSMDiagnostics.MeasuredSSTablePointReads, res.LSMDiagnostics.MeasuredMemtablePointReads,
+		res.LSMDiagnostics.CompactionActiveOverlapMs, res.LSMDiagnostics.ReadsDuringCompaction)
 
 	if *outputFlag != "" {
 		if err := harness.SaveResultJSON(res, *outputFlag); err != nil {
@@ -155,19 +169,25 @@ func runSmokeSuite(outDir string, gitRev string) {
 			switch w {
 			case harness.WorkloadA_ReadOnly:
 				cfg.WriterConcurrency = 0
+				cfg.InitialSSTableCount = 4
 			case harness.WorkloadB_MixedFlush:
 				cfg.WriterConcurrency = 2
-				cfg.MemtableThresholdBytes = 1 * 1024 * 1024
+				cfg.InitialSSTableCount = 4
+				cfg.MemtableThresholdBytes = 256 // 256B threshold so 2 writes trigger a measured flush even under extreme RWMutex contention
 			case harness.WorkloadC_CompactionOverlap:
 				cfg.WriterConcurrency = 1
-				cfg.CompactionTriggerIntervalMs = 400
+				cfg.InitialSSTableCount = 4
+				cfg.MemtableThresholdBytes = 32 * 1024
+				cfg.CompactionTriggerIntervalMs = 300
 			case harness.WorkloadD_ReaderChurn:
 				cfg.WriterConcurrency = 3
-				cfg.MemtableThresholdBytes = 512 * 1024
-				cfg.CompactionTriggerIntervalMs = 400
+				cfg.InitialSSTableCount = 4
+				cfg.MemtableThresholdBytes = 32 * 1024
+				cfg.CompactionTriggerIntervalMs = 300
 			case harness.WorkloadE_NegativeControlMemtable:
 				cfg.WriterConcurrency = 2
 				cfg.InitialSSTableCount = 0
+				cfg.MemtableThresholdBytes = 64 * 1024 * 1024
 			}
 
 			// Dedicated trial directory
@@ -192,10 +212,13 @@ func runSmokeSuite(outDir string, gitRev string) {
 			filePath := filepath.Join(outDir, fileName)
 			_ = harness.SaveResultJSON(res, filePath)
 
-			fmt.Printf("        -> Done: %d reads, %d writes | Flushes: %d, Compactions: %d | SSTableReads: %d, MemtableReads: %d\n",
+			p50Us := float64(res.LatencyRead.P50Nanos) / 1000.0
+			fmt.Printf("        -> Done: %d reads, %d writes | MeasuredFlushes: %d, MeasuredCompactions: %d | SSTableReads: %d, MemtableReads: %d | OverlapMs: %d, ReadsInOverlap: %d | p50: %.2f µs\n",
 				res.Operations.ReadOpsCompleted, res.Operations.WriteOpsCompleted,
-				res.LSMDiagnostics.FlushesCompleted, res.LSMDiagnostics.CompactionsCompleted,
-				res.LSMDiagnostics.SSTablePointReads, res.LSMDiagnostics.MemtablePointReads)
+				res.LSMDiagnostics.MeasuredFlushes, res.LSMDiagnostics.MeasuredCompactions,
+				res.LSMDiagnostics.MeasuredSSTablePointReads, res.LSMDiagnostics.MeasuredMemtablePointReads,
+				res.LSMDiagnostics.CompactionActiveOverlapMs, res.LSMDiagnostics.ReadsDuringCompaction,
+				p50Us)
 		}
 	}
 	fmt.Println("================================================================================")

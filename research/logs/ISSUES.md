@@ -465,6 +465,56 @@ Format:
 - **Status**: Fixed (Sub-phase I4.2).
 - **Commit**: `HEAD`.
 
+---
+
+### E-016: Approach B Compaction Output Filename Missing Data Directory Path (WSL2/NTFS Throughput Reversal)
+
+- **ID**: `E-016`
+- **Detected**: 2026-10-18, commit `HEAD`, WSL2 ext4 and Windows NTFS smoke runs
+- **Sub-phase**: CP4-V.4
+- **Severity**: Benchmark / Filesystem Parity Defect (P1)
+- **Symptom**: Preliminary smoke results on WSL2 ext4 showed an unexpected throughput reversal where Approach B underperformed Approach A in Workloads C (Compaction Overlap) and D (Reader Churn), whereas on Windows NTFS Approach B substantially outperformed Approach A.
+- **Minimal Reproduction**:
+  ```powershell
+  wsl -- /snap/bin/go run ./research/experiments/cmd/experiment_runner --workload=C --mode=B --dir=/tmp/test_c_b
+  ```
+- **Hypotheses Considered**:
+  1. *Approach B read snapshot pinning bottleneck on Linux*: Rejected. Snapshots are memory-only pointers; pinning is $O(1)$ under leaf mutex.
+  2. *Filesystem location mismatch during compaction*: Confirmed. In `lsmengine/compaction.go:305`, Approach B wrote replacement SSTables using `newFilename := fmt.Sprintf("data_compacted_%d.sst", time.Now().UnixNano())` without prepending the database directory path. Under WSL2, relative paths resolved to the repository directory on `/mnt/c/...` (9P network-mounted DrvFs, orders of magnitude slower than native ext4). Meanwhile, Approach A at line 143 used `outputDir := filepath.Dir(filenames[0])` and `filepath.Join(outputDir, ...)`, writing directly to the isolated trial data directory in `/tmp` (native ext4).
+- **Root Cause**: Missing directory join in Approach B compaction builder creation. Approach B compacted onto DrvFs/NTFS while Approach A compacted onto native Linux RAM/ext4.
+- **Fix**: Updated `lsmengine/compaction.go:305` to derive `outputDir := filepath.Dir(filenames[0])` and construct `newFilename := filepath.Join(outputDir, fmt.Sprintf("data_compacted_%d.sst", time.Now().UnixNano()))`, matching Approach A identically (Decision D-038).
+- **Regression Test**: `TestHarness_WorkloadC_CompactionSmoke` and `TestHarness_WorkloadD_ReaderChurnSmoke`.
+- **Validation**:
+  - Windows Native: `go test -count=1 ./...` (PASS).
+  - WSL2 Linux: `/snap/bin/go test -race -count=1 ./...` (PASS, 0 race warnings).
+- **Status**: Fixed (CP4-V.4, Decision D-038).
+- **Commit**: `HEAD`.
+
+---
+
+### E-017: Windows Coarse OS Interrupt Timer Resolution Masking Sub-Microsecond Point-Read Latencies (0.00 µs Median Latency)
+
+- **ID**: `E-017`
+- **Detected**: 2026-10-18, commit `HEAD`, Windows 11 amd64
+- **Sub-phase**: CP4-V.2
+- **Severity**: Benchmark / Measurement Instrumentation Defect (P1)
+- **Symptom**: Windows smoke runs for Workload E (Negative Control Memtable) reported `p50: 0.00 µs`, with 99.998% of recorded latency samples registering exactly 0 nanoseconds.
+- **Minimal Reproduction**:
+  ```powershell
+  go run ./research/experiments/cmd/experiment_runner --workload=E --mode=A --duration=1000
+  ```
+- **Hypotheses Considered**:
+  1. *Timer placement bug*: Rejected. Timer was placed immediately before and after `man.Get()`.
+  2. *Unwritten preallocated buffer values*: Rejected. Buffer slice length was explicitly tracked and sorted only over recorded count.
+  3. *Coarse OS clock resolution on Windows*: Confirmed. Go's standard `time.Now()` on Windows uses the system interrupt timer with ~0.5ms (500,000ns) quantization. For in-memory SkipList lookups completing in 150–300ns, `time.Since(t0)` is 0 for almost all consecutive calls.
+- **Root Cause**: Operating system interrupt timer quantization on Windows.
+- **Fix**: Implemented cross-platform precision timer (`research/experiments/harness/timer_windows.go` and `timer_other.go`). On Windows, utilizes `kernel32.dll` `QueryPerformanceCounter` and `QueryPerformanceFrequency` with 10 MHz resolution (100ns per tick, ~15ns syscall overhead). On Linux/POSIX, uses monotonic `time.Now().UnixNano()`. Also enhanced `LatencyRecorder` with nearest-rank percentiles, `zero_sample_count`, `overflow_count`, and sample-size-guarded p99.9 (Decision D-039).
+- **Regression Test**: `TestLatencyRecorder_SingleSample`, `TestLatencyRecorder_PartiallyFilledBuffer`, `TestLatencyRecorder_ZeroSampleAccounting`, `TestLatencyRecorder_CapacityOverflow`, `TestLatencyRecorder_P999SampleThreshold`, and `TestHarness_WorkloadE_NegativeControlSmoke`.
+- **Validation**: Workload E on Windows reports true sub-microsecond latencies (~0.15–0.30 µs p50), zero-nanosecond sample count = 0, and all percentiles reconcile.
+- **Status**: Fixed (CP4-V.2, Decision D-039).
+- **Commit**: `HEAD`.
+
+
 
 
 

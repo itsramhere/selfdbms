@@ -1,10 +1,10 @@
 {
   "schema_version": "1.0.0",
-  "trial_id": "trial_WORKLOAD_E_NEGATIVE_CONTROL_MEMTABLE_A_r4_1792341993461284226",
+  "trial_id": "trial_WORKLOAD_E_NEGATIVE_CONTROL_MEMTABLE_A_r4_1792350254547551760",
   "trial_index": 0,
   "workload_id": "WORKLOAD_E_NEGATIVE_CONTROL_MEMTABLE",
   "sync_mode": "ApproachA_RWMutexBaseline",
-  "git_revision": "c58bc6177b5a925a0b25ba795957839866d0b040",
+  "git_revision": "0b0021ef3a16c918e19812d8c8322015755396bd",
   "environment": {
     "os": "linux",
     "kernel": "linux_amd64",
@@ -12,15 +12,15 @@
     "physical_cores": 6,
     "logical_cores": 12,
     "total_ram_bytes": 17179869184,
-    "free_ram_bytes": 17504064,
+    "free_ram_bytes": 21502136,
     "go_version": "go1.27.2",
     "gomaxprocs": 12,
     "filesystem_type": "ext4 (Native Linux)",
-    "data_dir_path": "/tmp/smoke_WORKLOAD_E_NEGATIVE_CONTROL_MEMTABLE_A_2696394670"
+    "data_dir_path": "/tmp/smoke_WORKLOAD_E_NEGATIVE_CONTROL_MEMTABLE_A_2241235861"
   },
   "config": {
     "schema_version": "1.0.0",
-    "trial_id": "trial_WORKLOAD_E_NEGATIVE_CONTROL_MEMTABLE_A_r4_1792341993461284226",
+    "trial_id": "trial_WORKLOAD_E_NEGATIVE_CONTROL_MEMTABLE_A_r4_1792350254547551760",
     "trial_index": 0,
     "workload_id": "WORKLOAD_E_NEGATIVE_CONTROL_MEMTABLE",
     "sync_mode": "ApproachA_RWMutexBaseline",
@@ -39,50 +39,54 @@
     "zipf_s": 0.99,
     "target_read_hit_ratio": 0.95,
     "memtable_threshold_bytes": 67108864,
-    "data_dir": "/tmp/smoke_WORKLOAD_E_NEGATIVE_CONTROL_MEMTABLE_A_2696394670",
+    "data_dir": "/tmp/smoke_WORKLOAD_E_NEGATIVE_CONTROL_MEMTABLE_A_2241235861",
     "wal_sync": true,
     "compaction_trigger_interval_ms": 0
   },
   "timestamps": {
-    "start_iso": "2026-10-18T16:46:40.990721098Z",
-    "finish_iso": "2026-10-18T16:46:42.49501561Z",
+    "start_iso": "2026-10-18T19:04:21.662031185Z",
+    "finish_iso": "2026-10-18T19:04:23.165747418Z",
     "warmup_duration_ms": 200,
     "measurement_duration_ms": 1500,
-    "total_duration_ms": 1504
+    "total_duration_ms": 1503
   },
   "operations": {
-    "read_ops_attempted": 3200,
-    "read_ops_completed": 3200,
-    "write_ops_attempted": 398,
-    "write_ops_completed": 398,
+    "read_ops_attempted": 4097,
+    "read_ops_completed": 4097,
+    "write_ops_attempted": 510,
+    "write_ops_completed": 510,
     "error_ops_count": 0,
     "timeout_ops_count": 0,
-    "validation_errors_count": 2365
+    "validation_errors_count": 3036
   },
   "throughput": {
-    "read_ops_per_sec": 2127.248465315042,
-    "write_ops_per_sec": 264.57652787355835,
-    "total_ops_per_sec": 2391.8249931886003
+    "read_ops_per_sec": 2724.586762451105,
+    "write_ops_per_sec": 339.1601778984778,
+    "total_ops_per_sec": 3063.746940349583
   },
   "latency_read_nanos": {
-    "sample_count": 3200,
-    "min": 130,
-    "max": 134578175,
-    "mean": 1874849.585,
-    "p50": 1825,
-    "p95": 7355858,
-    "p99": 22532657,
-    "p999": 100289118
+    "sample_count": 4097,
+    "zero_sample_count": 0,
+    "overflow_count": 0,
+    "min": 169,
+    "max": 288797018,
+    "mean": 1464496.6441298511,
+    "p50": 1334,
+    "p95": 5619678,
+    "p99": 17337579,
+    "p999": 65664564
   },
   "latency_write_nanos": {
-    "sample_count": 398,
-    "min": 5826803,
-    "max": 21452163,
-    "mean": 7542431.788944724,
-    "p50": 7132356,
-    "p95": 10247066,
-    "p99": 13379267,
-    "p999": 21452163
+    "sample_count": 510,
+    "zero_sample_count": 0,
+    "overflow_count": 0,
+    "min": 4808818,
+    "max": 26926152,
+    "mean": 5885757.909803921,
+    "p50": 5550857,
+    "p95": 7545595,
+    "p99": 11980702,
+    "p999": null
   },
   "lsm_diagnostics": {
     "initial_sstables": 0,
@@ -90,18 +94,96 @@
     "flushes_completed": 0,
     "compactions_completed": 0,
     "sstable_point_reads": 0,
-    "memtable_point_reads": 243043,
+    "memtable_point_reads": 302031,
+    "measured_flushes": 0,
+    "measured_compactions": 0,
+    "measured_sstable_point_reads": 0,
+    "measured_memtable_point_reads": 853,
     "snapshot_seq": 0,
     "active_snapshot_pins": 0,
     "retired_snapshots_count": 0,
     "pending_cleanup_count": 0,
-    "live_physical_readers": 0
+    "live_physical_readers": 0,
+    "compaction_active_overlap_ms": 0,
+    "reads_during_compaction_count": 0,
+    "phase_metrics": {
+      "fixture_setup": {
+        "start_flushes": 0,
+        "end_flushes": 0,
+        "delta_flushes": 0,
+        "start_compactions": 0,
+        "end_compactions": 0,
+        "delta_compactions": 0,
+        "start_sstable_reads": 0,
+        "end_sstable_reads": 0,
+        "delta_sstable_reads": 0,
+        "start_memtable_reads": 0,
+        "end_memtable_reads": 0,
+        "delta_memtable_reads": 0
+      },
+      "warmup": {
+        "start_flushes": 0,
+        "end_flushes": 0,
+        "delta_flushes": 0,
+        "start_compactions": 0,
+        "end_compactions": 0,
+        "delta_compactions": 0,
+        "start_sstable_reads": 0,
+        "end_sstable_reads": 0,
+        "delta_sstable_reads": 0,
+        "start_memtable_reads": 0,
+        "end_memtable_reads": 301178,
+        "delta_memtable_reads": 301178
+      },
+      "measured": {
+        "start_flushes": 0,
+        "end_flushes": 0,
+        "delta_flushes": 0,
+        "start_compactions": 0,
+        "end_compactions": 0,
+        "delta_compactions": 0,
+        "start_sstable_reads": 0,
+        "end_sstable_reads": 0,
+        "delta_sstable_reads": 0,
+        "start_memtable_reads": 301178,
+        "end_memtable_reads": 302031,
+        "delta_memtable_reads": 853
+      },
+      "cooldown": {
+        "start_flushes": 0,
+        "end_flushes": 0,
+        "delta_flushes": 0,
+        "start_compactions": 0,
+        "end_compactions": 0,
+        "delta_compactions": 0,
+        "start_sstable_reads": 0,
+        "end_sstable_reads": 0,
+        "delta_sstable_reads": 0,
+        "start_memtable_reads": 302031,
+        "end_memtable_reads": 302031,
+        "delta_memtable_reads": 0
+      },
+      "shutdown": {
+        "start_flushes": 0,
+        "end_flushes": 0,
+        "delta_flushes": 0,
+        "start_compactions": 0,
+        "end_compactions": 0,
+        "delta_compactions": 0,
+        "start_sstable_reads": 0,
+        "end_sstable_reads": 0,
+        "delta_sstable_reads": 0,
+        "start_memtable_reads": 302031,
+        "end_memtable_reads": 302031,
+        "delta_memtable_reads": 0
+      }
+    }
   },
   "host_diagnostics": {
-    "heap_alloc_bytes": 6498712,
+    "heap_alloc_bytes": 6708376,
     "heap_sys_bytes": 20185088,
-    "num_gc": 414,
-    "gc_pause_total_ns": 170062657
+    "num_gc": 6065,
+    "gc_pause_total_ns": 1257653563
   },
   "status": "SUCCESS",
   "exclusion_reason": null

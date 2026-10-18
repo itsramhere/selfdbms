@@ -302,7 +302,8 @@ func (m *Manager) compactAllApproachB() error {
 	}
 
 	// 3. Build replacement SSTable via k-way merge outside all locks
-	newFilename := fmt.Sprintf("data_compacted_%d.sst", time.Now().UnixNano())
+	outputDir := filepath.Dir(filenames[0])
+	newFilename := filepath.Join(outputDir, fmt.Sprintf("data_compacted_%d.sst", time.Now().UnixNano()))
 	file, err := os.Create(newFilename)
 	if err != nil {
 		m.snapshotMu.Lock()
