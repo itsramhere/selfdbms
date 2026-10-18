@@ -25,31 +25,39 @@
 
 ## 2. Lock Hierarchy & Mutex Ownership
 
-There are four distinct synchronization primitives in the engine:
-1. `m.compactionMu (sync.Mutex)`: Serializes background compactions and coordinates atomic engine shutdown.
-2. `Manager.Mu (*sync.RWMutex)`: Guards access to `Mem`, `Frozenmem`, `ActiveSSreaders`, `Log`, and write sequencing.
-3. `m.flushQueueMu (sync.Mutex)`: Guards enqueueing, dequeueing, and condition signaling for the unbounded FIFO flush queue.
-4. `Wal.mu (sync.Mutex)`: Guards file writes and `Sync()` calls to the WAL file descriptor.
+There are six distinct synchronization primitives in the engine under Approach B:
+1. `m.compactionMu (sync.Mutex, Level 1)`: Serializes background compactions and coordinates atomic engine shutdown. Held for the entire duration of compaction.
+2. `Manager.Mu (*sync.RWMutex, Level 2)`: Guards access to `Mem`, `Frozenmem`, `ActiveSSreaders`, `Log`, and write sequencing.
+3. `m.snapshotMu (sync.Mutex, Level 3)`: Guards `ReaderSnapshot` state, pinning, draining, `SharedReader.refCount`, and cleanup queues.
+4. `m.flushQueueMu (sync.Mutex, Level 4)`: Guards enqueueing, dequeueing, and condition signaling for the unbounded FIFO flush queue.
+5. `Wal.mu (sync.Mutex, Level 5)`: Guards file writes and `Sync()` calls to the WAL file descriptor.
+6. `m.cleanupMu (sync.Mutex, Level 6)`: Leaf mutex serializing physical handle closures and file unlinks.
 
 ```
 Lock Hierarchy Rule:
-m.compactionMu ──► Manager.Mu (Exclusive or Shared) ──► m.flushQueueMu ──► Wal.mu
+m.compactionMu (Level 1)
+       └──► Manager.Mu (Level 2)
+                 └──► m.snapshotMu (Level 3)
+                           └──► m.flushQueueMu (Level 4)
+                                     └──► Wal.mu (Level 5)
+                                               └──► m.cleanupMu (Level 6, Leaf)
 ```
 
 ### Mutex State Matrix
 
 | Operation | Goroutine | Lock Acquired | Lock Duration | Protected Resources |
 | :--- | :--- | :--- | :--- | :--- |
-| `Manager.Get` | Reader | `m.Mu.RLock()` | Entire read (Memtable + Frozen + Disk I/O across SSTables) | `m.Mem`, `m.Frozenmem`, `m.ActiveSSreaders` |
+| `Manager.Get` (Approach A) | Reader | `m.Mu.RLock()` | Entire read (Memtable + Frozen + Disk I/O across SSTables) | `m.Mem`, `m.Frozenmem`, `m.ActiveSSreaders` |
+| `Manager.Get` (Approach B) | Reader | `m.Mu.RLock()` $\to$ `m.snapshotMu.Lock()` | Ultra-short memory tier check and snapshot pin; zero locks held during disk I/O | `m.Mem`, `m.Frozenmem`, `snap.pins` |
 | `Transaction.Commit` | Writer | `m.Mu.Lock()` | Write-write check, WAL append, Memtable put | `m.Mu`, `m.CurrentSeqNo`, `m.Mem`, `m.Log` |
 | `Wal.Append` | Writer | `w.mu.Lock()` | Byte encoding, checksum, `File.Write`, `File.Sync` | `w.File` |
 | `checkAndTriggerFlush` | Writer | `m.Mu.Lock()`, then `m.flushQueueMu.Lock()` | Memtable size check, rotation to frozen, WAL swap, queue append | `m.Mem`, `m.Frozenmem`, `m.Log`, `m.flushQueue` |
 | `flushLoop` (pop) | Flush Worker | `m.flushQueueMu.Lock()` | Pop FIFO task, wait on `flushQueueCond` | `m.flushQueue` |
-| `flushToDisk` (publish) | Flush Worker | `m.Mu.Lock()` | SSTable reader slice append, frozen slice remove | `m.ActiveSSreaders`, `m.Frozenmem` |
-| `CompactAll` (lifecycle) | Compactor | `m.compactionMu.Lock()` | Entire compaction lifecycle (snapshot through file deletion) | Active reader lease serialization |
-| `CompactAll` (snapshot) | Compactor | `m.Mu.Lock()` | Shallow copy contiguous prefix `ActiveSSreaders`, collect file names | `m.ActiveSSreaders` |
-| `CompactAll` (publish) | Compactor | `m.Mu.Lock()` | Prefix in-place replacement via `replaceCompactedReaders` | `m.ActiveSSreaders` |
-| `Manager.Close` | Closer | `m.compactionMu.Lock()`, then `m.Mu.Lock()`, then `m.flushQueueMu.Lock()` | 4-phase drain protocol, reader closing, WAL close | `m.ActiveSSreaders`, `m.Log`, `m.flushQueue` |
+| `flushToDisk` (publish) | Flush Worker | `m.Mu.Lock()`, then `m.snapshotMu.Lock()` | SSTable reader append, snapshot publication, frozen remove | `m.ActiveSSreaders`, `m.currentSnapshot`, `m.Frozenmem` |
+| `CompactAll` (lifecycle) | Compactor | `m.compactionMu.Lock()` | Entire compaction lifecycle (merge through old file unlinking) | Compaction run serialization |
+| `CompactAll` (merge phase) | Compactor | `m.compactionMu.Lock()` held; `m.Mu` and `m.snapshotMu` released | Multi-way iterator merge and new SSTable block writes | Iterators, builder |
+| `CompactAll` (publish) | Compactor | `m.compactionMu.Lock()` held; `m.snapshotMu.Lock()` acquired | Atomically publish new snapshot, retire old snapshot | `m.currentSnapshot`, `m.retiredSnapshots` |
+| `Manager.Close` (Approach B) | Closer | `m.compactionMu.Lock()` $\to$ `m.Mu.Lock()` $\to$ `m.snapshotMu.Lock()` $\to$ `m.flushQueueMu.Lock()` | Coordinated drain protocol, pin wait, cleanup wait, WAL close | All engine resources |
 
 ---
 

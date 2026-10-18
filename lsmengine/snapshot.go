@@ -295,7 +295,7 @@ type ReaderSyncStrategy interface {
 // acquireSnapshotLocked pins the current active snapshot.
 // PRECONDITION: Manager.Mu (RLock or Lock) MUST be held by caller.
 func (m *Manager) acquireSnapshotLocked() (*ReaderSnapshot, error) {
-	if m.snapshotAdmissionClosed.Load() {
+	if m.state != EngineOpen || m.snapshotAdmissionClosed.Load() {
 		return nil, ErrClosed
 	}
 
@@ -339,7 +339,7 @@ func (m *Manager) ReleaseSnapshot(snap *ReaderSnapshot) {
 	defer func() {
 		m.snapshotMu.Unlock()
 		if shouldCleanup {
-			go m.drainPendingCleanups()
+			m.scheduleAsyncCleanup()
 		}
 	}()
 
@@ -486,6 +486,15 @@ func (m *Manager) evaluateShutdownReaderCleanupLocked() {
 	}
 }
 
+// scheduleAsyncCleanup schedules an asynchronous cleanup goroutine tracked by cleanupWg.
+func (m *Manager) scheduleAsyncCleanup() {
+	m.cleanupWg.Add(1)
+	go func() {
+		defer m.cleanupWg.Done()
+		m.drainPendingCleanups()
+	}()
+}
+
 // drainPendingCleanups executes handle closures and unlinks outside all engine locks.
 func (m *Manager) drainPendingCleanups() error {
 	m.cleanupMu.Lock()
@@ -528,6 +537,14 @@ func (m *Manager) drainPendingCleanups() error {
 		if err := m.drainSingleReaderCleanup(sr); err != nil && firstErr == nil {
 			firstErr = err
 		}
+	}
+
+	// Preserve cleanup errors across asynchronous invocations
+	if firstErr != nil && m.asyncCleanupErr == nil {
+		m.asyncCleanupErr = firstErr
+	}
+	if firstErr == nil && m.asyncCleanupErr != nil {
+		firstErr = m.asyncCleanupErr
 	}
 
 	return firstErr
@@ -635,7 +652,7 @@ func (m *Manager) getApproachB(key string, readTs uint64) (string, error) {
 
 	// Step 1: Memory Tier Inspection + Snapshot Pinning under short m.Mu.RLock()
 	m.Mu.RLock()
-	if m.state == EngineClosed {
+	if m.state != EngineOpen {
 		m.Mu.RUnlock()
 		return "", ErrClosed
 	}
@@ -649,7 +666,7 @@ func (m *Manager) getApproachB(key string, readTs uint64) (string, error) {
 	if err == nil {
 		m.Mu.RUnlock()
 		return string(sol), nil
-	} else if err == ErrKeyDeleted {
+	} else if errors.Is(err, ErrKeyDeleted) {
 		m.Mu.RUnlock()
 		return "Key is Deleted", err
 	} else if !errors.Is(err, ErrNotFound) {
@@ -663,7 +680,7 @@ func (m *Manager) getApproachB(key string, readTs uint64) (string, error) {
 		if err == nil {
 			m.Mu.RUnlock()
 			return string(val), nil
-		} else if err == ErrKeyDeleted {
+		} else if errors.Is(err, ErrKeyDeleted) {
 			m.Mu.RUnlock()
 			return " ", err
 		} else if !errors.Is(err, ErrNotFound) {
@@ -691,12 +708,12 @@ func (m *Manager) getApproachB(key string, readTs uint64) (string, error) {
 	for i := len(readers) - 1; i >= 0; i-- {
 		sr := readers[i]
 		if sr == nil || sr.Reader == nil {
-			continue
+			return "", errors.New("corrupted snapshot: nil reader encountered")
 		}
 		val, err := sr.Reader.Get(byteKey, readTs)
 		if err == nil {
 			return string(val), nil
-		} else if err == ErrKeyDeleted {
+		} else if errors.Is(err, ErrKeyDeleted) {
 			return " ", err
 		} else if errors.Is(err, ErrNotFound) {
 			continue
@@ -761,6 +778,9 @@ func (m *Manager) closeApproachB() error {
 	m.evaluateShutdownReaderCleanupLocked()
 	m.snapshotPhase = SnapshotPhaseClosed
 	m.snapshotMu.Unlock()
+
+	// Wait for any in-flight asynchronous cleanups to complete before final drain
+	m.cleanupWg.Wait()
 
 	// 6. Execute physical handle closures and unlinks outside all locks
 	cleanupErr := m.drainPendingCleanups()

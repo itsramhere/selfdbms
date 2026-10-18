@@ -99,6 +99,8 @@ type Manager struct {
 	pendingShutdownCloses     []*SharedReader
 	hasPendingCleanups        bool
 	cleanupMu                 sync.Mutex
+	cleanupWg                 sync.WaitGroup
+	asyncCleanupErr           error
 	compactionAdmissionClosed bool
 	closeDone                 chan struct{}
 	closeErr                  error
@@ -175,7 +177,7 @@ func (m *Manager) Get(key string, readTs uint64) (string, error) {
 	m.Mu.RLock()
 	defer m.Mu.RUnlock()
 
-	if m.state == EngineClosed {
+	if m.state != EngineOpen {
 		return "", ErrClosed
 	}
 
@@ -185,9 +187,9 @@ func (m *Manager) Get(key string, readTs uint64) (string, error) {
 
 	sol, err := m.Mem.Get(byteKey, readTs)
 	if err != nil {
-		if err == ErrKeyDeleted {
+		if errors.Is(err, ErrKeyDeleted) {
 			return "Key is Deleted", err
-		} else if err == ErrNotFound {
+		} else if errors.Is(err, ErrNotFound) {
 		} else {
 			return "", err
 		}
@@ -198,9 +200,9 @@ func (m *Manager) Get(key string, readTs uint64) (string, error) {
 	for i := len(m.Frozenmem) - 1; i >= 0; i-- {
 		val, err := m.Frozenmem[i].Get(byteKey, readTs)
 		if err != nil {
-			if err == ErrKeyDeleted {
+			if errors.Is(err, ErrKeyDeleted) {
 				return " ", err
-			} else if err == ErrNotFound {
+			} else if errors.Is(err, ErrNotFound) {
 				continue
 			} else {
 				return "", err
@@ -215,11 +217,14 @@ func (m *Manager) Get(key string, readTs uint64) (string, error) {
 	}
 
 	for i := len(m.ActiveSSreaders) - 1; i >= 0; i-- {
+		if m.ActiveSSreaders[i] == nil {
+			return "", errors.New("corrupted reader list: nil reader encountered")
+		}
 		val, err := m.ActiveSSreaders[i].Get(byteKey, readTs)
 		if err != nil {
-			if err == ErrKeyDeleted {
+			if errors.Is(err, ErrKeyDeleted) {
 				return " ", err
-			} else if err == ErrNotFound {
+			} else if errors.Is(err, ErrNotFound) {
 				continue
 			} else {
 				return "", err
@@ -319,23 +324,28 @@ func (m *Manager) latestValueLocked(userKey []byte) (uint64, error) {
 	// examine all active SSTables and track the greatest committed sequence number.
 	if m.syncMode == SyncModeApproachB {
 		snap, err := m.acquireSnapshotLocked()
-		if err == nil && snap != nil {
-			defer m.ReleaseSnapshot(snap)
-			for _, sr := range snap.Readers() {
-				if sr == nil || sr.Reader == nil {
-					continue
+		if err != nil {
+			return 0, fmt.Errorf("conflict validation snapshot acquisition failed: %w", err)
+		}
+		if snap == nil {
+			return 0, errors.New("conflict validation failed: nil snapshot returned")
+		}
+		defer m.ReleaseSnapshot(snap)
+
+		for _, sr := range snap.Readers() {
+			if sr == nil || sr.Reader == nil {
+				return 0, errors.New("corrupted snapshot: nil reader encountered during conflict validation")
+			}
+			seq, err := sr.Reader.LatestValue(userKey)
+			if err == nil {
+				if !found || seq > maxSeq {
+					maxSeq = seq
+					found = true
 				}
-				seq, err := sr.Reader.LatestValue(userKey)
-				if err == nil {
-					if !found || seq > maxSeq {
-						maxSeq = seq
-						found = true
-					}
-				} else if errors.Is(err, ErrNotFound) {
-					continue
-				} else {
-					return 0, err
-				}
+			} else if errors.Is(err, ErrNotFound) {
+				continue
+			} else {
+				return 0, err
 			}
 		}
 	} else {

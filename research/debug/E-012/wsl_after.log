@@ -1,0 +1,8 @@
+=== RUN   TestApproachB_UnexpectedReadError_PropagatesError
+--- PASS: TestApproachB_UnexpectedReadError_PropagatesError (0.09s)
+=== RUN   TestApproachB_UnexpectedReadError_SingleSSTable
+--- PASS: TestApproachB_UnexpectedReadError_SingleSSTable (0.02s)
+=== RUN   TestApproachB_NilReaderInSnapshot_DoesNotFallBack
+--- PASS: TestApproachB_NilReaderInSnapshot_DoesNotFallBack (0.04s)
+PASS
+ok  	owndbms/lsmengine	0.159s

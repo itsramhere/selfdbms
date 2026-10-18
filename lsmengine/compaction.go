@@ -489,7 +489,7 @@ func (m *Manager) compactAllApproachB() error {
 	m.snapshotMu.Unlock()
 
 	// Trigger asynchronous cleanup for any now-eligible obsolete readers
-	go m.drainPendingCleanups()
+	m.scheduleAsyncCleanup()
 
 	return nil
 }

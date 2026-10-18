@@ -118,13 +118,14 @@ Under Approach A, synchronization relies entirely on `Manager.Mu (*sync.RWMutex)
    - Must hold `m.Mu.Lock()` across conflict validation, WAL append, and Memtable insertion.
    - Internal conflict lookup MUST use lock-free or caller-locked helpers (`latestValueLocked`) without attempting nested `RLock()` or `Lock()` on `m.Mu`.
 3. **Lock Order Rule**:
-   - Strict hierarchical order: `m.compactionMu` (Mutex) $\to$ `Manager.Mu` (Exclusive or Shared) $\to$ `Wal.mu` (Mutex).
-   - `m.compactionMu` is never held while requesting another lock, except `Manager.Mu`.
-   - `Wal.mu` is never held while requesting `Manager.Mu` or `m.compactionMu`.
-   - *Scope Qualification*: This lock hierarchy reduces lock inversion risks across the identified execution paths (`Transaction.Commit`, `CompactAll`, `Manager.Get`, `Manager.Close`), but does not mathematically eliminate all conceivable deadlocks across unanalyzed asynchronous routines.
+   - Strict hierarchical order: `m.compactionMu` (Mutex, Level 1) $\to$ `Manager.Mu` (Exclusive or Shared, Level 2) $\to$ `m.snapshotMu` (Mutex, Level 3) $\to$ `m.flushQueueMu` (Mutex, Level 4) $\to$ `Wal.mu` (Mutex, Level 5), with leaf `m.cleanupMu` (Mutex, Level 6).
+   - `m.compactionMu` is never held while requesting another lock, except `Manager.Mu` or `m.snapshotMu`.
+   - `Wal.mu` and `m.cleanupMu` are never held while requesting higher-level locks.
+   - *Scope Qualification*: This lock hierarchy eliminates lock inversion hazards across all audited production execution paths (`Transaction.Commit`, `CompactAll`, `Manager.Get`, `Manager.Close`, `flushLoop`), but does not mathematically eliminate all conceivable deadlocks across unanalyzed asynchronous or external routines.
 4. **Compaction & Reader Lifetime Protocol (Verified Sub-phase I1.3)**:
    - Compaction merges a contiguous prefix snapshot $S_c \subseteq \text{ActiveSSreaders}$ starting at index 0 (`INV-COMPACT-1`).
    - Compactions are serialized across their entire lifetime via `m.compactionMu`, eliminating overlapping compaction races (`E-006`).
+   - *Lock Holding Clarification*: During the multi-way iterator merge and new SSTable file writing, `Manager.Mu` and `m.snapshotMu` are released to permit concurrent point reads and flushes, but `m.compactionMu` is strictly owned throughout the entire compaction routine until old file unlinking finishes.
    - Under `m.Mu.Lock()`, publication computes in-place prefix replacement:
      $$\text{ActiveSSreaders}_{\text{new}} = \{ R_{\text{new}} \} \cup (\text{ActiveSSreaders}_{\text{current}} \setminus S_c)$$
      preserving any SSTables concurrently published by `flushToDisk` in strict chronological order (`INV-ORDER-1`).

@@ -360,6 +360,43 @@ Format:
 - **Evidence Path**: [`research/debug/E-011/repro.md`](../debug/E-011/repro.md), [`research/debug/E-011/before.log`](../debug/E-011/before.log), [`research/debug/E-011/wsl_before.log`](../debug/E-011/wsl_before.log).
 - **Regression Test**: `TestCP1V3_TransactionCommit_ErrorPropagation_SSTableIOError` in `lsmengine/cp1_verification_test.go`.
 
+---
+
+### E-012: Swallowed SSTable Read Errors in getApproachB Masking Stale Older Versions
+
+- **ID**: `E-012`
+- **Detected**: 2026-10-18, commit `6dd8e3c`, Approach B mode
+- **Sub-phase**: I3.7.1
+- **Severity**: Correctness / Data Integrity / Error Masking (P1 Blocker)
+- **Symptom**: In `getApproachB`, when iterating through constituent SSTable readers in reverse chronological order, any unexpected error (such as file read error, bad offset, or nil reader) was silently ignored because the loop continued searching older SSTables. If an older version of the key existed in an older SSTable, the engine returned that stale older version with `nil` error; if no older version existed, it returned `ErrNotFound`.
+- **Minimal Reproduction**:
+  ```powershell
+  go test -v ./lsmengine -run TestApproachB_NilReaderInSnapshot_DoesNotFallBack
+  ```
+- **Expected / Actual**:
+  - *Expected*: Engine halts search immediately and returns the unexpected physical read error or corrupted snapshot error; never returns stale older version or false `ErrNotFound`.
+  - *Actual*: `getApproachB` skipped the corrupted/failing reader and returned the older version `"v1"` with `nil` error.
+- **Trace / Log**:
+  ```
+  === RUN   TestApproachB_NilReaderInSnapshot_DoesNotFallBack
+      sstable_read_error_test.go:215: DEFECT E-012 REPRODUCED: getApproachB swallowed nil reader in newer snapshot position and returned stale older value "v1"!
+  --- FAIL: TestApproachB_NilReaderInSnapshot_DoesNotFallBack (0.04s)
+  FAIL
+  ```
+- **Root Cause**: `getApproachB` in `lsmengine/snapshot.go` checked `sr == nil || sr.Reader == nil { continue }`, and in the read result check only checked `if err == nil` and `else if err == ErrKeyDeleted`, with all other outcomes falling through to `continue` to older SSTables.
+- **Fix**: Implemented strict error classification under Decision D-031:
+  - If `sr == nil || sr.Reader == nil`: immediately return `"", errors.New("corrupted snapshot: nil reader encountered")`.
+  - If `err == nil`: return `string(val), nil`.
+  - If `errors.Is(err, ErrKeyDeleted)`: return `" ", err`.
+  - If `errors.Is(err, ErrNotFound)`: continue search to older SSTables.
+  - All other errors: immediately propagate `"", err`.
+- **Regression Test**: `TestApproachB_UnexpectedReadError_PropagatesError`, `TestApproachB_UnexpectedReadError_SingleSSTable`, and `TestApproachB_NilReaderInSnapshot_DoesNotFallBack` in `lsmengine/sstable_read_error_test.go`.
+- **Validation**:
+  - Windows Native: `go test -v ./lsmengine -run TestApproachB_UnexpectedReadError` (3/3 PASS, 1.92s).
+  - WSL2 Linux: `/snap/bin/go test -race -v ./lsmengine -run TestApproachB_UnexpectedReadError` (3/3 PASS, 0 race warnings, 0.16s).
+- **Status**: Fixed (Sub-phase I3.7.1, Decision D-031).
+- **Evidence Path**: [`research/debug/E-012/before.log`](../debug/E-012/before.log), [`research/debug/E-012/after.log`](../debug/E-012/after.log), [`research/debug/E-012/diff.patch`](../debug/E-012/diff.patch), [`research/debug/E-012/repro.md`](../debug/E-012/repro.md).
+
 
 
 

@@ -1,0 +1,6 @@
+=== RUN   TestApproachB_NilReaderInSnapshot_DoesNotFallBack
+    sstable_read_error_test.go:244: DEFECT E-012 REPRODUCED: getApproachB silently skipped nil reader and returned stale older value "v1"!
+--- FAIL: TestApproachB_NilReaderInSnapshot_DoesNotFallBack (0.09s)
+FAIL
+FAIL	owndbms/lsmengine	0.099s
+FAIL
