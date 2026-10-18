@@ -1,0 +1,44 @@
+=== RUN   TestE014_UnsynchronizedStateRead_ScheduleAsyncCleanup
+==================
+WARNING: DATA RACE
+Write at 0x00c000105108 by goroutine 10:
+  owndbms/lsmengine.TestE014_UnsynchronizedStateRead_ScheduleAsyncCleanup.func1()
+      /mnt/c/Users/ramst/Documents/Projects/selfdbms/lsmengine/cleanup_coordination_test.go:488 +0xe7
+
+Previous read at 0x00c000105108 by goroutine 8:
+  owndbms/lsmengine.(*Manager).scheduleAsyncCleanupLocked()
+      /mnt/c/Users/ramst/Documents/Projects/selfdbms/lsmengine/snapshot.go:506 +0x4d
+  owndbms/lsmengine.TestE014_UnsynchronizedStateRead_ScheduleAsyncCleanup()
+      /mnt/c/Users/ramst/Documents/Projects/selfdbms/lsmengine/cleanup_coordination_test.go:498 +0x36a
+  testing.tRunner()
+      /snap/go/11327/src/testing/testing.go:2195 +0x21c
+  testing.(*T).Run.gowrap1()
+      /snap/go/11327/src/testing/testing.go:2260 +0x38
+
+Goroutine 10 (running) created at:
+  owndbms/lsmengine.TestE014_UnsynchronizedStateRead_ScheduleAsyncCleanup()
+      /mnt/c/Users/ramst/Documents/Projects/selfdbms/lsmengine/cleanup_coordination_test.go:479 +0x324
+  testing.tRunner()
+      /snap/go/11327/src/testing/testing.go:2195 +0x21c
+  testing.(*T).Run.gowrap1()
+      /snap/go/11327/src/testing/testing.go:2260 +0x38
+
+Goroutine 8 (running) created at:
+  testing.(*T).Run()
+      /snap/go/11327/src/testing/testing.go:2260 +0xb12
+  testing.runTests.func1()
+      /snap/go/11327/src/testing/testing.go:2744 +0x84
+  testing.tRunner()
+      /snap/go/11327/src/testing/testing.go:2195 +0x21c
+  testing.runTests()
+      /snap/go/11327/src/testing/testing.go:2742 +0x9e9
+  testing.(*M).Run()
+      /snap/go/11327/src/testing/testing.go:2602 +0xf44
+  main.main()
+      _testmain.go:396 +0x164
+==================
+    testing.go:1867: race detected during execution of test
+--- FAIL: TestE014_UnsynchronizedStateRead_ScheduleAsyncCleanup (0.13s)
+FAIL
+FAIL	owndbms/lsmengine	0.173s
+FAIL

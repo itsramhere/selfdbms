@@ -1,0 +1,8 @@
+diff --git a/lsmengine/snapshot.go b/lsmengine/snapshot.go
+--- a/lsmengine/snapshot.go
++++ b/lsmengine/snapshot.go
+@@ -505,3 +505,3 @@ func (m *Manager) scheduleAsyncCleanupLocked() {
+-	if m.snapshotPhase == SnapshotPhaseClosed || m.state == EngineClosed {
++	if m.snapshotPhase == SnapshotPhaseClosed {
+ 		return
+ 	}

@@ -1,0 +1,4 @@
+=== RUN   TestE014_UnsynchronizedStateRead_ScheduleAsyncCleanup
+--- PASS: TestE014_UnsynchronizedStateRead_ScheduleAsyncCleanup (0.03s)
+PASS
+ok  	owndbms/lsmengine	1.069s

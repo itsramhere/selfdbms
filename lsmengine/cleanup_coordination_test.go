@@ -461,3 +461,47 @@ func TestCleanup_InterleavedFinalPinReleaseAndConcurrentClose(t *testing.T) {
 	}
 }
 
+// TestE014_UnsynchronizedStateRead_ScheduleAsyncCleanup reproduces Defect E-014:
+// scheduleAsyncCleanupLocked must not read Manager.Mu-protected m.state while holding only snapshotMu.
+func TestE014_UnsynchronizedStateRead_ScheduleAsyncCleanup(t *testing.T) {
+	dir := t.TempDir()
+	man, err := CreateManagerWithConfig(Config{Mode: SyncModeApproachB, WalPath: filepath.Join(dir, "wal.log")})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	defer man.Close()
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// Goroutine 1: concurrently writes m.state under Manager.Mu
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				man.Mu.Lock()
+				orig := man.state
+				man.state = EngineClosing
+				man.state = orig
+				man.Mu.Unlock()
+			}
+		}
+	}()
+
+	// Goroutine 2: calls scheduleAsyncCleanupLocked under snapshotMu only
+	for i := 0; i < 500; i++ {
+		man.snapshotMu.Lock()
+		man.scheduleAsyncCleanupLocked()
+		man.snapshotMu.Unlock()
+	}
+
+	close(stop)
+	wg.Wait()
+	man.cleanupWg.Wait()
+}
+
+

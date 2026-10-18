@@ -423,6 +423,29 @@ Format:
   - WSL2 Linux: `go test -race -count=1 ./...` (169/169 unit tests PASS, 0 races, 18.97s).
 - **Status**: Fixed (Sub-phase CP3a-V.2, Decision D-034).
 
+---
+
+### E-014: Unsynchronized Read of Manager.state under snapshotMu in scheduleAsyncCleanupLocked
+
+- **ID**: `E-014`
+- **Detected**: 2026-10-18, commit `29c40c6`, Approach B mode
+- **Sub-phase**: CP3a-V.5
+- **Severity**: Data Race / Lock Hierarchy Contract Violation (P2)
+- **Symptom**: In `scheduleAsyncCleanupLocked()`, the caller holds only `m.snapshotMu`. The function checked `if m.snapshotPhase == SnapshotPhaseClosed || m.state == EngineClosed`. Reading `m.state` while holding only `m.snapshotMu` violated the locking contract because `m.state` is guarded by `Manager.Mu`. When concurrent threads mutated `m.state` under `Manager.Mu.Lock()` (e.g., during `Close()` state transitions), ThreadSanitizer flagged a data race on `m.state`.
+- **Minimal Reproduction**:
+  ```powershell
+  wsl bash -c "cd /mnt/c/Users/ramst/Documents/Projects/selfdbms && /snap/bin/go test -race -v -run TestE014_UnsynchronizedStateRead_ScheduleAsyncCleanup ./lsmengine"
+  ```
+- **Root Cause**: `m.state == EngineClosed` was an unnecessary cross-mutex inspection. `m.snapshotPhase` was established in Decision D-026 as the dedicated lifecycle enum guarded exclusively by `m.snapshotMu`.
+- **Fix**: Remove `m.state == EngineClosed` from `scheduleAsyncCleanupLocked()`. `m.snapshotPhase == SnapshotPhaseClosed` is guarded exclusively by `m.snapshotMu` and serves as the sole, strictly synchronized authority for closing async cleanup admission (Decision D-035).
+- **Regression Test**: `TestE014_UnsynchronizedStateRead_ScheduleAsyncCleanup` in `lsmengine/cleanup_coordination_test.go` (PASS, 0.03s under WSL2 `-race`).
+- **Validation**:
+  - Windows Native: `go test -count=1 ./...` (170/170 unit tests PASS, 10.10s).
+  - WSL2 Linux: `go test -race -count=1 ./...` (170/170 unit tests PASS, 0 data races, 20.71s).
+- **Status**: Fixed (Sub-phase CP3a-V.5, Decision D-035).
+- **Evidence Path**: [`research/debug/E-014/wsl_before.log`](../debug/E-014/wsl_before.log), [`research/debug/E-014/wsl_after.log`](../debug/E-014/wsl_after.log), [`research/debug/E-014/diff.patch`](../debug/E-014/diff.patch), [`research/debug/E-014/repro.md`](../debug/E-014/repro.md).
+
+
 
 
 

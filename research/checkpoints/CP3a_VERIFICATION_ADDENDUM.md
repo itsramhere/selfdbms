@@ -298,4 +298,52 @@ All three verification requirements of Checkpoint CP3a-V have been verified with
 
 The team requests formal approval of Checkpoint CP3a and authorization to proceed to **Phase I4 — Experimental Benchmarking Protocol**.
 
-EXTERNAL REVIEW REQUIRED — CP3a VERIFICATION ADDENDUM AWAITING APPROVAL.
+---
+
+## Section 10: CP3a-V.5 — Verification and Repair of Cleanup Shutdown-State Locking
+
+### 10.1 Source Code Audit and Defect Identification (Issue E-014)
+An inspection of all synchronization paths associated with asynchronous cleanup registration revealed a cross-mutex locking violation in `scheduleAsyncCleanupLocked`:
+- In `lsmengine/snapshot.go:506`, the helper previously checked:
+  ```go
+  if m.snapshotPhase == SnapshotPhaseClosed || m.state == EngineClosed {
+      return
+  }
+  ```
+- **Lock Inconsistency**: Callers of `scheduleAsyncCleanupLocked` (`ReleaseSnapshot` and `compactAllApproachB`) hold **only `m.snapshotMu`**. However, `m.state` is formally documented as protected by `Manager.Mu`.
+- **Data Race Reproduction**: When concurrent threads updated `m.state` under `Manager.Mu.Lock()` (such as during shutdown transitions in `closeApproachB`), ThreadSanitizer flagged a direct concurrent read/write data race on `m.state`.
+- **Reproduction Artifact**: Authored `TestE014_UnsynchronizedStateRead_ScheduleAsyncCleanup` in `lsmengine/cleanup_coordination_test.go:464-505`. Under WSL2 ThreadSanitizer, it deterministically failed with:
+  ```text
+  WARNING: DATA RACE
+  Write at 0x... by goroutine 10 (man.state = EngineClosing)
+  Previous read at 0x... by goroutine 8 (m.state == EngineClosed in scheduleAsyncCleanupLocked)
+  ```
+  Preserved in [`research/debug/E-014/wsl_before.log`](../debug/E-014/wsl_before.log).
+
+### 10.2 Production Repair (Decision D-035)
+In accordance with the reviewer's instructions, we applied the smallest safe correction that uses the `snapshotMu`-protected shutdown phase as the sole authority:
+```diff
+diff --git a/lsmengine/snapshot.go b/lsmengine/snapshot.go
+--- a/lsmengine/snapshot.go
++++ b/lsmengine/snapshot.go
+@@ -505,3 +505,3 @@ func (m *Manager) scheduleAsyncCleanupLocked() {
+-	if m.snapshotPhase == SnapshotPhaseClosed || m.state == EngineClosed {
++	if m.snapshotPhase == SnapshotPhaseClosed {
+ 		return
+ 	}
+```
+
+### 10.3 Structural and Lifecycle Guarantees
+1. **Zero Lock Inversion**: `Manager.Mu` is never acquired from inside `m.snapshotMu`. The strict 6-level lock graph established in CP2b-V remains completely acyclic.
+2. **Canonical State Authority**: `m.snapshotPhase` was designed in Decision D-026 specifically to govern snapshot lifecycle state under `m.snapshotMu`. In `closeApproachB()` (lines 801–802), the transition `m.snapshotPhase = SnapshotPhaseClosed` executes under `m.snapshotMu.Lock()` *before* `cleanupWg.Wait()`. Any subsequent call to `scheduleAsyncCleanupLocked()` holding `m.snapshotMu` sees `SnapshotPhaseClosed` and immediately aborts registration.
+3. **Zero Orphaned Cleanups**: Readers becoming eligible after `SnapshotPhaseClosed` are queued into `m.pendingCleanupReaders` and drained synchronously by `closeApproachB`'s Step 6 (`drainPendingCleanups()`).
+4. **Error Propagation Preserved**: All cleanup errors (synchronous and asynchronous) continue to be stored in `m.asyncCleanupErr` under `m.cleanupMu`, factored into `m.closeErr`, and surfaced identically to all concurrent callers via `m.closeDone`.
+
+### 10.4 Final Dual-Platform Revalidation
+- **Windows 11 NTFS native (`go1.26.3`)**: `go test -count=1 ./...` $\to$ **170/170 unit tests PASS** (10.10s); `go vet ./...` clean.
+- **WSL2 Ubuntu Linux (`go1.27.2` ThreadSanitizer)**: `/snap/bin/go test -race -count=1 ./...` $\to$ **170/170 unit tests PASS** (20.71s, **0 data races, 0 deadlocks**); `go vet ./...` clean.
+- **WSL2 Targeted Stress Suite (`-race -count=5`)**: 4.34s across all conflict, cleanup, shutdown, and E-014 tests.
+- **Passing Log**: Captured in [`research/debug/E-014/wsl_after.log`](../debug/E-014/wsl_after.log).
+
+EXTERNAL REVIEW REQUIRED — CP3a FINAL LOCKING CHECK AWAITING APPROVAL.
+

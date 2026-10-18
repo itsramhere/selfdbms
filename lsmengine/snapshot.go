@@ -503,7 +503,7 @@ func (m *Manager) evaluateShutdownReaderCleanupLocked() {
 // full linearization argument). Callers include the final pin-release path and the
 // Approach B compaction publication path.
 func (m *Manager) scheduleAsyncCleanupLocked() {
-	if m.snapshotPhase == SnapshotPhaseClosed || m.state == EngineClosed {
+	if m.snapshotPhase == SnapshotPhaseClosed {
 		return
 	}
 	m.cleanupWg.Add(1)
