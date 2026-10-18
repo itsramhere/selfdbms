@@ -1,7 +1,6 @@
 package lsmengine
 
 import (
-	"errors"
 	"os"
 	"testing"
 )
@@ -21,25 +20,23 @@ func TestSyncMode_DefaultIsApproachA(t *testing.T) {
 	}
 }
 
-func TestSyncMode_ApproachBReturnsUnsupportedError(t *testing.T) {
+func TestSyncMode_ApproachBSucceeds(t *testing.T) {
+	walPath := "test_sync_mode_b.wal"
+	defer os.Remove(walPath)
+
 	cfg := Config{
 		Mode:    SyncModeApproachB,
-		WalPath: "test_sync_mode_b.wal",
+		WalPath: walPath,
 	}
 
 	m, err := CreateManagerWithConfig(cfg)
-	if err == nil {
-		if m != nil {
-			m.Close()
-			os.Remove(cfg.WalPath)
-		}
-		t.Fatalf("expected error when requesting SyncModeApproachB, got nil error")
+	if err != nil {
+		t.Fatalf("expected success creating manager with SyncModeApproachB, got: %v", err)
 	}
-	if !errors.Is(err, ErrUnsupportedSyncMode) {
-		t.Fatalf("expected ErrUnsupportedSyncMode, got %v", err)
-	}
-	if m != nil {
-		t.Fatalf("expected nil manager when error is returned, got non-nil: %v", m)
+	defer m.Close()
+
+	if m.SyncMode() != SyncModeApproachB {
+		t.Fatalf("expected SyncMode to be SyncModeApproachB, got %v", m.SyncMode())
 	}
 }
 

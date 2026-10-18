@@ -1,7 +1,7 @@
 package lsmengine
 
 import (
-	"errors"
+	"os"
 	"testing"
 )
 
@@ -107,15 +107,24 @@ func TestReaderSnapshot_AtomicAccessors(t *testing.T) {
 	}
 }
 
-func TestApproachB_ScaffoldingEnforcesUnsupportedMode(t *testing.T) {
+func TestApproachB_ScaffoldingSupportedMode(t *testing.T) {
+	walPath := "test_scaffolding_approach_b.wal"
+	defer os.Remove(walPath)
+
 	cfg := Config{
-		Mode: SyncModeApproachB,
+		Mode:    SyncModeApproachB,
+		WalPath: walPath,
 	}
 	man, err := CreateManagerWithConfig(cfg)
-	if !errors.Is(err, ErrUnsupportedSyncMode) {
-		t.Fatalf("expected ErrUnsupportedSyncMode, got %v", err)
+	if err != nil {
+		t.Fatalf("expected success creating manager with SyncModeApproachB, got %v", err)
 	}
-	if man != nil {
-		t.Fatalf("expected nil manager on unsupported mode, got %v", man)
+	if man == nil {
+		t.Fatalf("expected non-nil manager, got nil")
+	}
+	defer man.Close()
+
+	if man.SyncMode() != SyncModeApproachB {
+		t.Fatalf("expected mode SyncModeApproachB, got %v", man.SyncMode())
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 )
 
@@ -69,6 +70,10 @@ func replaceCompactedReaders(current []*SSTableReader, inputs []*SSTableReader, 
 }
 
 func (m *Manager) CompactAll() error {
+	if m.syncMode == SyncModeApproachB {
+		return m.compactAllApproachB()
+	}
+
 	// Serialize all compaction lifetimes to prevent overlapping compaction races (E-006).
 	// Lock hierarchy: compactionMu -> Manager.Mu -> Wal.mu
 	m.compactionMu.Lock()
@@ -240,6 +245,251 @@ func (m *Manager) CompactAll() error {
 		r.Close()
 		os.Remove(r.File.Name())
 	}
+
+	return nil
+}
+
+func (m *Manager) compactAllApproachB() error {
+	m.compactionMu.Lock()
+	defer m.compactionMu.Unlock()
+
+	m.Mu.Lock()
+	if m.isClosed || m.state != EngineOpen || m.compactionAdmissionClosed {
+		m.Mu.Unlock()
+		return errors.New("compaction aborted: engine is closed")
+	}
+	m.Mu.Unlock()
+
+	// 1. Acquire snapshot and lease compaction input readers under snapshotMu
+	m.snapshotMu.Lock()
+	if m.currentSnapshot == nil || len(m.currentSnapshot.readers) <= 1 {
+		m.snapshotMu.Unlock()
+		return nil // Nothing to compact
+	}
+
+	snap := m.currentSnapshot
+	readersToCompact := make([]*SharedReader, len(snap.readers))
+	copy(readersToCompact, snap.readers)
+	for _, sr := range readersToCompact {
+		sr.Ref() // Add compaction lease
+	}
+	m.snapshotMu.Unlock()
+
+	// 2. Open iterators outside all locks
+	var filenames []string
+	for _, r := range readersToCompact {
+		filenames = append(filenames, r.Path)
+	}
+
+	var iterators []*SSTableIterator
+	for _, fname := range filenames {
+		it, err := NewSSTableIterator(fname)
+		if err != nil {
+			// Rollback leases on iterator failure
+			m.snapshotMu.Lock()
+			for _, sr := range readersToCompact {
+				sr.UnrefLocked()
+				m.checkCleanupEligibilityLocked(sr)
+			}
+			m.snapshotMu.Unlock()
+			for _, openedIt := range iterators {
+				openedIt.Close()
+			}
+			return err
+		}
+		iterators = append(iterators, it)
+	}
+
+	// 3. Build replacement SSTable via k-way merge outside all locks
+	newFilename := fmt.Sprintf("data_compacted_%d.sst", time.Now().UnixNano())
+	file, err := os.Create(newFilename)
+	if err != nil {
+		m.snapshotMu.Lock()
+		for _, sr := range readersToCompact {
+			sr.UnrefLocked()
+			m.checkCleanupEligibilityLocked(sr)
+		}
+		m.snapshotMu.Unlock()
+		for _, openedIt := range iterators {
+			openedIt.Close()
+		}
+		return err
+	}
+
+	builder := &SSTableBuilder{
+		File:        file,
+		BlockBuffer: new(bytes.Buffer),
+	}
+
+	minHeap := &CompactionHeap{}
+	heap.Init(minHeap)
+
+	for i, it := range iterators {
+		k, v, err := it.Next()
+		if err != nil && !errors.Is(err, io.EOF) {
+			for _, openedIt := range iterators {
+				openedIt.Close()
+			}
+			return err
+		}
+		if err == nil {
+			heap.Push(minHeap, &HeapItem{
+				InternalKey: k,
+				Value:       v,
+				IteratorIdx: i,
+			})
+		}
+	}
+
+	var lastUserKey []byte
+
+	for minHeap.Len() > 0 {
+		item := heap.Pop(minHeap).(*HeapItem)
+		currentUserKey, _, isDelete := DecodeInternalKey(item.InternalKey)
+
+		// Deduplication check: highest sequence number for currentUserKey pops first
+		if lastUserKey == nil || !bytes.Equal(currentUserKey, lastUserKey) {
+			if !isDelete {
+				if err := builder.Add(item.InternalKey, item.Value); err != nil {
+					builder.Close()
+					os.Remove(newFilename)
+					for _, openedIt := range iterators {
+						openedIt.Close()
+					}
+					return err
+				}
+			}
+
+			lastUserKey = make([]byte, len(currentUserKey))
+			copy(lastUserKey, currentUserKey)
+		}
+
+		// Advance iterator that supplied popped item
+		k, v, err := iterators[item.IteratorIdx].Next()
+		if err == nil {
+			heap.Push(minHeap, &HeapItem{
+				InternalKey: k,
+				Value:       v,
+				IteratorIdx: item.IteratorIdx,
+			})
+		} else if err != nil && !errors.Is(err, io.EOF) {
+			builder.Close()
+			os.Remove(newFilename)
+			for _, openedIt := range iterators {
+				openedIt.Close()
+			}
+			return err
+		}
+	}
+
+	for _, openedIt := range iterators {
+		openedIt.Close()
+	}
+
+	if err := builder.Close(); err != nil {
+		os.Remove(newFilename)
+		m.snapshotMu.Lock()
+		for _, sr := range readersToCompact {
+			sr.UnrefLocked()
+			m.checkCleanupEligibilityLocked(sr)
+		}
+		m.snapshotMu.Unlock()
+		return err
+	}
+
+	newReader, err := NewSSTableReader(newFilename)
+	if err != nil {
+		os.Remove(newFilename)
+		m.snapshotMu.Lock()
+		for _, sr := range readersToCompact {
+			sr.UnrefLocked()
+			m.checkCleanupEligibilityLocked(sr)
+		}
+		m.snapshotMu.Unlock()
+		return err
+	}
+
+	newSR := NewSharedReader(newReader, newFilename)
+
+	if m.beforeCompactionPublishHook != nil {
+		m.beforeCompactionPublishHook()
+	}
+
+	// 4. Protected publication under snapshotMu
+	m.snapshotMu.Lock()
+	if m.snapshotPhase >= SnapshotPhaseClosed {
+		m.snapshotMu.Unlock()
+		m.rollbackUnpublishedReader(newSR)
+		m.snapshotMu.Lock()
+		for _, sr := range readersToCompact {
+			sr.UnrefLocked()
+			m.checkCleanupEligibilityLocked(sr)
+		}
+		m.snapshotMu.Unlock()
+		return errors.New("compaction aborted: engine is closed")
+	}
+
+	// Validate that readersToCompact still forms a contiguous prefix of m.currentSnapshot.readers
+	currSnap := m.currentSnapshot
+	if currSnap == nil || len(currSnap.readers) < len(readersToCompact) {
+		m.snapshotMu.Unlock()
+		m.rollbackUnpublishedReader(newSR)
+		m.snapshotMu.Lock()
+		for _, sr := range readersToCompact {
+			sr.UnrefLocked()
+			m.checkCleanupEligibilityLocked(sr)
+		}
+		m.snapshotMu.Unlock()
+		return errors.New("compaction input validation failed: snapshot changed")
+	}
+
+	for i := range readersToCompact {
+		if currSnap.readers[i] != readersToCompact[i] {
+			m.snapshotMu.Unlock()
+			m.rollbackUnpublishedReader(newSR)
+			m.snapshotMu.Lock()
+			for _, sr := range readersToCompact {
+				sr.UnrefLocked()
+				m.checkCleanupEligibilityLocked(sr)
+			}
+			m.snapshotMu.Unlock()
+			return fmt.Errorf("compaction input reader mismatch at index %d", i)
+		}
+	}
+
+	// Reconstruct new reader slice: [newSR, concurrentFlushes...]
+	concurrentFlushes := currSnap.readers[len(readersToCompact):]
+	var newReaders []*SharedReader
+	if newSR != nil {
+		newReaders = append(newReaders, newSR)
+		newSR.SetState(SharedReaderActive)
+	}
+	for _, sr := range concurrentFlushes {
+		sr.Ref()
+		newReaders = append(newReaders, sr)
+	}
+
+	// Publish new snapshot and retire old snapshot
+	newSnap := &ReaderSnapshot{
+		id:      atomic.AddUint64(&m.snapshotSeq, 1),
+		readers: newReaders,
+	}
+	newSnap.SetState(SnapshotPublished)
+	m.currentSnapshot = newSnap
+
+	m.retireSnapshotLocked(currSnap)
+
+	// Mark superseded input readers obsolete
+	for _, sr := range readersToCompact {
+		sr.MarkObsoleteLocked()
+		sr.UnrefLocked() // Drop compaction lease
+		m.checkCleanupEligibilityLocked(sr)
+	}
+
+	m.snapshotMu.Unlock()
+
+	// Trigger asynchronous cleanup for any now-eligible obsolete readers
+	go m.drainPendingCleanups()
 
 	return nil
 }

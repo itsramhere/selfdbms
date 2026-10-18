@@ -30,7 +30,7 @@ const (
 	SyncModeApproachA SyncMode = iota
 
 	// SyncModeApproachB represents atomic pointer reader snapshot swap (Approach B).
-	// NOTE: NOT YET IMPLEMENTED. Explicit requests return ErrUnsupportedSyncMode.
+	// Readers acquire short-lived immutable reader-set snapshots without holding Manager.Mu across disk I/O.
 	SyncModeApproachB
 )
 
@@ -86,15 +86,28 @@ type Manager struct {
 	beforeFlushPublishHook      func()
 	flushBuildHook              func() error
 	walRotationHook             func() error
+
+	// Approach B Snapshot Fields
+	snapshotMu                sync.Mutex
+	snapshotPhase             SnapshotShutdownPhase
+	snapshotAdmissionClosed   atomic.Bool
+	snapshotSeq               uint64
+	currentSnapshot           *ReaderSnapshot
+	retiredSnapshots          []*ReaderSnapshot
+	snapshotDrainCond         *sync.Cond
+	pendingCleanupReaders     []*SharedReader
+	pendingShutdownCloses     []*SharedReader
+	hasPendingCleanups        bool
+	cleanupMu                 sync.Mutex
+	compactionAdmissionClosed bool
+	closeDone                 chan struct{}
+	closeErr                  error
 }
 
 var sstableFileSeq atomic.Uint64
 
 func CreateManagerWithConfig(cfg Config) (*Manager, error) {
-	if cfg.Mode == SyncModeApproachB {
-		return nil, ErrUnsupportedSyncMode
-	}
-	if cfg.Mode != SyncModeApproachA {
+	if cfg.Mode != SyncModeApproachA && cfg.Mode != SyncModeApproachB {
 		return nil, fmt.Errorf("unknown synchronization mode: %v", cfg.Mode)
 	}
 
@@ -107,6 +120,9 @@ func CreateManagerWithConfig(cfg Config) (*Manager, error) {
 	man.syncMode = cfg.Mode
 	man.CurrentSeqNo.Store(0)
 	man.Mu = &sync.RWMutex{}
+	man.closeDone = make(chan struct{})
+	man.snapshotDrainCond = sync.NewCond(&man.snapshotMu)
+	man.snapshotPhase = SnapshotPhaseOpen
 
 	sk := &SkipList{
 		headNode:     &Node{Forward: make([]*Node, 32)},
@@ -121,6 +137,14 @@ func CreateManagerWithConfig(cfg Config) (*Manager, error) {
 
 	man.Log, _ = NewWal(walPath)
 	man.initFlushWorkerLocked()
+
+	if cfg.Mode == SyncModeApproachB {
+		man.currentSnapshot = &ReaderSnapshot{
+			id: atomic.AddUint64(&man.snapshotSeq, 1),
+		}
+		man.currentSnapshot.SetState(SnapshotPublished)
+	}
+
 	return man, nil
 }
 
@@ -143,6 +167,10 @@ func (m *Manager) Begin() *Transaction {
 }
 
 func (m *Manager) Get(key string, readTs uint64) (string, error) {
+	if m.syncMode == SyncModeApproachB {
+		return m.getApproachB(key, readTs)
+	}
+
 	byteKey := []byte(key)
 	m.Mu.RLock()
 	defer m.Mu.RUnlock()
@@ -206,6 +234,10 @@ func (m *Manager) Get(key string, readTs uint64) (string, error) {
 }
 
 func (m *Manager) Close() error {
+	if m.syncMode == SyncModeApproachB {
+		return m.closeApproachB()
+	}
+
 	m.compactionMu.Lock()
 	defer m.compactionMu.Unlock()
 
@@ -285,17 +317,40 @@ func (m *Manager) latestValueLocked(userKey []byte) (uint64, error) {
 	// To prevent missed write-write conflicts if SSTables are reordered (e.g. during
 	// compaction publication, generation reorganization, or concurrent flushes),
 	// examine all active SSTables and track the greatest committed sequence number.
-	for _, reader := range m.ActiveSSreaders {
-		seq, err := reader.LatestValue(userKey)
-		if err == nil {
-			if !found || seq > maxSeq {
-				maxSeq = seq
-				found = true
+	if m.syncMode == SyncModeApproachB {
+		snap, err := m.acquireSnapshotLocked()
+		if err == nil && snap != nil {
+			defer m.ReleaseSnapshot(snap)
+			for _, sr := range snap.Readers() {
+				if sr == nil || sr.Reader == nil {
+					continue
+				}
+				seq, err := sr.Reader.LatestValue(userKey)
+				if err == nil {
+					if !found || seq > maxSeq {
+						maxSeq = seq
+						found = true
+					}
+				} else if errors.Is(err, ErrNotFound) {
+					continue
+				} else {
+					return 0, err
+				}
 			}
-		} else if errors.Is(err, ErrNotFound) {
-			continue
-		} else {
-			return 0, err
+		}
+	} else {
+		for _, reader := range m.ActiveSSreaders {
+			seq, err := reader.LatestValue(userKey)
+			if err == nil {
+				if !found || seq > maxSeq {
+					maxSeq = seq
+					found = true
+				}
+			} else if errors.Is(err, ErrNotFound) {
+				continue
+			} else {
+				return 0, err
+			}
 		}
 	}
 
@@ -562,8 +617,21 @@ func (m *Manager) flushToDisk(mem *Memtable) {
 		return
 	}
 
-	m.ActiveSSreaders = append(m.ActiveSSreaders, reader)
+	if m.syncMode == SyncModeApproachB {
+		sr := NewSharedReader(reader, filename)
+		if err := m.publishFlushLockedApproachB(mem, sr); err != nil {
+			if m.flushErr == nil {
+				m.flushErr = err
+			}
+		}
+		return
+	}
 
+	m.ActiveSSreaders = append(m.ActiveSSreaders, reader)
+	m.removeFrozenMemtableLocked(mem)
+}
+
+func (m *Manager) removeFrozenMemtableLocked(mem *Memtable) {
 	for i, f := range m.Frozenmem {
 		if f == mem {
 			m.Frozenmem = append(m.Frozenmem[:i], m.Frozenmem[i+1:]...)

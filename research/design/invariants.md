@@ -169,48 +169,53 @@ Under Approach A, synchronization relies entirely on `Manager.Mu (*sync.RWMutex)
 
 ### INV-SNAP-1: Reader-Set Snapshot Immutability (Approach B)
 - **Statement**: Once published to `Manager.currentSnapshot`, the constituent `SharedReader` slice of a `ReaderSnapshot` is strictly immutable. No goroutine or compaction routine may append, reorder, replace, or mutate readers in an active or retired snapshot. Modifications are published exclusively by creating a completely new `ReaderSnapshot` instance.
-- **Current Status**: **Adopted and Formalized (Phase I2, Decision D-020)**.
-- **Evidence / Justification**: Specified in `research/design/alternatives.md`. Scaffolding types declared in `lsmengine/snapshot.go`. Verified by `TestSnapshotState_String` and `TestApproachB_ScaffoldingEnforcesUnsupportedMode`.
+- **Current Status**: **Fully Implemented and Empirically Verified (Phase I3, Decision D-020)**.
+- **Evidence / Justification**: Implemented in `lsmengine/snapshot.go`. Verified by `TestSnapshotConstruction_ReaderImmutability` and `TestSnapshotConstruction_OrderPreservation`.
 
 ### INV-SNAP-2: Pre-Release Snapshot Pinning Atomicity (Approach B)
 - **Statement**: A reader must acquire an active pin on the published snapshot before releasing the lock protecting that snapshot (`snapshotMu` or `Manager.Mu.RLock()`). Readers holding a valid pin are guaranteed that no constituent reader will be closed, invalidated, or unlinked during disk I/O execution.
-- **Current Status**: **Adopted and Formalized (Phase I2, Decision D-021)**.
-- **Evidence / Justification**: Specified in `research/design/alternatives.md`. Enforces leaf-lock acquisition and zero-lock disk I/O.
+- **Current Status**: **Fully Implemented and Empirically Verified (Phase I3, Decision D-021)**.
+- **Evidence / Justification**: Implemented in `lsmengine/snapshot.go`. Verified by `TestSnapshotPinning_PinBeforeLockRelease` and `TestSnapshotPinning_ConcurrentPinUnpinAtomicity` (2000 pin/unpin cycles under race detector).
 
 ### INV-SNAP-3: Two-Tier Independent SSTable Handle Lifetime (Approach B)
 - **Statement**: An `SSTableReader` OS file descriptor is closed and unlinked if and only if its global `SharedReader.refCount` reaches zero AND it is marked `obsolete`. Retiring or draining a snapshot that shares uncompacted readers with other published or pinned snapshots shall never close or unlink surviving readers.
-- **Current Status**: **Adopted and Formalized (Phase I2, Decision D-020)**.
-- **Evidence / Justification**: Specified in `research/design/alternatives.md`. Scaffolding declared in `lsmengine/snapshot.go`. Verified by `TestSharedReader_RefAndCount`.
+- **Current Status**: **Fully Implemented and Empirically Verified (Phase I3, Decision D-020)**.
+- **Evidence / Justification**: Implemented in `lsmengine/snapshot.go`. Verified by `TestSnapshotConstruction_SharedUnchangedSSTables`, `TestSnapshotShutdown_CategoryA_CompactionObsoleteReclamation`, and `TestSnapshotShutdown_CategoryB_RetiredSnapshotDrainedReclamation`.
 
 ### INV-SNAP-4: Snapshot Pin Underflow Invariant (Approach B)
 - **Statement**: The pin count on any snapshot must be monotonically non-negative. Decrementing a snapshot pin count when `pins <= 0` must trigger an immediate fatal panic (`FATAL: snapshot pin underflow detected`), preventing silent corruption of reader lifecycle state.
-- **Current Status**: **Adopted and Formalized (Phase I2, Decision D-021)**.
-- **Evidence / Justification**: Specified in `research/design/alternatives.md`.
+- **Current Status**: **Fully Implemented and Empirically Verified (Phase I3, Decision D-021)**.
+- **Evidence / Justification**: Implemented in `lsmengine/snapshot.go` (`ReleasePinLocked`). Verified by `TestSnapshotPinning_UnderflowPanic`.
 
 ### INV-SNAP-5: Coupled Memory-Tier Read and Disk Snapshot Pinning (Approach B)
 - **Statement**: A point read query must inspect the active mutable Memtable and all frozen Memtables, and acquire its pin on the active disk snapshot within the same atomic `Manager.Mu.RLock()` critical section. No flush publication or Memtable retirement may interleave between memory-tier inspection and disk snapshot acquisition, guaranteeing continuous key visibility (`INV-HANDOFF-1`).
-- **Current Status**: **Adopted and Formalized (Phase I2, Decision D-022)**.
-- **Evidence / Justification**: Specified in `research/design/alternatives.md`. Eliminates the visibility gap between memory tiers and disk tiers.
+- **Current Status**: **Fully Implemented and Empirically Verified (Phase I3, Decision D-022)**.
+- **Evidence / Justification**: Implemented in `lsmengine/snapshot.go` (`getApproachB`). Verified by `TestSnapshotPublication_ReadsCrossingSwap` and `TestApproachEquivalence_SingleKeyCRUD`.
 
 ### INV-SNAP-6: Obsolete Marking and Exactly-Once Physical Cleanup (Approach B)
 - **Statement**: An SSTable reader may only be marked `obsolete = true` after a replacement snapshot incorporating its replacement has committed. An obsolete reader shall be scheduled for physical cleanup exactly once when its global `refCount` reaches zero under `m.snapshotMu`. Under Windows NTFS, the OS file descriptor must be verified closed before invoking `os.Remove(Path)`. During engine shutdown (`Manager.Close`), valid non-obsolete readers shall have their handles closed (`SharedReaderClosedValid`), while their physical files are strictly preserved on disk for subsequent engine startup and recovery.
-- **Current Status**: **Adopted and Formalized (Sub-phase I2.6, Decisions D-023, D-024)**.
-- **Evidence / Justification**: Specified in `research/design/alternatives.md`. Eliminates premature file unlinking, Windows `ERROR_SHARING_VIOLATION`, and unintended SSTable deletion on shutdown.
+- **Current Status**: **Fully Implemented and Empirically Verified (Phase I3, Decisions D-023, D-024)**.
+- **Evidence / Justification**: Implemented in `lsmengine/snapshot.go` and `lsmengine/compaction.go`. Verified by `TestSnapshotPublication_ObsoleteMarking`, `TestSnapshotShutdown_CategoryC_SurvivingTablesPreservedOnDisk`, and `TestSnapshotShutdown_WindowsNTFSSafety`.
 
 ### INV-SNAP-7: Coordinated Flush Publication During EngineClosing (Approach B)
 - **Statement**: In Approach B, background flush tasks admitted while `m.state == EngineOpen` prior to `flushQueueClosed = true` hold valid task-admission tokens and are strictly permitted to publish completed SSTables and remove corresponding frozen Memtables during `m.state == EngineClosing`. Publication is rejected strictly when `m.state == EngineClosed`. This coordinates with `INV-LIFETIME-5` to ensure admitted Memtables drain and publish without data loss before final teardown.
-- **Current Status**: **Adopted and Formalized (Sub-phase I2.7, Decision D-025)**.
-- **Evidence / Justification**: Specified in `research/design/alternatives.md`. Eliminates premature rejection of admitted flushes during shutdown drain.
+- **Current Status**: **Fully Implemented and Empirically Verified (Phase I3, Decision D-025)**.
+- **Evidence / Justification**: Implemented in `lsmengine/snapshot.go` (`publishFlushLockedApproachB`). Verified by `TestSnapshotShutdown_CategoryD_ShutdownWaitsForPinnedReaders`.
 
 ### INV-SNAP-8: Concurrent Close Idempotency & Unified Teardown Barrier (Approach B)
 - **Statement**: Exactly one caller initiates and executes engine shutdown teardown. Concurrent `Close()` callers wait outside all locks until teardown completely finishes, holding zero mutexes needed by background workers, pin releases, or file cleanup routines. All callers observe the identical final shutdown error (`m.closeErr`). No caller returns successful completion before physical cleanup and handle teardown finishes.
-- **Current Status**: **Adopted and Formalized (Sub-phase CP2b-V, Decision D-027)**.
-- **Evidence / Justification**: Specified in `research/design/alternatives.md` Section 6 via non-mutex channel barrier `m.closeDone`. Eliminates premature `ErrClosed` return while teardown is in progress, guarantees exactly-once cleanup, and preserves Approach A contract.
+- **Current Status**: **Fully Implemented and Empirically Verified (Phase I3, Decision D-027)**.
+- **Evidence / Justification**: Implemented in `lsmengine/snapshot.go` (`closeApproachB`) via `closeDone` channel barrier. Verified by `TestSnapshotShutdown_ConcurrentClose` (10 concurrent goroutines).
 
 ### INV-SNAP-9: Unpublished SSTable Discard & Rollback Isolation (Approach B)
 - **Statement**: A newly constructed `SharedReader` begins in state `SharedReaderUnpublished` with initial `refCount = 1` owned exclusively by the builder goroutine. If snapshot publication fails, the builder relinquishes ownership (`refCount = 0`), transitioning the reader via Case C to `SharedReaderClosing` without ever marking it obsolete. A failed or abandoned unpublished table shall never be observed by queries, shall never enter published snapshot reader sets, and must have its OS file handle closed before file unlinking on Windows NTFS.
-- **Current Status**: **Adopted and Formalized (Sub-phase CP2b-V, Decisions D-026, D-029)**.
-- **Evidence / Justification**: Specified in `research/design/alternatives.md` Section 3.4. Scaffolding enum `SharedReaderUnpublished` declared in `lsmengine/snapshot.go`. Verified by `TestSharedReaderState_String` and `TestSharedReader_RefAndCount`. Eliminates file descriptor and disk space leaks upon failed flushes or compactions.
+- **Current Status**: **Fully Implemented and Empirically Verified (Phase I3, Decisions D-026, D-029)**.
+- **Evidence / Justification**: Implemented in `lsmengine/snapshot.go` (`rollbackUnpublishedReader`). Verified by `TestSnapshotConstruction_BuilderOwnershipAndRollback` and `TestSnapshotConstruction_PrivateUntilPublished`.
+
+### INV-SNAP-10: Conflict Detection Snapshot Pinning & Acyclic Lock Hierarchy (Approach B)
+- **Statement**: During transaction commit conflict validation (`Transaction.Commit` calling `latestValueLocked`), cross-tier conflict inspection against on-disk SSTables under `SyncModeApproachB` pins the active snapshot via `acquireSnapshotLocked()` and unpins via `ReleaseSnapshot(snap)`. The Level 2 `Manager.Mu` held by the caller transitions cleanly to Level 3 `m.snapshotMu` during pin acquisition, and constituent SSTables are pinned against concurrent unlinking during index seek.
+- **Current Status**: **Fully Implemented and Empirically Verified (Phase I3, Decision D-030)**.
+- **Evidence / Justification**: Implemented in `lsmengine/manager.go` (`latestValueLocked`). Verified by `TestApproachEquivalence_ConcurrentWorkload` across high concurrency writers and readers under WSL2 with race detector.
 
 
 
