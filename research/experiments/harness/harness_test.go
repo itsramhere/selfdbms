@@ -1,8 +1,15 @@
 package harness
 
 import (
+	"errors"
+	"fmt"
+	"math"
 	"os"
+	"path/filepath"
 	"testing"
+	"time"
+
+	"owndbms/lsmengine"
 )
 
 func dummyEnv(dataDir string) EnvironmentInfo {
@@ -29,9 +36,15 @@ func TestLatencyRecorder_SingleSample(t *testing.T) {
 	if stats.Count != 1 {
 		t.Fatalf("expected count 1, got %d", stats.Count)
 	}
-	if stats.MinNanos != 5000 || stats.MaxNanos != 5000 || stats.P50Nanos != 5000 || stats.P95Nanos != 5000 || stats.P99Nanos != 5000 {
-		t.Fatalf("expected all percentiles 5000ns, got min=%d, max=%d, p50=%d, p95=%d, p99=%d",
-			stats.MinNanos, stats.MaxNanos, stats.P50Nanos, stats.P95Nanos, stats.P99Nanos)
+	if stats.MinNanos != 5000 || stats.MaxNanos != 5000 || stats.P50Nanos != 5000 {
+		t.Fatalf("expected min=5000, max=5000, p50=5000, got min=%d, max=%d, p50=%d",
+			stats.MinNanos, stats.MaxNanos, stats.P50Nanos)
+	}
+	if stats.P95Nanos != nil {
+		t.Fatalf("expected p95 to be nil for sample size < 20, got %v", *stats.P95Nanos)
+	}
+	if stats.P99Nanos != nil {
+		t.Fatalf("expected p99 to be nil for sample size < 100, got %v", *stats.P99Nanos)
 	}
 	if stats.P999Nanos != nil {
 		t.Fatalf("expected p999 to be nil for sample size < 1000, got %v", *stats.P999Nanos)
@@ -66,11 +79,11 @@ func TestLatencyRecorder_PartiallyFilledBuffer(t *testing.T) {
 	if stats.P50Nanos != 50000 { // nearest rank 50
 		t.Fatalf("expected p50 50000ns, got %d", stats.P50Nanos)
 	}
-	if stats.P95Nanos != 95000 { // nearest rank 95
-		t.Fatalf("expected p95 95000ns, got %d", stats.P95Nanos)
+	if stats.P95Nanos == nil || *stats.P95Nanos != 95000 { // nearest rank 95
+		t.Fatalf("expected p95 95000ns, got %v", stats.P95Nanos)
 	}
-	if stats.P99Nanos != 99000 { // nearest rank 99
-		t.Fatalf("expected p99 99000ns, got %d", stats.P99Nanos)
+	if stats.P99Nanos == nil || *stats.P99Nanos != 99000 { // nearest rank 99
+		t.Fatalf("expected p99 99000ns, got %v", stats.P99Nanos)
 	}
 	if stats.P999Nanos != nil {
 		t.Fatalf("expected p999 to be nil when n < 1000, got %v", *stats.P999Nanos)
@@ -197,9 +210,10 @@ func TestHarness_WorkloadB_MixedFlushSmoke(t *testing.T) {
 			cfg.DataDir = dir
 			cfg.InitialSSTableCount = 2
 			cfg.InitialKeysPerSSTable = 200
+			cfg.KeyspaceCardinality = 400
 			cfg.WriterConcurrency = 2
-			cfg.MemtableThresholdBytes = 8 * 1024 // 8KB threshold to quickly force flushes within 400ms test
-			cfg.MeasurementDurationMs = 500
+			cfg.MemtableThresholdBytes = 512 // 512B threshold to quickly force flushes within short test
+			cfg.MeasurementDurationMs = 800
 			cfg.WarmupDurationMs = 50
 
 			res, err := RunTrial(cfg, "test_rev", dummyEnv(dir))
@@ -214,7 +228,7 @@ func TestHarness_WorkloadB_MixedFlushSmoke(t *testing.T) {
 				t.Fatalf("expected non-zero writes, got 0")
 			}
 			if res.LSMDiagnostics.MeasuredFlushes == 0 {
-				t.Fatalf("expected measured flushes to be >= 1 under 16KB threshold, got 0")
+				t.Fatalf("expected measured flushes to be >= 1 under 512B threshold, got 0")
 			}
 		})
 	}
@@ -229,6 +243,7 @@ func TestHarness_WorkloadC_CompactionSmoke(t *testing.T) {
 			cfg.DataDir = dir
 			cfg.InitialSSTableCount = 3
 			cfg.InitialKeysPerSSTable = 100
+			cfg.KeyspaceCardinality = 300
 			cfg.WriterConcurrency = 1
 			cfg.MemtableThresholdBytes = 16 * 1024
 			cfg.CompactionTriggerIntervalMs = 100
@@ -265,10 +280,11 @@ func TestHarness_WorkloadD_ReaderChurnSmoke(t *testing.T) {
 			cfg.DataDir = dir
 			cfg.InitialSSTableCount = 3
 			cfg.InitialKeysPerSSTable = 100
+			cfg.KeyspaceCardinality = 300
 			cfg.WriterConcurrency = 3
-			cfg.MemtableThresholdBytes = 8 * 1024
+			cfg.MemtableThresholdBytes = 512
 			cfg.CompactionTriggerIntervalMs = 100
-			cfg.MeasurementDurationMs = 600
+			cfg.MeasurementDurationMs = 800
 			cfg.WarmupDurationMs = 50
 
 			res, err := RunTrial(cfg, "test_rev", dummyEnv(dir))
@@ -344,4 +360,168 @@ func TestSaveAndLoadResultJSON(t *testing.T) {
 	if _, err := os.Stat(filePath); err != nil {
 		t.Fatalf("file not found after SaveResultJSON: %v", err)
 	}
+}
+
+func TestSampleSufficiency_Rules(t *testing.T) {
+	thresholds := []struct {
+		n       int
+		wantP95 bool
+		wantP99 bool
+		want999 bool
+	}{
+		{n: 1, wantP95: false, wantP99: false, want999: false},
+		{n: 19, wantP95: false, wantP99: false, want999: false},
+		{n: 20, wantP95: true, wantP99: false, want999: false},
+		{n: 99, wantP95: true, wantP99: false, want999: false},
+		{n: 100, wantP95: true, wantP99: true, want999: false},
+		{n: 999, wantP95: true, wantP99: true, want999: false},
+		{n: 1000, wantP95: true, wantP99: true, want999: true},
+	}
+
+	for _, tc := range thresholds {
+		t.Run(fmt.Sprintf("N=%d", tc.n), func(t *testing.T) {
+			rec := NewLatencyRecorder(tc.n + 10)
+			for i := 1; i <= tc.n; i++ {
+				rec.RecordNanos(int64(i * 100))
+			}
+			stats := rec.Snapshot()
+			if stats.Count != int64(tc.n) {
+				t.Fatalf("expected count %d, got %d", tc.n, stats.Count)
+			}
+			if stats.P50Nanos <= 0 {
+				t.Fatalf("expected positive p50, got %d", stats.P50Nanos)
+			}
+			if (stats.P95Nanos != nil) != tc.wantP95 {
+				t.Fatalf("N=%d: wantP95=%v, got non-nil=%v", tc.n, tc.wantP95, stats.P95Nanos != nil)
+			}
+			if (stats.P99Nanos != nil) != tc.wantP99 {
+				t.Fatalf("N=%d: wantP99=%v, got non-nil=%v", tc.n, tc.wantP99, stats.P99Nanos != nil)
+			}
+			if (stats.P999Nanos != nil) != tc.want999 {
+				t.Fatalf("N=%d: want999=%v, got non-nil=%v", tc.n, tc.want999, stats.P999Nanos != nil)
+			}
+		})
+	}
+}
+
+func TestKeySampler_HitRatioConvergence(t *testing.T) {
+	sampler := NewKeySampler(42, 10000, 0.95, "uniform", 0.99)
+	n := 100000
+	hits := 0
+	for i := 0; i < n; i++ {
+		_, hit := sampler.SampleKey()
+		if hit {
+			hits++
+		}
+	}
+	hitRatio := float64(hits) / float64(n)
+	if hitRatio < 0.945 || hitRatio > 0.955 {
+		t.Fatalf("expected hit ratio near 0.95 (0.945-0.955), got %.4f (%d/%d)", hitRatio, hits, n)
+	}
+}
+
+func TestKeySampler_IntendedMissesAbsent(t *testing.T) {
+	dir := t.TempDir()
+	manCfg := lsmengine.Config{
+		Mode:                   lsmengine.SyncModeApproachA,
+		WalPath:                filepath.Join(dir, "wal.log"),
+		DataDir:                dir,
+		MemtableThresholdBytes: 64 * 1024 * 1024,
+	}
+	man, err := lsmengine.CreateManagerWithConfig(manCfg)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+	defer man.Close()
+
+	// Populate keys 0..999
+	cardinality := 1000
+	for i := 0; i < cardinality; i++ {
+		tx := man.Begin()
+		tx.Put(FormatKey(i), FormatVal(i, 64))
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit failed: %v", err)
+		}
+	}
+
+	sampler := NewKeySampler(12345, cardinality, 0.50, "uniform", 0.99)
+	for i := 0; i < 2000; i++ {
+		key, expectHit := sampler.SampleKey()
+		val, err := man.Get(key, math.MaxUint64)
+		if expectHit {
+			if err != nil {
+				t.Fatalf("expected hit for %s, got error: %v", key, err)
+			}
+			if len(val) == 0 {
+				t.Fatalf("expected non-empty val for %s", key)
+			}
+		} else {
+			if !errors.Is(err, lsmengine.ErrNotFound) {
+				t.Fatalf("expected ErrNotFound for absent key %s, got: val=%q err=%v", key, val, err)
+			}
+		}
+	}
+}
+
+func TestWorkloadE_100PercentMemtableHits(t *testing.T) {
+	modes := []string{"ApproachA_RWMutexBaseline", "ApproachB_ReaderSnapshot"}
+	for _, mode := range modes {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := DefaultTrialConfig(WorkloadE_NegativeControlMemtable, mode, 2)
+			cfg.DataDir = dir
+			cfg.InitialSSTableCount = 0
+			cfg.KeyspaceCardinality = 2000
+			cfg.TargetReadHitRatio = 1.0
+			cfg.WriterConcurrency = 1
+			cfg.MemtableThresholdBytes = 64 * 1024 * 1024
+			cfg.MeasurementDurationMs = 400
+			cfg.WarmupDurationMs = 50
+
+			res, err := RunTrial(cfg, "test_rev", dummyEnv(dir))
+			if err != nil {
+				t.Fatalf("RunTrial failed for %s: %v", mode, err)
+			}
+
+			if res.Status != "SUCCESS" {
+				t.Fatalf("expected SUCCESS, got %s", res.Status)
+			}
+			if res.Operations.ValidationErrorCount != 0 {
+				t.Fatalf("expected 0 validation errors, got %d", res.Operations.ValidationErrorCount)
+			}
+			if res.Operations.ActualMissCount != 0 {
+				t.Fatalf("expected 0 misses under 100%% target, got %d", res.Operations.ActualMissCount)
+			}
+			if res.Operations.ActualHitCount != res.Operations.ReadOpsCompleted {
+				t.Fatalf("expected actual hits (%d) == read ops completed (%d)",
+					res.Operations.ActualHitCount, res.Operations.ReadOpsCompleted)
+			}
+			if res.Operations.ActualMemtableHitCount != res.Operations.ReadOpsCompleted {
+				t.Fatalf("expected memtable hits (%d) == read ops completed (%d)",
+					res.Operations.ActualMemtableHitCount, res.Operations.ReadOpsCompleted)
+			}
+			if res.Operations.ActualSSTableHitCount != 0 {
+				t.Fatalf("expected 0 SSTable hits, got %d", res.Operations.ActualSSTableHitCount)
+			}
+			if res.LSMDiagnostics.MeasuredSSTablePointReads != 0 {
+				t.Fatalf("expected 0 measured SSTable reads, got %d", res.LSMDiagnostics.MeasuredSSTablePointReads)
+			}
+			if res.LSMDiagnostics.MeasuredMemtablePointReads != uint64(res.Operations.ReadOpsCompleted) {
+				t.Fatalf("expected LSM memtable reads (%d) == read ops completed (%d)",
+					res.LSMDiagnostics.MeasuredMemtablePointReads, res.Operations.ReadOpsCompleted)
+			}
+		})
+	}
+}
+
+func TestTimerOverheadCharacterization(t *testing.T) {
+	const n = 100000
+	t0 := time.Now()
+	for i := 0; i < n; i++ {
+		start := NowPrecision()
+		_ = SincePrecisionNanos(start)
+	}
+	elapsed := time.Since(t0)
+	meanNanos := float64(elapsed.Nanoseconds()) / float64(n)
+	t.Logf("Timer overhead characterization: N=%d, total=%v, mean=%.2f ns/call", n, elapsed, meanNanos)
 }

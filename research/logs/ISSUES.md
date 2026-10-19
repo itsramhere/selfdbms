@@ -514,6 +514,33 @@ Format:
 - **Status**: Fixed (CP4-V.2, Decision D-039).
 - **Commit**: `HEAD`.
 
+---
+
+### E-018: Keyspace Cardinality Mismatch in Fixture Population Causing Artificial Read Misses (76% vs 95% Target, 20% vs 100% Negative Control)
+
+- **ID**: `E-018`
+- **Detected**: 2026-10-19, during external review of Checkpoint CP4-V
+- **Sub-phase**: I4.8.1 (Benchmark Workload Hit-Rate Reconciliation)
+- **Severity**: Benchmark Workload Validity Defect (P1)
+- **Symptom**: Preliminary smoke data exhibited read hit rates of ~76–77% on SSTable-oriented workloads (Workloads A–D) despite a declared `TargetReadHitRatio = 0.95` (95%), and ~20–21% on Negative Control (Workload E) despite a nominal 100% target hit rate.
+- **Minimal Reproduction**:
+  ```powershell
+  go test -v ./research/experiments/harness -run TestKeySampler_HitRatioConvergence
+  ```
+- **Root Cause**:
+  1. *SSTable Workloads (A–D)*: `runner.go` fixture setup populated `InitialSSTableCount * InitialKeysPerSSTable = 4 * 2000 = 8000` keys, but `TrialConfig.KeyspaceCardinality` was 10,000. `KeySampler.SampleKey()` sampled intended hits from the entire keyspace `[0, KeyspaceCardinality-1]`. Because keys `8000..9999` (20% of the keyspace) were never inserted, 20% of intended hits returned `ErrNotFound`: $0.95 \times (8000/10000) = 76.0\%$, producing the observed 76–77% rate.
+  2. *Negative Control (Workload E)*: Fixture setup populated only 2,000 keys into `Memtable`, while `KeyspaceCardinality` was 10,000 and `TargetReadHitRatio` was 0.95: $0.95 \times (2000/10000) = 19.0\%$, producing the observed 20–21% rate.
+- **Fix**:
+  1. Updated fixture setup in `research/experiments/harness/runner.go` to dynamically partition the entire `KeyspaceCardinality` across `InitialSSTableCount` tables: `keysPerTable := (KeyspaceCardinality + InitialSSTableCount - 1) / InitialSSTableCount`.
+  2. Set `TargetReadHitRatio = 1.0` for Workload E with 100% Memtable population of all declared keys.
+  3. Added 9 explicit operational accounting counters to `OperationCounts` and JSON schemas: `read_ops_attempted`, `read_ops_completed`, `expected_hit_count`, `expected_miss_count`, `actual_hit_count`, `actual_miss_count`, `actual_memtable_hit_count`, `actual_sstable_hit_count`, and `validation_error_count`.
+  4. Dynamic memtable threshold activation: Manager is initialized with a large threshold during fixture setup to prevent premature background flushes from fragmenting initial tables, and `man.SetMemtableThresholdBytes(cfg.MemtableThresholdBytes)` is called before warmup/measurement.
+  5. Implemented deterministic verification tests: `TestKeySampler_HitRatioConvergence`, `TestKeySampler_IntendedMissesAbsent`, and `TestWorkloadE_100PercentMemtableHits`.
+- **Validation**: Smoke runs on Windows NTFS and WSL2 native ext4 achieve hit rates between 93.6% and 95.2% on Workloads A–D, exactly 100.0% Memtable hit rate on Workload E, 0 SSTable reads in Workload E, and 0 validation errors across all workloads.
+- **Status**: Fixed & Verified (Sub-phase I4.8.1, Decision D-041).
+- **Commit**: `HEAD`.
+
+
 
 
 

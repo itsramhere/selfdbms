@@ -94,20 +94,32 @@
       "required": [
         "read_ops_attempted",
         "read_ops_completed",
+        "expected_hit_count",
+        "expected_miss_count",
+        "actual_hit_count",
+        "actual_miss_count",
+        "actual_memtable_hit_count",
+        "actual_sstable_hit_count",
         "write_ops_attempted",
         "write_ops_completed",
         "error_ops_count",
         "timeout_ops_count",
-        "validation_errors_count"
+        "validation_error_count"
       ],
       "properties": {
         "read_ops_attempted": { "type": "integer" },
         "read_ops_completed": { "type": "integer" },
+        "expected_hit_count": { "type": "integer" },
+        "expected_miss_count": { "type": "integer" },
+        "actual_hit_count": { "type": "integer" },
+        "actual_miss_count": { "type": "integer" },
+        "actual_memtable_hit_count": { "type": "integer" },
+        "actual_sstable_hit_count": { "type": "integer" },
         "write_ops_attempted": { "type": "integer" },
         "write_ops_completed": { "type": "integer" },
         "error_ops_count": { "type": "integer" },
         "timeout_ops_count": { "type": "integer" },
-        "validation_errors_count": { "type": "integer" }
+        "validation_error_count": { "type": "integer" }
       }
     },
     "throughput": {
@@ -138,8 +150,8 @@
       ],
       "properties": {
         "p50": { "type": "number" },
-        "p95": { "type": "number" },
-        "p99": { "type": "number" },
+        "p95": { "type": ["number", "null"] },
+        "p99": { "type": ["number", "null"] },
         "p999": { "type": ["number", "null"] },
         "max": { "type": "number" },
         "min": { "type": "number" },
@@ -153,8 +165,8 @@
       "type": "object",
       "properties": {
         "p50": { "type": "number" },
-        "p95": { "type": "number" },
-        "p99": { "type": "number" },
+        "p95": { "type": ["number", "null"] },
+        "p99": { "type": ["number", "null"] },
         "p999": { "type": ["number", "null"] },
         "max": { "type": "number" },
         "min": { "type": "number" },

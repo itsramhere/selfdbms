@@ -8,6 +8,12 @@ import (
 )
 
 // LatencyStats encapsulates summary statistics for operation latencies.
+// Sample sufficiency rules:
+// - P50 is reported if sample_count >= 1
+// - P95 is reported (non-nil) if sample_count >= 20
+// - P99 is reported (non-nil) if sample_count >= 100
+// - P999 is reported (non-nil) if sample_count >= 1000
+// Underpowered percentiles are serialized as null.
 type LatencyStats struct {
 	Count         int64   `json:"sample_count"`
 	ZeroCount     int64   `json:"zero_sample_count"`
@@ -16,8 +22,8 @@ type LatencyStats struct {
 	MaxNanos      int64   `json:"max"`
 	MeanNanos     float64 `json:"mean"`
 	P50Nanos      int64   `json:"p50"`
-	P95Nanos      int64   `json:"p95"`
-	P99Nanos      int64   `json:"p99"`
+	P95Nanos      *int64  `json:"p95"`
+	P99Nanos      *int64  `json:"p99"`
 	P999Nanos     *int64  `json:"p999"`
 }
 
@@ -101,8 +107,18 @@ func (lr *LatencyRecorder) Snapshot() LatencyStats {
 	}
 
 	p50 := calcPercentile(0.50)
-	p95 := calcPercentile(0.95)
-	p99 := calcPercentile(0.99)
+
+	var p95 *int64
+	if n >= 20 {
+		val := calcPercentile(0.95)
+		p95 = &val
+	}
+
+	var p99 *int64
+	if n >= 100 {
+		val := calcPercentile(0.99)
+		p99 = &val
+	}
 
 	var p999 *int64
 	if n >= 1000 {

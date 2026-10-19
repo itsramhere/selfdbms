@@ -41,13 +41,19 @@ type TimestampInfo struct {
 
 // OperationCounts tracks attempted and completed operations across all workers.
 type OperationCounts struct {
-	ReadOpsAttempted      int64 `json:"read_ops_attempted"`
-	ReadOpsCompleted      int64 `json:"read_ops_completed"`
-	WriteOpsAttempted     int64 `json:"write_ops_attempted"`
-	WriteOpsCompleted     int64 `json:"write_ops_completed"`
-	ErrorOpsCount         int64 `json:"error_ops_count"`
-	TimeoutOpsCount       int64 `json:"timeout_ops_count"`
-	ValidationErrorsCount int64 `json:"validation_errors_count"`
+	ReadOpsAttempted       int64 `json:"read_ops_attempted"`
+	ReadOpsCompleted       int64 `json:"read_ops_completed"`
+	ExpectedHitCount       int64 `json:"expected_hit_count"`
+	ExpectedMissCount      int64 `json:"expected_miss_count"`
+	ActualHitCount         int64 `json:"actual_hit_count"`
+	ActualMissCount        int64 `json:"actual_miss_count"`
+	ActualMemtableHitCount int64 `json:"actual_memtable_hit_count"`
+	ActualSSTableHitCount  int64 `json:"actual_sstable_hit_count"`
+	WriteOpsAttempted      int64 `json:"write_ops_attempted"`
+	WriteOpsCompleted      int64 `json:"write_ops_completed"`
+	ErrorOpsCount          int64 `json:"error_ops_count"`
+	TimeoutOpsCount        int64 `json:"timeout_ops_count"`
+	ValidationErrorCount   int64 `json:"validation_error_count"`
 }
 
 // ThroughputInfo captures completed operations per second.
@@ -153,11 +159,11 @@ func DefaultTrialConfig(workload WorkloadID, mode string, readers int) TrialConf
 		MeasurementDurationMs:       2000,
 		WarmupDurationMs:            200,
 		CooldownDurationMs:          100,
-		KeySizeBytes:                16,
+		KeySizeBytes:                19,
 		ValSizeBytes:                128,
 		KeyspaceCardinality:         10000,
 		InitialSSTableCount:         4,
-		InitialKeysPerSSTable:       2000,
+		InitialKeysPerSSTable:       2500,
 		ReadDistribution:            "uniform",
 		ZipfS:                       0.99,
 		TargetReadHitRatio:          0.95,
@@ -240,7 +246,7 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 		Mode:                   lsmMode,
 		WalPath:                filepath.Join(cfg.DataDir, "wal.log"),
 		DataDir:                cfg.DataDir,
-		MemtableThresholdBytes: cfg.MemtableThresholdBytes,
+		MemtableThresholdBytes: 64 * 1024 * 1024, // Keep large during fixture setup to prevent premature flushes
 	}
 
 	man, err := lsmengine.CreateManagerWithConfig(manCfg)
@@ -252,25 +258,33 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 	f0, c0, s0, m0 := captureLSMCounts(man)
 	baseSeed := cfg.Seed + int64(cfg.TrialIndex)*10007
 	if cfg.InitialSSTableCount > 0 && cfg.WorkloadID != WorkloadE_NegativeControlMemtable {
+		keysPerTable := cfg.InitialKeysPerSSTable
+		if keysPerTable*cfg.InitialSSTableCount < cfg.KeyspaceCardinality {
+			keysPerTable = (cfg.KeyspaceCardinality + cfg.InitialSSTableCount - 1) / cfg.InitialSSTableCount
+		}
 		currKey := 0
 		for t := 0; t < cfg.InitialSSTableCount; t++ {
 			targetFlushes := man.FlushesCompleted() + 1
-			for k := 0; k < cfg.InitialKeysPerSSTable; k++ {
-				keyStr := FormatKey(currKey)
-				valStr := FormatVal(currKey, cfg.ValSizeBytes)
+			for k := 0; k < keysPerTable; k++ {
+				if currKey >= cfg.KeyspaceCardinality && t == cfg.InitialSSTableCount-1 {
+					break
+				}
+				keyIdx := currKey % cfg.KeyspaceCardinality
+				keyStr := FormatKey(keyIdx)
+				valStr := FormatVal(keyIdx, cfg.ValSizeBytes)
 				tx := man.Begin()
 				tx.Put(keyStr, valStr)
 				if err := tx.Commit(); err != nil {
 					man.Close()
 					return nil, fmt.Errorf("fixture initialization commit failed: %w", err)
 				}
-				currKey = (currKey + 1) % cfg.KeyspaceCardinality
+				currKey++
 			}
 			if err := man.TriggerFlush(); err != nil {
 				man.Close()
 				return nil, fmt.Errorf("fixture flush trigger failed: %w", err)
 			}
-			deadline := time.Now().Add(5 * time.Second)
+			deadline := time.Now().Add(10 * time.Second)
 			for man.FlushesCompleted() < targetFlushes && time.Now().Before(deadline) {
 				time.Sleep(2 * time.Millisecond)
 			}
@@ -281,7 +295,7 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 		}
 	} else if cfg.WorkloadID == WorkloadE_NegativeControlMemtable {
 		// Populate active Memtable directly without flushing
-		for k := 0; k < 2000; k++ {
+		for k := 0; k < cfg.KeyspaceCardinality; k++ {
 			keyStr := FormatKey(k)
 			valStr := FormatVal(k, cfg.ValSizeBytes)
 			tx := man.Begin()
@@ -295,6 +309,9 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 	f1, c1, s1, m1 := captureLSMCounts(man)
 	phaseSetup := makePhaseCounters(f0, c0, s0, m0, f1, c1, s1, m1)
 	initialSSTables := man.ActiveSSTableCount()
+
+	// Apply trial memtable threshold dynamically for warmup and measurement phases
+	man.SetMemtableThresholdBytes(cfg.MemtableThresholdBytes)
 
 	// Phase 2: Warm-up Phase
 	if cfg.WarmupDurationMs > 0 {
@@ -330,6 +347,10 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 	var (
 		readAttempted          atomic.Int64
 		readCompleted          atomic.Int64
+		expectedHit            atomic.Int64
+		expectedMiss           atomic.Int64
+		actualHit              atomic.Int64
+		actualMiss             atomic.Int64
 		writeAttempted         atomic.Int64
 		writeCompleted         atomic.Int64
 		errorOps               atomic.Int64
@@ -357,6 +378,11 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 					return
 				default:
 					key, expectHit := sampler.SampleKey()
+					if expectHit {
+						expectedHit.Add(1)
+					} else {
+						expectedMiss.Add(1)
+					}
 					readAttempted.Add(1)
 					t0 := NowPrecision()
 					val, err := man.Get(key, math.MaxUint64)
@@ -369,11 +395,13 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 
 					if err == nil {
 						readCompleted.Add(1)
-						if !expectHit && len(val) == 0 {
+						actualHit.Add(1)
+						if !expectHit || len(val) == 0 {
 							validationErrs.Add(1)
 						}
 					} else if err == lsmengine.ErrNotFound {
 						readCompleted.Add(1)
+						actualMiss.Add(1)
 						if expectHit {
 							validationErrs.Add(1)
 						}
@@ -516,13 +544,19 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 			TotalDurationMs:       int(measureDuration.Milliseconds()),
 		},
 		Operations: OperationCounts{
-			ReadOpsAttempted:      readAttempted.Load(),
-			ReadOpsCompleted:      readOps,
-			WriteOpsAttempted:     writeAttempted.Load(),
-			WriteOpsCompleted:     writeOps,
-			ErrorOpsCount:         errorOps.Load(),
-			TimeoutOpsCount:       timeoutOps.Load(),
-			ValidationErrorsCount: validationErrs.Load(),
+			ReadOpsAttempted:       readAttempted.Load(),
+			ReadOpsCompleted:       readOps,
+			ExpectedHitCount:       expectedHit.Load(),
+			ExpectedMissCount:      expectedMiss.Load(),
+			ActualHitCount:         actualHit.Load(),
+			ActualMissCount:        actualMiss.Load(),
+			ActualMemtableHitCount: int64(phaseMeasured.DeltaMemtableReads),
+			ActualSSTableHitCount:  int64(phaseMeasured.DeltaSSTableReads),
+			WriteOpsAttempted:      writeAttempted.Load(),
+			WriteOpsCompleted:      writeOps,
+			ErrorOpsCount:          errorOps.Load(),
+			TimeoutOpsCount:        timeoutOps.Load(),
+			ValidationErrorCount:   validationErrs.Load(),
 		},
 		Throughput: ThroughputInfo{
 			ReadOpsPerSec:  float64(readOps) / secs,

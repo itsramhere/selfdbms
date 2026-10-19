@@ -802,3 +802,10 @@ func (m *Manager) ActiveSSTableCount() int {
 	return len(m.ActiveSSreaders)
 }
 
+// SetMemtableThresholdBytes updates the automatic flush threshold dynamically.
+func (m *Manager) SetMemtableThresholdBytes(threshold int) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	m.memtableThresholdBytes = threshold
+}
+

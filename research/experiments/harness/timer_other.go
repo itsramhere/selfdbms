@@ -4,19 +4,21 @@ package harness
 
 import "time"
 
-// PrecisionTime represents a monotonic timestamp.
-type PrecisionTime int64
-
-// NowPrecision returns the current timestamp in nanoseconds.
-func NowPrecision() PrecisionTime {
-	return PrecisionTime(time.Now().UnixNano())
+// PrecisionTime represents a monotonic timestamp backed by Go's monotonic runtime clock.
+type PrecisionTime struct {
+	t time.Time
 }
 
-// SincePrecisionNanos calculates elapsed nanoseconds from start.
+// NowPrecision returns the current monotonic timestamp.
+func NowPrecision() PrecisionTime {
+	return PrecisionTime{t: time.Now()}
+}
+
+// SincePrecisionNanos calculates elapsed monotonic nanoseconds from start.
 func SincePrecisionNanos(start PrecisionTime) int64 {
-	elapsed := time.Now().UnixNano() - int64(start)
-	if elapsed <= 0 {
+	d := time.Since(start.t)
+	if d <= 0 {
 		return 0
 	}
-	return elapsed
+	return d.Nanoseconds()
 }

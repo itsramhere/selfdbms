@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "trial_id": "trial_WORKLOAD_A_READ_ONLY_B_r4_1792347913521354600",
+  "trial_id": "trial_WORKLOAD_A_READ_ONLY_B_r4_1792394647361850600",
   "trial_index": 0,
   "workload_id": "WORKLOAD_A_READ_ONLY",
   "sync_mode": "ApproachB_ReaderSnapshot",
@@ -12,15 +12,15 @@
     "physical_cores": 6,
     "logical_cores": 12,
     "total_ram_bytes": 17179869184,
-    "free_ram_bytes": 17254344,
+    "free_ram_bytes": 18754784,
     "go_version": "go1.26.3",
     "gomaxprocs": 12,
     "filesystem_type": "NTFS",
-    "data_dir_path": "C:\\Users\\ramst\\AppData\\Local\\Temp\\smoke_WORKLOAD_A_READ_ONLY_B_697830465"
+    "data_dir_path": "C:\\Users\\ramst\\AppData\\Local\\Temp\\smoke_WORKLOAD_A_READ_ONLY_B_611359262"
   },
   "config": {
     "schema_version": "1.0.0",
-    "trial_id": "trial_WORKLOAD_A_READ_ONLY_B_r4_1792347913521354600",
+    "trial_id": "trial_WORKLOAD_A_READ_ONLY_B_r4_1792394647361850600",
     "trial_index": 0,
     "workload_id": "WORKLOAD_A_READ_ONLY",
     "sync_mode": "ApproachB_ReaderSnapshot",
@@ -30,50 +30,56 @@
     "measurement_duration_ms": 1500,
     "warmup_duration_ms": 200,
     "cooldown_duration_ms": 100,
-    "key_size_bytes": 16,
+    "key_size_bytes": 19,
     "val_size_bytes": 128,
     "keyspace_cardinality": 10000,
     "initial_sstable_count": 4,
-    "initial_keys_per_sstable": 2000,
+    "initial_keys_per_sstable": 2500,
     "read_distribution": "uniform",
     "zipf_s": 0.99,
     "target_read_hit_ratio": 0.95,
     "memtable_threshold_bytes": 67108864,
-    "data_dir": "C:\\Users\\ramst\\AppData\\Local\\Temp\\smoke_WORKLOAD_A_READ_ONLY_B_697830465",
+    "data_dir": "C:\\Users\\ramst\\AppData\\Local\\Temp\\smoke_WORKLOAD_A_READ_ONLY_B_611359262",
     "wal_sync": true,
     "compaction_trigger_interval_ms": 0
   },
   "timestamps": {
-    "start_iso": "2026-10-18T18:25:29.0595675Z",
-    "finish_iso": "2026-10-18T18:25:30.9373828Z",
+    "start_iso": "2026-10-19T07:24:21.7080317Z",
+    "finish_iso": "2026-10-19T07:24:23.3410383Z",
     "warmup_duration_ms": 200,
     "measurement_duration_ms": 1500,
-    "total_duration_ms": 1877
+    "total_duration_ms": 1633
   },
   "operations": {
-    "read_ops_attempted": 54,
-    "read_ops_completed": 54,
+    "read_ops_attempted": 31,
+    "read_ops_completed": 31,
+    "expected_hit_count": 28,
+    "expected_miss_count": 3,
+    "actual_hit_count": 28,
+    "actual_miss_count": 3,
+    "actual_memtable_hit_count": 0,
+    "actual_sstable_hit_count": 28,
     "write_ops_attempted": 0,
     "write_ops_completed": 0,
     "error_ops_count": 0,
     "timeout_ops_count": 0,
-    "validation_errors_count": 12
+    "validation_error_count": 0
   },
   "throughput": {
-    "read_ops_per_sec": 28.75688614259443,
+    "read_ops_per_sec": 18.983389289424796,
     "write_ops_per_sec": 0,
-    "total_ops_per_sec": 28.75688614259443
+    "total_ops_per_sec": 18.983389289424796
   },
   "latency_read_nanos": {
-    "sample_count": 54,
+    "sample_count": 31,
     "zero_sample_count": 0,
     "overflow_count": 0,
-    "min": 270000,
-    "max": 453417500,
-    "mean": 131923666.66666667,
-    "p50": 8916000,
-    "p95": 394481800,
-    "p99": 453417500,
+    "min": 100600,
+    "max": 588263000,
+    "mean": 204987693.5483871,
+    "p50": 140627500,
+    "p95": 576161200,
+    "p99": null,
     "p999": null
   },
   "latency_write_nanos": {
@@ -84,8 +90,8 @@
     "max": 0,
     "mean": 0,
     "p50": 0,
-    "p95": 0,
-    "p99": 0,
+    "p95": null,
+    "p99": null,
     "p999": null
   },
   "lsm_diagnostics": {
@@ -93,11 +99,11 @@
     "final_sstables": 4,
     "flushes_completed": 4,
     "compactions_completed": 0,
-    "sstable_point_reads": 43,
+    "sstable_point_reads": 34,
     "memtable_point_reads": 0,
     "measured_flushes": 0,
     "measured_compactions": 0,
-    "measured_sstable_point_reads": 37,
+    "measured_sstable_point_reads": 28,
     "measured_memtable_point_reads": 0,
     "snapshot_seq": 5,
     "active_snapshot_pins": 0,
@@ -143,8 +149,8 @@
         "end_compactions": 0,
         "delta_compactions": 0,
         "start_sstable_reads": 6,
-        "end_sstable_reads": 43,
-        "delta_sstable_reads": 37,
+        "end_sstable_reads": 34,
+        "delta_sstable_reads": 28,
         "start_memtable_reads": 0,
         "end_memtable_reads": 0,
         "delta_memtable_reads": 0
@@ -156,8 +162,8 @@
         "start_compactions": 0,
         "end_compactions": 0,
         "delta_compactions": 0,
-        "start_sstable_reads": 43,
-        "end_sstable_reads": 43,
+        "start_sstable_reads": 34,
+        "end_sstable_reads": 34,
         "delta_sstable_reads": 0,
         "start_memtable_reads": 0,
         "end_memtable_reads": 0,
@@ -170,8 +176,8 @@
         "start_compactions": 0,
         "end_compactions": 0,
         "delta_compactions": 0,
-        "start_sstable_reads": 43,
-        "end_sstable_reads": 43,
+        "start_sstable_reads": 34,
+        "end_sstable_reads": 34,
         "delta_sstable_reads": 0,
         "start_memtable_reads": 0,
         "end_memtable_reads": 0,
@@ -180,10 +186,10 @@
     }
   },
   "host_diagnostics": {
-    "heap_alloc_bytes": 8589392,
+    "heap_alloc_bytes": 10663928,
     "heap_sys_bytes": 20643840,
-    "num_gc": 54,
-    "gc_pause_total_ns": 5886700
+    "num_gc": 28,
+    "gc_pause_total_ns": 3265300
   },
   "status": "SUCCESS",
   "exclusion_reason": null

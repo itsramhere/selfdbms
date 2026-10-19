@@ -24,24 +24,31 @@ func init() {
 	atomic.StoreInt64(&qpcFrequency, freq)
 }
 
-// PrecisionTime represents a high-resolution monotonic timestamp.
-type PrecisionTime int64
+// PrecisionTime represents a high-resolution monotonic timestamp backed by Windows QPC.
+type PrecisionTime struct {
+	count int64
+}
 
-// NowPrecision returns the current high-resolution timestamp.
+// NowPrecision returns the current high-resolution monotonic timestamp.
 func NowPrecision() PrecisionTime {
 	var count int64
 	procQPC.Call(uintptr(unsafe.Pointer(&count)))
-	return PrecisionTime(count)
+	return PrecisionTime{count: count}
 }
 
-// SincePrecisionNanos calculates elapsed nanoseconds from start.
+// SincePrecisionNanos calculates elapsed monotonic nanoseconds from start.
 func SincePrecisionNanos(start PrecisionTime) int64 {
 	var count int64
 	procQPC.Call(uintptr(unsafe.Pointer(&count)))
-	elapsedTicks := count - int64(start)
+	elapsedTicks := count - start.count
 	if elapsedTicks <= 0 {
 		return 0
 	}
 	freq := atomic.LoadInt64(&qpcFrequency)
 	return (elapsedTicks * 1_000_000_000) / freq
+}
+
+// QPCFrequencyHz returns the active QueryPerformanceFrequency in Hz.
+func QPCFrequencyHz() int64 {
+	return atomic.LoadInt64(&qpcFrequency)
 }

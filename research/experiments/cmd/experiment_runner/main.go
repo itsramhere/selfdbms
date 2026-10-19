@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"owndbms/research/experiments/harness"
 )
@@ -51,12 +52,19 @@ func main() {
 		outputFlag     = flag.String("output", "", "Output JSON file path")
 		smokeFlag      = flag.Bool("smoke", false, "Execute standard preliminary smoke validation suite")
 		smokeOutputDir = flag.String("smoke-dir", "research/experiments/data/smoke", "Directory to store smoke test results")
+		pilotFlag      = flag.Bool("pilot", false, "Execute official Phase I5 parameter pilot suite (10s duration, 1MB threshold, 500ms compaction)")
+		pilotOutputDir = flag.String("pilot-dir", "research/experiments/data/pilot", "Directory to store pilot test results")
 		gitRevFlag     = flag.String("git-rev", "0b0021ef3a16c918e19812d8c8322015755396bd", "Git revision identifier")
 	)
 	flag.Parse()
 
 	if *smokeFlag {
 		runSmokeSuite(*smokeOutputDir, *gitRevFlag)
+		return
+	}
+
+	if *pilotFlag {
+		runPilotSuite(*pilotOutputDir, *gitRevFlag)
 		return
 	}
 
@@ -89,6 +97,8 @@ func main() {
 			cfg.WriterConcurrency = 2
 			cfg.InitialSSTableCount = 0
 			cfg.MemtableThresholdBytes = 64 * 1024 * 1024
+			cfg.TargetReadHitRatio = 1.0
+			cfg.KeyspaceCardinality = 2000
 		}
 	}
 	cfg.DataDir = *dirFlag
@@ -102,8 +112,8 @@ func main() {
 	}
 
 	p99Val := 0.0
-	if res.LatencyRead.P99Nanos > 0 {
-		p99Val = float64(res.LatencyRead.P99Nanos) / 1000.0
+	if res.LatencyRead.P99Nanos != nil && *res.LatencyRead.P99Nanos > 0 {
+		p99Val = float64(*res.LatencyRead.P99Nanos) / 1000.0
 	}
 	fmt.Printf("[RUNNER] Trial completed: %d reads, %d writes in %dms (%.1f read ops/sec, p50: %.2f µs, p99: %.2f µs)\n",
 		res.Operations.ReadOpsCompleted, res.Operations.WriteOpsCompleted,
@@ -188,6 +198,8 @@ func runSmokeSuite(outDir string, gitRev string) {
 				cfg.WriterConcurrency = 2
 				cfg.InitialSSTableCount = 0
 				cfg.MemtableThresholdBytes = 64 * 1024 * 1024
+				cfg.TargetReadHitRatio = 1.0
+				cfg.KeyspaceCardinality = 2000
 			}
 
 			// Dedicated trial directory
@@ -223,5 +235,124 @@ func runSmokeSuite(outDir string, gitRev string) {
 	}
 	fmt.Println("================================================================================")
 	fmt.Printf("[SMOKE] Validation suite completed. Results archived in %s\n", outDir)
+	fmt.Println("================================================================================")
+}
+
+func runPilotSuite(outDir string, gitRev string) {
+	fmt.Println("================================================================================")
+	fmt.Println("[PILOT] Executing Official Phase I5 Parameter Pilot Suite (10s duration)")
+	fmt.Println("================================================================================")
+
+	pilotConfigs := []struct {
+		workload harness.WorkloadID
+		name     string
+		setup    func(cfg *harness.TrialConfig)
+	}{
+		{
+			workload: harness.WorkloadB_MixedFlush,
+			name:     "Workload B (Mixed Flush, 1MB Memtable Threshold)",
+			setup: func(cfg *harness.TrialConfig) {
+				cfg.ReaderConcurrency = 4
+				cfg.WriterConcurrency = 2
+				cfg.MeasurementDurationMs = 10000
+				cfg.WarmupDurationMs = 500
+				cfg.InitialSSTableCount = 4
+				cfg.InitialKeysPerSSTable = 2500
+				cfg.KeyspaceCardinality = 10000
+				cfg.MemtableThresholdBytes = 1024 * 1024 // Official 1MB threshold
+				cfg.TargetReadHitRatio = 0.95
+				cfg.WalSync = true
+			},
+		},
+		{
+			workload: harness.WorkloadC_CompactionOverlap,
+			name:     "Workload C (Compaction Overlap, 500ms Trigger Interval)",
+			setup: func(cfg *harness.TrialConfig) {
+				cfg.ReaderConcurrency = 4
+				cfg.WriterConcurrency = 1
+				cfg.MeasurementDurationMs = 10000
+				cfg.WarmupDurationMs = 500
+				cfg.InitialSSTableCount = 4
+				cfg.InitialKeysPerSSTable = 2500
+				cfg.KeyspaceCardinality = 10000
+				cfg.MemtableThresholdBytes = 64 * 1024 * 1024
+				cfg.CompactionTriggerIntervalMs = 500 // Official 500ms interval
+				cfg.TargetReadHitRatio = 0.95
+				cfg.WalSync = true
+			},
+		},
+		{
+			workload: harness.WorkloadD_ReaderChurn,
+			name:     "Workload D (Reader Churn, 512KB Threshold, 500ms Compaction)",
+			setup: func(cfg *harness.TrialConfig) {
+				cfg.ReaderConcurrency = 4
+				cfg.WriterConcurrency = 3
+				cfg.MeasurementDurationMs = 10000
+				cfg.WarmupDurationMs = 500
+				cfg.InitialSSTableCount = 4
+				cfg.InitialKeysPerSSTable = 2500
+				cfg.KeyspaceCardinality = 10000
+				cfg.MemtableThresholdBytes = 512 * 1024 // Official 512KB threshold
+				cfg.CompactionTriggerIntervalMs = 500  // Official 500ms interval
+				cfg.TargetReadHitRatio = 0.95
+				cfg.WalSync = true
+			},
+		},
+	}
+
+	modes := []string{"A", "B"}
+	_ = os.MkdirAll(outDir, 0755)
+
+	for _, pc := range pilotConfigs {
+		for _, m := range modes {
+			cfg := harness.DefaultTrialConfig(pc.workload, m, 4)
+			pc.setup(&cfg)
+
+			trialDir, err := os.MkdirTemp("", fmt.Sprintf("pilot_%s_%s_*", pc.workload, m))
+			if err != nil {
+				fmt.Printf("Failed to create trial dir: %v\n", err)
+				continue
+			}
+			cfg.DataDir = trialDir
+
+			env := getEnvironment(cfg.DataDir)
+			fmt.Printf("[PILOT] Running %s under Mode %s on %s (%s)...\n", pc.name, m, env.OS, env.FilesystemType)
+			t0 := time.Now()
+			res, err := harness.RunTrial(cfg, gitRev, env)
+			elapsed := time.Since(t0)
+			_ = os.RemoveAll(trialDir)
+
+			if err != nil {
+				fmt.Printf("[ERROR] Pilot trial failed: %v\n", err)
+				continue
+			}
+
+			fileName := fmt.Sprintf("pilot_%s_%s.json", pc.workload, m)
+			filePath := filepath.Join(outDir, fileName)
+			_ = harness.SaveResultJSON(res, filePath)
+
+			p50Us := float64(res.LatencyRead.P50Nanos) / 1000.0
+			p99Us := 0.0
+			if res.LatencyRead.P99Nanos != nil {
+				p99Us = float64(*res.LatencyRead.P99Nanos) / 1000.0
+			}
+			hitRate := 0.0
+			if res.Operations.ReadOpsCompleted > 0 {
+				hitRate = float64(res.Operations.ActualHitCount) / float64(res.Operations.ReadOpsCompleted) * 100.0
+			}
+
+			fmt.Printf("        -> Total Wall Time: %v | Measured Reads: %d (%.1f/s), Writes: %d (%.1f/s)\n",
+				elapsed, res.Operations.ReadOpsCompleted, res.Throughput.ReadOpsPerSec,
+				res.Operations.WriteOpsCompleted, res.Throughput.WriteOpsPerSec)
+			fmt.Printf("        -> HitRate: %.1f%%, ValErrors: %d, Flushes: %d, Compactions: %d\n",
+				hitRate, res.Operations.ValidationErrorCount,
+				res.LSMDiagnostics.MeasuredFlushes, res.LSMDiagnostics.MeasuredCompactions)
+			fmt.Printf("        -> Overlap: %dms, OverlapReads: %d | p50: %.2f µs, p99: %.2f µs\n\n",
+				res.LSMDiagnostics.CompactionActiveOverlapMs, res.LSMDiagnostics.ReadsDuringCompaction,
+				p50Us, p99Us)
+		}
+	}
+	fmt.Println("================================================================================")
+	fmt.Printf("[PILOT] Suite completed. Results saved in %s\n", outDir)
 	fmt.Println("================================================================================")
 }
