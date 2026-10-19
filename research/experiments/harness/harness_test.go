@@ -580,6 +580,24 @@ func TestTicksToNanos_OverflowGuards(t *testing.T) {
 		t.Fatalf("overflow guard failed for extreme ticks: expected %d ns, got %d ns", expectedExtremeNanos, got)
 	}
 
+	// Reviewer regression test (I5.2-R.4):
+	// ticks = 10_000_000_000, freq = 20_000_000_000 (20 GHz)
+	// remainder = 10_000_000_000 > math.MaxInt64 / 1_000_000_000 (~9.22e9)
+	// Without remainder overflow protection, rem * 1e9 would overflow int64.
+	// Expected result: 500,000,000 nanoseconds (0.5s).
+	revTicks := int64(10_000_000_000)
+	revFreq := int64(20_000_000_000)
+	gotRev, err := TicksToNanosChecked(revTicks, revFreq)
+	if err != nil {
+		t.Fatalf("reviewer regression case failed: expected nil error, got %v", err)
+	}
+	if gotRev != 500_000_000 {
+		t.Fatalf("reviewer regression case failed: expected 500,000,000 ns, got %d", gotRev)
+	}
+	if got := TicksToNanos(revTicks, revFreq); got != 500_000_000 {
+		t.Fatalf("TicksToNanos failed for reviewer case: expected 500,000,000 ns, got %d", got)
+	}
+
 	// Panic check for TicksToNanos on invalid inputs
 	defer func() {
 		if r := recover(); r == nil {

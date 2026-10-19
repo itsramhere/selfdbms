@@ -639,6 +639,25 @@ Format:
 - **Status**: Fixed & Verified (Sub-phase I5.1.2, Decision D-050).
 - **Commit**: `HEAD`.
 
+---
+
+### E-023: Timer Remainder Intermediate Overflow at Frequencies Above 1 GHz
+
+- **ID**: `E-023`
+- **Detected**: 2026-10-19, during external review of Checkpoint CP5 (I5.2-R.4)
+- **Sub-phase**: I5.2-R.4 (Precision Timer Overflow Guard Hardening)
+- **Severity**: Measurement Instrumentation / Numerical Integrity Defect (P2)
+- **Symptom**: In `TicksToNanosChecked(ticks, freq)`, while `ticks / freq` quotient was guarded against overflow, the remainder multiplication `remainder * 1e9` could exceed `math.MaxInt64` if `freq > 1e9` (e.g. 20 GHz clock frequency) and `remainder > 9.22e9`.
+- **Root Cause**: 64-bit integer multiplication overflow on the remainder fraction when clock frequency exceeds 1 GHz.
+- **Fix**:
+  1. Handled remainder products exceeding `maxDirectTicks` using arbitrary-precision arithmetic (`big.Int`) in `research/experiments/harness/timer_common.go`.
+  2. Implemented regression test with `ticks = 10_000_000_000` and `freq = 20_000_000_000`, verifying it returns exactly `500_000_000` ns without error or corruption.
+  3. Verified that no previous trials were affected, as Windows QPC frequency is 10 MHz ($10^7 \ll 10^9$) and Linux POSIX timer uses `time.Since()`.
+- **Regression Test**: `TestTicksToNanos_OverflowGuards` in `research/experiments/harness/harness_test.go`.
+- **Validation**: 100% test pass on Windows native and WSL2 Linux.
+- **Status**: Fixed & Verified (Sub-phase I5.2-R.4, Decision D-052).
+- **Commit**: `HEAD`.
+
 
 
 
