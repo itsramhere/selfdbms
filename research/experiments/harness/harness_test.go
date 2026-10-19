@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -524,4 +525,242 @@ func TestTimerOverheadCharacterization(t *testing.T) {
 	elapsed := time.Since(t0)
 	meanNanos := float64(elapsed.Nanoseconds()) / float64(n)
 	t.Logf("Timer overhead characterization: N=%d, total=%v, mean=%.2f ns/call", n, elapsed, meanNanos)
+}
+
+func TestTicksToNanos_OverflowGuards(t *testing.T) {
+	const freq = 10_000_000 // 10 MHz standard Windows QPC
+
+	// Zero and negative cases
+	if got := TicksToNanos(0, freq); got != 0 {
+		t.Fatalf("expected 0 for 0 ticks, got %d", got)
+	}
+	if got := TicksToNanos(-10, freq); got != 0 {
+		t.Fatalf("expected 0 for negative ticks, got %d", got)
+	}
+	if got := TicksToNanos(100, 0); got != 0 {
+		t.Fatalf("expected 0 for 0 freq, got %d", got)
+	}
+
+	// Normal small duration: 100 ticks at 10 MHz = 10,000 ns = 10 µs
+	if got := TicksToNanos(100, freq); got != 10_000 {
+		t.Fatalf("expected 10,000 ns, got %d", got)
+	}
+
+	// 1 second: 10,000,000 ticks = 1,000,000,000 ns
+	if got := TicksToNanos(10_000_000, freq); got != 1_000_000_000 {
+		t.Fatalf("expected 1,000,000,000 ns, got %d", got)
+	}
+
+	// Huge duration exceeding math.MaxInt64 / 1_000_000_000 (threshold ~9.22e9 ticks):
+	// Test 20 billion ticks (2,000 seconds = ~33.3 minutes). Without overflow guards, (20e9 * 1e9) overflows int64!
+	hugeTicks := int64(20_000_000_000)
+	expectedHugeNanos := int64(2_000_000_000_000) // 2,000 seconds in ns
+	if got := TicksToNanos(hugeTicks, freq); got != expectedHugeNanos {
+		t.Fatalf("overflow guard failed: expected %d ns, got %d ns", expectedHugeNanos, got)
+	}
+
+	// Extreme duration: 100 billion ticks (10,000 seconds)
+	extremeTicks := int64(100_000_000_000)
+	expectedExtremeNanos := int64(10_000_000_000_000)
+	if got := TicksToNanos(extremeTicks, freq); got != expectedExtremeNanos {
+		t.Fatalf("overflow guard failed for extreme ticks: expected %d ns, got %d ns", expectedExtremeNanos, got)
+	}
+}
+
+func TestEnsurePrecisionTimer_Operational(t *testing.T) {
+	if err := EnsurePrecisionTimer(); err != nil {
+		t.Fatalf("EnsurePrecisionTimer failed on host: %v", err)
+	}
+}
+
+func TestFixture_FailClosed_FaultInjection(t *testing.T) {
+	faults := []struct {
+		name        string
+		phase       string
+		expectedErr string
+	}{
+		{
+			name:        "CommitFailure",
+			phase:       "commit",
+			expectedErr: "injected fixture commit failure",
+		},
+		{
+			name:        "FlushFailure",
+			phase:       "flush",
+			expectedErr: "injected fixture flush failure",
+		},
+		{
+			name:        "CountMismatch",
+			phase:       "count",
+			expectedErr: "fixture sstable count verification failed",
+		},
+		{
+			name:        "ReadbackFailure",
+			phase:       "readback",
+			expectedErr: "injected fixture readback verification failure",
+		},
+	}
+
+	for _, f := range faults {
+		t.Run(f.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := DefaultTrialConfig(WorkloadA_ReadOnly, "ApproachB_ReaderSnapshot", 1)
+			cfg.DataDir = dir
+			cfg.InitialSSTableCount = 2
+			cfg.InitialKeysPerSSTable = 10
+			cfg.KeyspaceCardinality = 20
+			cfg.FixtureFaultPhase = f.phase
+
+			res, err := RunTrial(cfg, "test_rev", dummyEnv(dir))
+			if err == nil {
+				t.Fatalf("expected trial to fail closed for %s, but got nil error", f.name)
+			}
+			if res != nil {
+				t.Fatalf("failed trial must return nil result, got: %+v", res)
+			}
+			if !strings.Contains(err.Error(), f.expectedErr) {
+				t.Fatalf("expected error containing %q, got: %v", f.expectedErr, err)
+			}
+		})
+	}
+}
+
+func TestFixture_ManifestRecording(t *testing.T) {
+	dir := t.TempDir()
+	cfg := DefaultTrialConfig(WorkloadA_ReadOnly, "ApproachB_ReaderSnapshot", 1)
+	cfg.DataDir = dir
+	cfg.InitialSSTableCount = 2
+	cfg.InitialKeysPerSSTable = 50
+	cfg.KeyspaceCardinality = 100
+	cfg.MeasurementDurationMs = 200
+	cfg.WarmupDurationMs = 20
+
+	res, err := RunTrial(cfg, "test_rev", dummyEnv(dir))
+	if err != nil {
+		t.Fatalf("RunTrial failed: %v", err)
+	}
+
+	if res.FixtureManifest.CommittedKeys != 100 {
+		t.Fatalf("expected 100 committed fixture keys, got %d", res.FixtureManifest.CommittedKeys)
+	}
+	if res.FixtureManifest.ExpectedSSTableCount != 2 {
+		t.Fatalf("expected 2 expected sstables, got %d", res.FixtureManifest.ExpectedSSTableCount)
+	}
+	if res.FixtureManifest.ActualSSTableCount != 2 {
+		t.Fatalf("expected 2 actual sstables, got %d", res.FixtureManifest.ActualSSTableCount)
+	}
+	if res.FixtureManifest.ValidationReadbackStatus != "PASSED" {
+		t.Fatalf("expected validation readback status PASSED, got %s", res.FixtureManifest.ValidationReadbackStatus)
+	}
+	if res.FixtureManifest.InitializationDurationMs <= 0 {
+		t.Fatalf("expected positive initialization duration, got %d", res.FixtureManifest.InitializationDurationMs)
+	}
+}
+
+func TestWorkloadB1_NaturalWriteProgress(t *testing.T) {
+	modes := []string{"ApproachA_RWMutexBaseline", "ApproachB_ReaderSnapshot"}
+	for _, mode := range modes {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := DefaultTrialConfig(WorkloadB1_NaturalWriteProgress, mode, 2)
+			cfg.DataDir = dir
+			cfg.InitialSSTableCount = 2
+			cfg.InitialKeysPerSSTable = 100
+			cfg.KeyspaceCardinality = 200
+			cfg.WriterConcurrency = 2
+			cfg.MemtableThresholdBytes = 1024 * 1024 // 1MB threshold
+			cfg.MeasurementDurationMs = 500
+			cfg.WarmupDurationMs = 50
+
+			res, err := RunTrial(cfg, "test_rev", dummyEnv(dir))
+			if err != nil {
+				t.Fatalf("RunTrial failed for %s: %v", mode, err)
+			}
+			if res.Status != "SUCCESS" {
+				t.Fatalf("expected SUCCESS, got %s", res.Status)
+			}
+			// In 500ms under 1MB threshold, 0 flushes occur naturally; must be transparently reported
+			if res.LSMDiagnostics.MeasuredFlushes != 0 {
+				t.Fatalf("expected 0 measured flushes under 1MB threshold in short trial, got %d", res.LSMDiagnostics.MeasuredFlushes)
+			}
+		})
+	}
+}
+
+func TestWorkloadB2_ControlledFlushInterference(t *testing.T) {
+	modes := []string{"ApproachA_RWMutexBaseline", "ApproachB_ReaderSnapshot"}
+	for _, mode := range modes {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := DefaultTrialConfig(WorkloadB2_ControlledFlushInterference, mode, 2)
+			cfg.DataDir = dir
+			cfg.InitialSSTableCount = 2
+			cfg.InitialKeysPerSSTable = 100
+			cfg.KeyspaceCardinality = 200
+			cfg.WriterConcurrency = 0 // driven by coordinator
+			cfg.MemtableThresholdBytes = 64 * 1024 * 1024
+			cfg.FlushTriggerIntervalMs = 150 // trigger flush every 150ms
+			cfg.MeasurementDurationMs = 800
+			cfg.WarmupDurationMs = 50
+
+			res, err := RunTrial(cfg, "test_rev", dummyEnv(dir))
+			if err != nil {
+				t.Fatalf("RunTrial failed for %s: %v", mode, err)
+			}
+			if res.Status != "SUCCESS" {
+				t.Fatalf("expected SUCCESS, got %s", res.Status)
+			}
+			if res.LSMDiagnostics.MeasuredFlushes == 0 {
+				t.Fatalf("expected >= 1 measured flush under controlled schedule, got 0")
+			}
+			if res.LSMDiagnostics.FlushActiveOverlapMs <= 0 {
+				t.Fatalf("expected positive flush overlap duration, got %d", res.LSMDiagnostics.FlushActiveOverlapMs)
+			}
+			if res.LSMDiagnostics.ReadsDuringFlush <= 0 {
+				t.Fatalf("expected reads during active flush, got %d", res.LSMDiagnostics.ReadsDuringFlush)
+			}
+		})
+	}
+}
+
+func TestWorkloadD_RepeatedReaderSetChurn(t *testing.T) {
+	modes := []string{"ApproachA_RWMutexBaseline", "ApproachB_ReaderSnapshot"}
+	for _, mode := range modes {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := DefaultTrialConfig(WorkloadD_ReaderChurn, mode, 2)
+			cfg.DataDir = dir
+			cfg.InitialSSTableCount = 4
+			cfg.InitialKeysPerSSTable = 100
+			cfg.KeyspaceCardinality = 400
+			cfg.WriterConcurrency = 3
+			cfg.MemtableThresholdBytes = 512 // 512B threshold to produce continuous flushes
+			cfg.CompactionTriggerIntervalMs = 150 // compactor triggers every 150ms
+			cfg.MeasurementDurationMs = 1500
+			cfg.WarmupDurationMs = 50
+
+			res, err := RunTrial(cfg, "test_rev", dummyEnv(dir))
+			if err != nil {
+				t.Fatalf("RunTrial failed for %s: %v", mode, err)
+			}
+			if res.Status != "SUCCESS" {
+				t.Fatalf("expected SUCCESS, got %s", res.Status)
+			}
+			if res.LSMDiagnostics.MeasuredFlushes < 3 {
+				t.Fatalf("expected >= 3 measured flushes, got %d", res.LSMDiagnostics.MeasuredFlushes)
+			}
+			if res.LSMDiagnostics.MeasuredCompactions < 3 {
+				t.Fatalf("expected >= 3 measured compactions for repeated churn, got %d", res.LSMDiagnostics.MeasuredCompactions)
+			}
+			if res.LSMDiagnostics.CompactionActiveOverlapMs <= 0 {
+				t.Fatalf("expected positive compaction overlap ms, got %d", res.LSMDiagnostics.CompactionActiveOverlapMs)
+			}
+			if res.LSMDiagnostics.ReadsDuringCompaction <= 0 {
+				t.Fatalf("expected reader reads during active compaction, got %d", res.LSMDiagnostics.ReadsDuringCompaction)
+			}
+			if res.Operations.ValidationErrorCount != 0 {
+				t.Fatalf("expected 0 validation errors, got %d", res.Operations.ValidationErrorCount)
+			}
+		})
+	}
 }

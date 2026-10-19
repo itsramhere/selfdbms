@@ -540,6 +540,42 @@ Format:
 - **Status**: Fixed & Verified (Sub-phase I4.8.1, Decision D-041).
 - **Commit**: `HEAD`.
 
+---
+
+### E-019: Workload B Flush Deficit & Reader-Set Churn Cessation (Workload D Single Compaction)
+
+- **ID**: `E-019`
+- **Detected**: 2026-10-19, during external review of Checkpoint CP4a
+- **Sub-phase**: I4.9.1 / I4.9.2 (Final Workload Activation and Campaign Readiness)
+- **Severity**: Benchmark Workload Activation Defect (P1)
+- **Symptom**:
+  1. *Workload B Zero Flushes*: In 10-second trials under `wal_sync=true` and a 1 MB threshold, exactly 0 flushes occurred in both Approach A and Approach B. On Windows NTFS, Approach A completed only 15–16 writes in 10s (~2.5 KB) due to readers holding `m.Mu.RLock()` during disk I/O and starving writers waiting for `m.Mu.Lock()`. Lowering the threshold to 128 KB still failed to trigger flushes for Approach A.
+  2. *Workload D Single Compaction*: Workload D executed only 1 compaction during the entire trial. After merging 4 tables into 1, `len(m.ActiveSSreaders) == 1`; subsequent `CompactAll()` calls returned immediately because insufficient new flushes arrived to create additional SSTables.
+- **Root Cause**:
+  1. *Workload B*: Conflating natural write progress with forced flush publication interference. In write-heavy workloads with WAL fsync, writers in Approach A suffer severe lock starvation, preventing memtable accumulation up to standard thresholds within trial durations. Claiming flush latency when 0 flushes occur is scientifically invalid.
+  2. *Workload D*: Compaction requires $\ge 2$ active SSTables. With a 512 KB threshold, background writers under WAL sync could not produce new flushes fast enough to supply the compactor after the initial merge.
+- **Fix**:
+  1. *Workload B Bifurcation (Decision D-044)*:
+     - `WorkloadB1_NaturalWriteProgress`: Retains production 1 MB threshold and `wal_sync=true`. Transparently reports 0 flushes completed and `flush_latency = null`. Measures read throughput and write transactions, demonstrating Approach B's 20–240x write throughput advantage (e.g. 3,614 writes vs 15 writes on Windows NTFS) due to lock-free SSTable reads.
+     - `WorkloadB2_ControlledFlushInterference`: Dedicated harness coordinator periodically writes batches (50 keys) and triggers synchronous flushes via `man.TriggerFlush()` every 2,000 ms (pilot) / 500 ms (smoke), recording `flush_overlap_nanos` and `reads_during_flush`.
+  2. *Workload D Churn Calibration (Decision D-045)*:
+     - Calibrated `MemtableThresholdBytes = 16 * 1024` (16 KB, ~105 keys per flush) and `CompactionTriggerIntervalMs = 1500` (1,500 ms).
+     - Writers continually generate 4–23 flushes over 10 seconds, replenishing SSTables and driving 4–6 full multi-table compactions with live reader-set replacements, reader overlap, and bounded reader reclamation.
+- **Regression Tests**: `TestWorkloadB1_NaturalWriteProgress`, `TestWorkloadB2_ControlledFlushInterference`, and `TestWorkloadD_RepeatedReaderSetChurn` in `research/experiments/harness/harness_test.go`.
+- **Validation**:
+  - Windows NTFS 10s Pilot:
+    * B1: Mode A (15 writes, 0 flushes) vs Mode B (3,614 writes, 0 flushes).
+    * B2: Mode A (1 flush, 14ms overlap) vs Mode B (5 flushes, 79ms overlap).
+    * D: Mode A (4 flushes, 4 compactions, 4,108ms overlap, 372 reads in comp) vs Mode B (23 flushes, 6 compactions, 1,567ms overlap, 313 reads in comp).
+  - WSL2 ext4 10s Pilot:
+    * B1: Mode A (111 writes, 0 flushes) vs Mode B (2,480 writes, 0 flushes).
+    * B2: Mode A (3 flushes, 72ms overlap) vs Mode B (5 flushes, 23ms overlap).
+    * D: Mode A (12 flushes, 6 compactions, 1,246ms overlap, 764 reads in comp) vs Mode B (19 flushes, 6 compactions, 682ms overlap, 483 reads in comp).
+  - 0 validation errors across all trials.
+- **Status**: Fixed & Verified (Sub-phase I4.9, Decisions D-044, D-045).
+- **Commit**: `HEAD`.
+
+
 
 
 

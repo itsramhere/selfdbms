@@ -40,6 +40,8 @@
       "enum": [
         "WORKLOAD_A_READ_ONLY",
         "WORKLOAD_B_MIXED_FLUSH",
+        "WORKLOAD_B1_NATURAL_WRITE_PROGRESS",
+        "WORKLOAD_B2_CONTROLLED_FLUSH_INTERFERENCE",
         "WORKLOAD_C_COMPACTION_OVERLAP",
         "WORKLOAD_D_READER_CHURN",
         "WORKLOAD_E_NEGATIVE_CONTROL_MEMTABLE"
@@ -57,6 +59,10 @@
       "minimum": 1
     },
     "writer_concurrency": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "flush_trigger_interval_ms": {
       "type": "integer",
       "minimum": 0
     },

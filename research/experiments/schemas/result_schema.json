@@ -18,6 +18,7 @@
     "latency_read_nanos",
     "lsm_diagnostics",
     "host_diagnostics",
+    "fixture_manifest",
     "status"
   ],
   "properties": {
@@ -211,6 +212,10 @@
         "live_physical_readers": { "type": "integer" },
         "compaction_active_overlap_ms": { "type": "integer" },
         "reads_during_compaction_count": { "type": "integer" },
+        "flush_active_overlap_ms": { "type": "integer" },
+        "reads_during_flush_count": { "type": "integer" },
+        "attempted_flushes": { "type": "integer" },
+        "delayed_flushes": { "type": "integer" },
         "phase_metrics": {
           "type": "object",
           "required": [
@@ -243,6 +248,28 @@
         "heap_sys_bytes": { "type": "integer" },
         "num_gc": { "type": "integer" },
         "gc_pause_total_ns": { "type": "integer" }
+      }
+    },
+    "fixture_manifest": {
+      "type": "object",
+      "required": [
+        "committed_keys",
+        "expected_sstable_count",
+        "actual_sstable_count",
+        "flush_errors",
+        "validation_readback_status",
+        "initialization_duration_ms"
+      ],
+      "properties": {
+        "committed_keys": { "type": "integer" },
+        "expected_sstable_count": { "type": "integer" },
+        "actual_sstable_count": { "type": "integer" },
+        "flush_errors": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "validation_readback_status": { "type": "string" },
+        "initialization_duration_ms": { "type": "integer" }
       }
     },
     "status": {

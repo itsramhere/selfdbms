@@ -2,12 +2,14 @@ package harness
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -107,6 +109,10 @@ type LSMDiagnostics struct {
 	LivePhysicalReaders       int          `json:"live_physical_readers"`
 	CompactionActiveOverlapMs int64        `json:"compaction_active_overlap_ms"`
 	ReadsDuringCompaction     int64        `json:"reads_during_compaction_count"`
+	FlushActiveOverlapMs      int64        `json:"flush_active_overlap_ms"`
+	ReadsDuringFlush          int64        `json:"reads_during_flush_count"`
+	AttemptedFlushes          int64        `json:"attempted_flushes"`
+	DelayedFlushes            int64        `json:"delayed_flushes"`
 	PhaseMetrics              PhaseMetrics `json:"phase_metrics"`
 }
 
@@ -116,6 +122,16 @@ type HostDiagnostics struct {
 	HeapSysBytes   uint64 `json:"heap_sys_bytes"`
 	NumGC          uint32 `json:"num_gc"`
 	GCPauseTotalNs uint64 `json:"gc_pause_total_ns"`
+}
+
+// FixtureManifest documents deterministic fixture setup, verification, and timing.
+type FixtureManifest struct {
+	CommittedKeys            int      `json:"committed_keys"`
+	ExpectedSSTableCount     int      `json:"expected_sstable_count"`
+	ActualSSTableCount       int      `json:"actual_sstable_count"`
+	FlushErrors              []string `json:"flush_errors"`
+	ValidationReadbackStatus string   `json:"validation_readback_status"`
+	InitializationDurationMs int64    `json:"initialization_duration_ms"`
 }
 
 // TrialConfig specifies parameters for an individual experimental run.
@@ -143,6 +159,8 @@ type TrialConfig struct {
 	DataDir                     string     `json:"data_dir"`
 	WalSync                     bool       `json:"wal_sync"`
 	CompactionTriggerIntervalMs int        `json:"compaction_trigger_interval_ms"`
+	FlushTriggerIntervalMs      int        `json:"flush_trigger_interval_ms"`
+	FixtureFaultPhase           string     `json:"-"` // Deterministic fault injection: "commit", "flush", "count", "readback"
 }
 
 // DefaultTrialConfig returns a robust default configuration for testing and smoke verification.
@@ -171,6 +189,7 @@ func DefaultTrialConfig(workload WorkloadID, mode string, readers int) TrialConf
 		DataDir:                     "",
 		WalSync:                     true,
 		CompactionTriggerIntervalMs: 0,
+		FlushTriggerIntervalMs:      0,
 	}
 }
 
@@ -191,6 +210,7 @@ type TrialResult struct {
 	LatencyWrite    LatencyStats    `json:"latency_write_nanos"`
 	LSMDiagnostics  LSMDiagnostics  `json:"lsm_diagnostics"`
 	HostDiagnostics HostDiagnostics `json:"host_diagnostics"`
+	FixtureManifest FixtureManifest `json:"fixture_manifest"`
 	Status          string          `json:"status"`
 	ExclusionReason *string         `json:"exclusion_reason"`
 }
@@ -221,6 +241,11 @@ func makePhaseCounters(sFlushes, sCompactions, sSstReads, sMemReads, eFlushes, e
 
 // RunTrial executes a single controlled experiment trial under strict isolation.
 func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult, error) {
+	// Ensure high-resolution precision timer is operational before starting
+	if err := EnsurePrecisionTimer(); err != nil {
+		return nil, fmt.Errorf("precision timer verification failed: %w", err)
+	}
+
 	if cfg.DataDir == "" {
 		tmp, err := os.MkdirTemp("", "selfdbms_trial_*")
 		if err != nil {
@@ -254,7 +279,14 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 		return nil, fmt.Errorf("failed to create manager: %w", err)
 	}
 
-	// Phase 1: Fixture Setup Phase
+	// Phase 1: Fixture Setup Phase (Strict Fail-Closed)
+	fixStart := time.Now()
+	var fixtureManifest FixtureManifest
+	fixtureManifest.ExpectedSSTableCount = cfg.InitialSSTableCount
+	if cfg.WorkloadID == WorkloadE_NegativeControlMemtable {
+		fixtureManifest.ExpectedSSTableCount = 0
+	}
+
 	f0, c0, s0, m0 := captureLSMCounts(man)
 	baseSeed := cfg.Seed + int64(cfg.TrialIndex)*10007
 	if cfg.InitialSSTableCount > 0 && cfg.WorkloadID != WorkloadE_NegativeControlMemtable {
@@ -273,24 +305,51 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 				keyStr := FormatKey(keyIdx)
 				valStr := FormatVal(keyIdx, cfg.ValSizeBytes)
 				tx := man.Begin()
+				if tx == nil {
+					man.Close()
+					return nil, errors.New("fixture initialization failed: man.Begin() returned nil")
+				}
 				tx.Put(keyStr, valStr)
+				if cfg.FixtureFaultPhase == "commit" {
+					man.Close()
+					return nil, errors.New("injected fixture commit failure")
+				}
 				if err := tx.Commit(); err != nil {
 					man.Close()
 					return nil, fmt.Errorf("fixture initialization commit failed: %w", err)
 				}
+				fixtureManifest.CommittedKeys++
 				currKey++
 			}
+			if cfg.FixtureFaultPhase == "flush" {
+				fixtureManifest.FlushErrors = append(fixtureManifest.FlushErrors, "injected fixture flush failure")
+				man.Close()
+				return nil, errors.New("injected fixture flush failure")
+			}
 			if err := man.TriggerFlush(); err != nil {
+				fixtureManifest.FlushErrors = append(fixtureManifest.FlushErrors, err.Error())
 				man.Close()
 				return nil, fmt.Errorf("fixture flush trigger failed: %w", err)
 			}
 			deadline := time.Now().Add(10 * time.Second)
 			for man.FlushesCompleted() < targetFlushes && time.Now().Before(deadline) {
+				if err := man.FlushErr(); err != nil {
+					fixtureManifest.FlushErrors = append(fixtureManifest.FlushErrors, err.Error())
+					man.Close()
+					return nil, fmt.Errorf("fixture background flush failed: %w", err)
+				}
 				time.Sleep(2 * time.Millisecond)
 			}
-			if man.FlushesCompleted() < targetFlushes {
+			if err := man.FlushErr(); err != nil {
+				fixtureManifest.FlushErrors = append(fixtureManifest.FlushErrors, err.Error())
 				man.Close()
-				return nil, fmt.Errorf("fixture flush timed out for table %d", t)
+				return nil, fmt.Errorf("fixture background flush failed: %w", err)
+			}
+			if man.FlushesCompleted() < targetFlushes {
+				msg := fmt.Sprintf("fixture flush timed out for table %d", t)
+				fixtureManifest.FlushErrors = append(fixtureManifest.FlushErrors, msg)
+				man.Close()
+				return nil, errors.New(msg)
 			}
 		}
 	} else if cfg.WorkloadID == WorkloadE_NegativeControlMemtable {
@@ -299,13 +358,59 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 			keyStr := FormatKey(k)
 			valStr := FormatVal(k, cfg.ValSizeBytes)
 			tx := man.Begin()
+			if tx == nil {
+				man.Close()
+				return nil, errors.New("workload E memtable population failed: man.Begin() returned nil")
+			}
 			tx.Put(keyStr, valStr)
+			if cfg.FixtureFaultPhase == "commit" {
+				man.Close()
+				return nil, errors.New("injected fixture commit failure")
+			}
 			if err := tx.Commit(); err != nil {
 				man.Close()
 				return nil, fmt.Errorf("workload E memtable population failed: %w", err)
 			}
+			fixtureManifest.CommittedKeys++
 		}
 	}
+
+	// Verify initial SSTable count against expected
+	fixtureManifest.ActualSSTableCount = man.ActiveSSTableCount()
+	if cfg.FixtureFaultPhase == "count" {
+		fixtureManifest.ActualSSTableCount = fixtureManifest.ExpectedSSTableCount + 1
+	}
+	if fixtureManifest.ActualSSTableCount != fixtureManifest.ExpectedSSTableCount {
+		man.Close()
+		return nil, fmt.Errorf("fixture sstable count verification failed: expected %d, got %d",
+			fixtureManifest.ExpectedSSTableCount, fixtureManifest.ActualSSTableCount)
+	}
+
+	// Initial validation / readback verification: verify boundary and sample keys are readable
+	if cfg.FixtureFaultPhase == "readback" {
+		man.Close()
+		return nil, errors.New("injected fixture readback verification failure")
+	}
+	sampleIndices := []int{0}
+	if cfg.KeyspaceCardinality > 1 {
+		sampleIndices = append(sampleIndices, cfg.KeyspaceCardinality/2, cfg.KeyspaceCardinality-1)
+	}
+	for _, idx := range sampleIndices {
+		keyStr := FormatKey(idx)
+		expectedPrefix := fmt.Sprintf("val_%010d_", idx)
+		val, err := man.Get(keyStr, math.MaxUint64)
+		if err != nil {
+			man.Close()
+			return nil, fmt.Errorf("fixture initial readback verification failed for key %s: %w", keyStr, err)
+		}
+		if !strings.HasPrefix(val, expectedPrefix) {
+			man.Close()
+			return nil, fmt.Errorf("fixture initial readback value mismatch for key %s: expected prefix %s, got %s", keyStr, expectedPrefix, val)
+		}
+	}
+	fixtureManifest.ValidationReadbackStatus = "PASSED"
+	fixtureManifest.InitializationDurationMs = time.Since(fixStart).Milliseconds()
+
 	f1, c1, s1, m1 := captureLSMCounts(man)
 	phaseSetup := makePhaseCounters(f0, c0, s0, m0, f1, c1, s1, m1)
 	initialSSTables := man.ActiveSSTableCount()
@@ -359,6 +464,11 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 		compactionActive       atomic.Bool
 		compactionOverlapNanos atomic.Int64
 		readsDuringCompaction  atomic.Int64
+		flushActive            atomic.Bool
+		flushOverlapNanos      atomic.Int64
+		readsDuringFlush       atomic.Int64
+		attemptedFlushes       atomic.Int64
+		delayedFlushes         atomic.Int64
 		stopMeasure            = make(chan struct{})
 		startBarrier           = make(chan struct{})
 		workerWg               sync.WaitGroup
@@ -391,6 +501,9 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 
 					if compactionActive.Load() {
 						readsDuringCompaction.Add(1)
+					}
+					if flushActive.Load() {
+						readsDuringFlush.Add(1)
 					}
 
 					if err == nil {
@@ -435,12 +548,16 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 						writeAttempted.Add(1)
 						t0 := NowPrecision()
 						tx := man.Begin()
-						tx.Put(key, val)
-						err := tx.Commit()
-						durNanos := SincePrecisionNanos(t0)
-						writeLatency.RecordNanos(durNanos)
-						if err == nil {
-							writeCompleted.Add(1)
+						if tx != nil {
+							tx.Put(key, val)
+							err := tx.Commit()
+							durNanos := SincePrecisionNanos(t0)
+							writeLatency.RecordNanos(durNanos)
+							if err == nil {
+								writeCompleted.Add(1)
+							} else {
+								errorOps.Add(1)
+							}
 						} else {
 							errorOps.Add(1)
 						}
@@ -469,6 +586,68 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 					cDurNanos := SincePrecisionNanos(cStart)
 					compactionActive.Store(false)
 					compactionOverlapNanos.Add(cDurNanos)
+				}
+			}
+		}()
+	}
+
+	// Launch background flush coordinator if interval configured (e.g. Workload B2)
+	if cfg.FlushTriggerIntervalMs > 0 {
+		workerWg.Add(1)
+		go func() {
+			defer workerWg.Done()
+			<-startBarrier
+			ticker := time.NewTicker(time.Duration(cfg.FlushTriggerIntervalMs) * time.Millisecond)
+			defer ticker.Stop()
+			flushSeq := 0
+			for {
+				select {
+				case <-stopMeasure:
+					return
+				case <-ticker.C:
+					attemptedFlushes.Add(1)
+					flushSeq++
+					// Commit a controlled batch of keys so the memtable has consistent non-empty contents
+					batchKeys := 50
+					batchSuccess := true
+					for k := 0; k < batchKeys; k++ {
+						kIdx := (flushSeq*1000 + k) % cfg.KeyspaceCardinality
+						tx := man.Begin()
+						if tx == nil {
+							batchSuccess = false
+							break
+						}
+						tx.Put(FormatKey(kIdx), FormatVal(kIdx, cfg.ValSizeBytes))
+						if err := tx.Commit(); err != nil {
+							batchSuccess = false
+							break
+						}
+					}
+					if !batchSuccess {
+						delayedFlushes.Add(1)
+						continue
+					}
+					flushActive.Store(true)
+					fStart := NowPrecision()
+					targetFlushes := man.FlushesCompleted() + 1
+					if err := man.TriggerFlush(); err != nil {
+						flushActive.Store(false)
+						delayedFlushes.Add(1)
+						continue
+					}
+					deadline := time.Now().Add(5 * time.Second)
+					for man.FlushesCompleted() < targetFlushes && time.Now().Before(deadline) {
+						if man.FlushErr() != nil {
+							break
+						}
+						time.Sleep(1 * time.Millisecond)
+					}
+					fDurNanos := SincePrecisionNanos(fStart)
+					flushActive.Store(false)
+					flushOverlapNanos.Add(fDurNanos)
+					if man.FlushesCompleted() < targetFlushes {
+						delayedFlushes.Add(1)
+					}
 				}
 			}
 		}()
@@ -583,6 +762,10 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 			LivePhysicalReaders:       livePhysical,
 			CompactionActiveOverlapMs: compactionOverlapNanos.Load() / 1_000_000,
 			ReadsDuringCompaction:     readsDuringCompaction.Load(),
+			FlushActiveOverlapMs:      flushOverlapNanos.Load() / 1_000_000,
+			ReadsDuringFlush:          readsDuringFlush.Load(),
+			AttemptedFlushes:          attemptedFlushes.Load(),
+			DelayedFlushes:            delayedFlushes.Load(),
 			PhaseMetrics: PhaseMetrics{
 				FixtureSetup: phaseSetup,
 				Warmup:       phaseWarmup,
@@ -597,6 +780,7 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 			NumGC:          mStats.NumGC,
 			GCPauseTotalNs: mStats.PauseTotalNs,
 		},
+		FixtureManifest: fixtureManifest,
 		Status:          status,
 		ExclusionReason: exclusionReason,
 	}

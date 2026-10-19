@@ -11,11 +11,13 @@ import (
 type WorkloadID string
 
 const (
-	WorkloadA_ReadOnly                WorkloadID = "WORKLOAD_A_READ_ONLY"
-	WorkloadB_MixedFlush              WorkloadID = "WORKLOAD_B_MIXED_FLUSH"
-	WorkloadC_CompactionOverlap       WorkloadID = "WORKLOAD_C_COMPACTION_OVERLAP"
-	WorkloadD_ReaderChurn             WorkloadID = "WORKLOAD_D_READER_CHURN"
-	WorkloadE_NegativeControlMemtable WorkloadID = "WORKLOAD_E_NEGATIVE_CONTROL_MEMTABLE"
+	WorkloadA_ReadOnly                     WorkloadID = "WORKLOAD_A_READ_ONLY"
+	WorkloadB_MixedFlush                   WorkloadID = "WORKLOAD_B_MIXED_FLUSH" // Legacy alias
+	WorkloadB1_NaturalWriteProgress        WorkloadID = "WORKLOAD_B1_NATURAL_WRITE_PROGRESS"
+	WorkloadB2_ControlledFlushInterference WorkloadID = "WORKLOAD_B2_CONTROLLED_FLUSH_INTERFERENCE"
+	WorkloadC_CompactionOverlap            WorkloadID = "WORKLOAD_C_COMPACTION_OVERLAP"
+	WorkloadD_ReaderChurn                  WorkloadID = "WORKLOAD_D_READER_CHURN"
+	WorkloadE_NegativeControlMemtable      WorkloadID = "WORKLOAD_E_NEGATIVE_CONTROL_MEMTABLE"
 )
 
 // FormatKey generates a fixed-width deterministic key string.

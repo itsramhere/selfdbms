@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "trial_id": "trial_WORKLOAD_D_READER_CHURN_A_r4_1792394725446173700",
+  "trial_id": "trial_WORKLOAD_D_READER_CHURN_A_r4_1792404280495520300",
   "trial_index": 0,
   "workload_id": "WORKLOAD_D_READER_CHURN",
   "sync_mode": "ApproachA_RWMutexBaseline",
@@ -12,15 +12,15 @@
     "physical_cores": 6,
     "logical_cores": 12,
     "total_ram_bytes": 17179869184,
-    "free_ram_bytes": 17042248,
+    "free_ram_bytes": 20540784,
     "go_version": "go1.26.3",
     "gomaxprocs": 12,
     "filesystem_type": "NTFS",
-    "data_dir_path": "C:\\Users\\ramst\\AppData\\Local\\Temp\\smoke_WORKLOAD_D_READER_CHURN_A_4087727741"
+    "data_dir_path": "C:\\Users\\ramst\\AppData\\Local\\Temp\\smoke_WORKLOAD_D_READER_CHURN_A_3318144904"
   },
   "config": {
     "schema_version": "1.0.0",
-    "trial_id": "trial_WORKLOAD_D_READER_CHURN_A_r4_1792394725446173700",
+    "trial_id": "trial_WORKLOAD_D_READER_CHURN_A_r4_1792404280495520300",
     "trial_index": 0,
     "workload_id": "WORKLOAD_D_READER_CHURN",
     "sync_mode": "ApproachA_RWMutexBaseline",
@@ -38,17 +38,18 @@
     "read_distribution": "uniform",
     "zipf_s": 0.99,
     "target_read_hit_ratio": 0.95,
-    "memtable_threshold_bytes": 32768,
-    "data_dir": "C:\\Users\\ramst\\AppData\\Local\\Temp\\smoke_WORKLOAD_D_READER_CHURN_A_4087727741",
+    "memtable_threshold_bytes": 16384,
+    "data_dir": "C:\\Users\\ramst\\AppData\\Local\\Temp\\smoke_WORKLOAD_D_READER_CHURN_A_3318144904",
     "wal_sync": true,
-    "compaction_trigger_interval_ms": 300
+    "compaction_trigger_interval_ms": 500,
+    "flush_trigger_interval_ms": 0
   },
   "timestamps": {
-    "start_iso": "2026-10-19T07:25:39.5392611Z",
-    "finish_iso": "2026-10-19T07:25:41.6797189Z",
+    "start_iso": "2026-10-19T10:04:54.7383045Z",
+    "finish_iso": "2026-10-19T10:04:56.7348468Z",
     "warmup_duration_ms": 200,
     "measurement_duration_ms": 1500,
-    "total_duration_ms": 2139
+    "total_duration_ms": 1996
   },
   "operations": {
     "read_ops_attempted": 24,
@@ -66,19 +67,19 @@
     "validation_error_count": 0
   },
   "throughput": {
-    "read_ops_per_sec": 11.217781305146787,
-    "write_ops_per_sec": 1.8696302175244646,
-    "total_ops_per_sec": 13.087411522671252
+    "read_ops_per_sec": 12.021367379448602,
+    "write_ops_per_sec": 2.0035612299081005,
+    "total_ops_per_sec": 14.024928609356701
   },
   "latency_read_nanos": {
     "sample_count": 24,
     "zero_sample_count": 0,
     "overflow_count": 0,
-    "min": 959600,
-    "max": 988068800,
-    "mean": 304626575,
-    "p50": 194867100,
-    "p95": 768763900,
+    "min": 825200,
+    "max": 650685400,
+    "mean": 291958845.8333333,
+    "p50": 271975300,
+    "p95": 647103300,
     "p99": null,
     "p999": null
   },
@@ -86,10 +87,10 @@
     "sample_count": 4,
     "zero_sample_count": 0,
     "overflow_count": 0,
-    "min": 249608700,
-    "max": 1939961100,
-    "mean": 1454964950,
-    "p50": 1690347300,
+    "min": 110345200,
+    "max": 1855823100,
+    "mean": 1391856625,
+    "p50": 1745462500,
     "p95": null,
     "p99": null,
     "p999": null
@@ -99,7 +100,7 @@
     "final_sstables": 1,
     "flushes_completed": 4,
     "compactions_completed": 1,
-    "sstable_point_reads": 27,
+    "sstable_point_reads": 30,
     "memtable_point_reads": 0,
     "measured_flushes": 0,
     "measured_compactions": 1,
@@ -110,8 +111,12 @@
     "retired_snapshots_count": 0,
     "pending_cleanup_count": 0,
     "live_physical_readers": 0,
-    "compaction_active_overlap_ms": 1839,
+    "compaction_active_overlap_ms": 1495,
     "reads_during_compaction_count": 15,
+    "flush_active_overlap_ms": 0,
+    "reads_during_flush_count": 0,
+    "attempted_flushes": 0,
+    "delayed_flushes": 0,
     "phase_metrics": {
       "fixture_setup": {
         "start_flushes": 0,
@@ -121,8 +126,8 @@
         "end_compactions": 0,
         "delta_compactions": 0,
         "start_sstable_reads": 0,
-        "end_sstable_reads": 0,
-        "delta_sstable_reads": 0,
+        "end_sstable_reads": 3,
+        "delta_sstable_reads": 3,
         "start_memtable_reads": 0,
         "end_memtable_reads": 0,
         "delta_memtable_reads": 0
@@ -134,8 +139,8 @@
         "start_compactions": 0,
         "end_compactions": 0,
         "delta_compactions": 0,
-        "start_sstable_reads": 0,
-        "end_sstable_reads": 6,
+        "start_sstable_reads": 3,
+        "end_sstable_reads": 9,
         "delta_sstable_reads": 6,
         "start_memtable_reads": 0,
         "end_memtable_reads": 0,
@@ -148,8 +153,8 @@
         "start_compactions": 0,
         "end_compactions": 1,
         "delta_compactions": 1,
-        "start_sstable_reads": 6,
-        "end_sstable_reads": 27,
+        "start_sstable_reads": 9,
+        "end_sstable_reads": 30,
         "delta_sstable_reads": 21,
         "start_memtable_reads": 0,
         "end_memtable_reads": 0,
@@ -162,8 +167,8 @@
         "start_compactions": 1,
         "end_compactions": 1,
         "delta_compactions": 0,
-        "start_sstable_reads": 27,
-        "end_sstable_reads": 27,
+        "start_sstable_reads": 30,
+        "end_sstable_reads": 30,
         "delta_sstable_reads": 0,
         "start_memtable_reads": 0,
         "end_memtable_reads": 0,
@@ -176,8 +181,8 @@
         "start_compactions": 1,
         "end_compactions": 1,
         "delta_compactions": 0,
-        "start_sstable_reads": 27,
-        "end_sstable_reads": 27,
+        "start_sstable_reads": 30,
+        "end_sstable_reads": 30,
         "delta_sstable_reads": 0,
         "start_memtable_reads": 0,
         "end_memtable_reads": 0,
@@ -186,10 +191,18 @@
     }
   },
   "host_diagnostics": {
-    "heap_alloc_bytes": 10532280,
-    "heap_sys_bytes": 20381696,
-    "num_gc": 101,
-    "gc_pause_total_ns": 10135300
+    "heap_alloc_bytes": 9528872,
+    "heap_sys_bytes": 24543232,
+    "num_gc": 134,
+    "gc_pause_total_ns": 5459600
+  },
+  "fixture_manifest": {
+    "committed_keys": 10000,
+    "expected_sstable_count": 4,
+    "actual_sstable_count": 4,
+    "flush_errors": null,
+    "validation_readback_status": "PASSED",
+    "initialization_duration_ms": 13696
   },
   "status": "SUCCESS",
   "exclusion_reason": null

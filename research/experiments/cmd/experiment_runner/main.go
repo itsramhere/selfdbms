@@ -79,20 +79,25 @@ func main() {
 		case harness.WorkloadA_ReadOnly:
 			cfg.WriterConcurrency = 0
 			cfg.InitialSSTableCount = 4
-		case harness.WorkloadB_MixedFlush:
+		case harness.WorkloadB_MixedFlush, harness.WorkloadB1_NaturalWriteProgress:
 			cfg.WriterConcurrency = 2
 			cfg.InitialSSTableCount = 4
-			cfg.MemtableThresholdBytes = 256 // 256B threshold to force measured flushes
+			cfg.MemtableThresholdBytes = 1024 * 1024 // 1MB natural threshold
+		case harness.WorkloadB2_ControlledFlushInterference:
+			cfg.WriterConcurrency = 0
+			cfg.InitialSSTableCount = 4
+			cfg.MemtableThresholdBytes = 64 * 1024 * 1024
+			cfg.FlushTriggerIntervalMs = 2000
 		case harness.WorkloadC_CompactionOverlap:
 			cfg.WriterConcurrency = 1
 			cfg.InitialSSTableCount = 4
-			cfg.MemtableThresholdBytes = 32 * 1024
-			cfg.CompactionTriggerIntervalMs = 300
+			cfg.MemtableThresholdBytes = 64 * 1024 * 1024
+			cfg.CompactionTriggerIntervalMs = 500
 		case harness.WorkloadD_ReaderChurn:
 			cfg.WriterConcurrency = 3
 			cfg.InitialSSTableCount = 4
-			cfg.MemtableThresholdBytes = 32 * 1024
-			cfg.CompactionTriggerIntervalMs = 300
+			cfg.MemtableThresholdBytes = 16 * 1024 // 16KB threshold to ensure continuous flush generation
+			cfg.CompactionTriggerIntervalMs = 1500 // 1500ms compaction interval for repeated churn
 		case harness.WorkloadE_NegativeControlMemtable:
 			cfg.WriterConcurrency = 2
 			cfg.InitialSSTableCount = 0
@@ -119,10 +124,11 @@ func main() {
 		res.Operations.ReadOpsCompleted, res.Operations.WriteOpsCompleted,
 		res.Timestamps.TotalDurationMs, res.Throughput.ReadOpsPerSec,
 		float64(res.LatencyRead.P50Nanos)/1000.0, p99Val)
-	fmt.Printf("[RUNNER] Measured LSM activity: Flushes=%d, Compactions=%d, SSTableReads=%d, MemtableReads=%d | OverlapMs=%d, ReadsInOverlap=%d\n",
+	fmt.Printf("[RUNNER] Measured LSM activity: Flushes=%d, Compactions=%d, SSTableReads=%d, MemtableReads=%d | CompOverlapMs=%d, ReadsInCompOverlap=%d | FlushOverlapMs=%d, ReadsInFlushOverlap=%d\n",
 		res.LSMDiagnostics.MeasuredFlushes, res.LSMDiagnostics.MeasuredCompactions,
 		res.LSMDiagnostics.MeasuredSSTablePointReads, res.LSMDiagnostics.MeasuredMemtablePointReads,
-		res.LSMDiagnostics.CompactionActiveOverlapMs, res.LSMDiagnostics.ReadsDuringCompaction)
+		res.LSMDiagnostics.CompactionActiveOverlapMs, res.LSMDiagnostics.ReadsDuringCompaction,
+		res.LSMDiagnostics.FlushActiveOverlapMs, res.LSMDiagnostics.ReadsDuringFlush)
 
 	if *outputFlag != "" {
 		if err := harness.SaveResultJSON(res, *outputFlag); err != nil {
@@ -139,6 +145,10 @@ func parseWorkload(raw string) harness.WorkloadID {
 		return harness.WorkloadA_ReadOnly
 	case "B", "WORKLOAD_B", "WORKLOAD_B_MIXED_FLUSH":
 		return harness.WorkloadB_MixedFlush
+	case "B1", "WORKLOAD_B1", "WORKLOAD_B1_NATURAL_WRITE_PROGRESS":
+		return harness.WorkloadB1_NaturalWriteProgress
+	case "B2", "WORKLOAD_B2", "WORKLOAD_B2_CONTROLLED_FLUSH_INTERFERENCE":
+		return harness.WorkloadB2_ControlledFlushInterference
 	case "C", "WORKLOAD_C", "WORKLOAD_C_COMPACTION_OVERLAP":
 		return harness.WorkloadC_CompactionOverlap
 	case "D", "WORKLOAD_D", "WORKLOAD_D_READER_CHURN":
@@ -157,7 +167,8 @@ func runSmokeSuite(outDir string, gitRev string) {
 
 	workloads := []harness.WorkloadID{
 		harness.WorkloadA_ReadOnly,
-		harness.WorkloadB_MixedFlush,
+		harness.WorkloadB1_NaturalWriteProgress,
+		harness.WorkloadB2_ControlledFlushInterference,
 		harness.WorkloadC_CompactionOverlap,
 		harness.WorkloadD_ReaderChurn,
 		harness.WorkloadE_NegativeControlMemtable,
@@ -180,20 +191,25 @@ func runSmokeSuite(outDir string, gitRev string) {
 			case harness.WorkloadA_ReadOnly:
 				cfg.WriterConcurrency = 0
 				cfg.InitialSSTableCount = 4
-			case harness.WorkloadB_MixedFlush:
+			case harness.WorkloadB_MixedFlush, harness.WorkloadB1_NaturalWriteProgress:
 				cfg.WriterConcurrency = 2
 				cfg.InitialSSTableCount = 4
-				cfg.MemtableThresholdBytes = 256 // 256B threshold so 2 writes trigger a measured flush even under extreme RWMutex contention
+				cfg.MemtableThresholdBytes = 1024 * 1024
+			case harness.WorkloadB2_ControlledFlushInterference:
+				cfg.WriterConcurrency = 0
+				cfg.InitialSSTableCount = 4
+				cfg.MemtableThresholdBytes = 64 * 1024 * 1024
+				cfg.FlushTriggerIntervalMs = 500
 			case harness.WorkloadC_CompactionOverlap:
 				cfg.WriterConcurrency = 1
 				cfg.InitialSSTableCount = 4
-				cfg.MemtableThresholdBytes = 32 * 1024
+				cfg.MemtableThresholdBytes = 64 * 1024 * 1024
 				cfg.CompactionTriggerIntervalMs = 300
 			case harness.WorkloadD_ReaderChurn:
 				cfg.WriterConcurrency = 3
 				cfg.InitialSSTableCount = 4
-				cfg.MemtableThresholdBytes = 32 * 1024
-				cfg.CompactionTriggerIntervalMs = 300
+				cfg.MemtableThresholdBytes = 16 * 1024
+				cfg.CompactionTriggerIntervalMs = 500
 			case harness.WorkloadE_NegativeControlMemtable:
 				cfg.WriterConcurrency = 2
 				cfg.InitialSSTableCount = 0
@@ -225,11 +241,11 @@ func runSmokeSuite(outDir string, gitRev string) {
 			_ = harness.SaveResultJSON(res, filePath)
 
 			p50Us := float64(res.LatencyRead.P50Nanos) / 1000.0
-			fmt.Printf("        -> Done: %d reads, %d writes | MeasuredFlushes: %d, MeasuredCompactions: %d | SSTableReads: %d, MemtableReads: %d | OverlapMs: %d, ReadsInOverlap: %d | p50: %.2f µs\n",
+			fmt.Printf("        -> Done: %d reads, %d writes | MeasFlushes: %d, MeasComp: %d | CompOverlapMs: %d, ReadsInComp: %d | FlushOverlapMs: %d, ReadsInFlush: %d | p50: %.2f µs\n",
 				res.Operations.ReadOpsCompleted, res.Operations.WriteOpsCompleted,
 				res.LSMDiagnostics.MeasuredFlushes, res.LSMDiagnostics.MeasuredCompactions,
-				res.LSMDiagnostics.MeasuredSSTablePointReads, res.LSMDiagnostics.MeasuredMemtablePointReads,
 				res.LSMDiagnostics.CompactionActiveOverlapMs, res.LSMDiagnostics.ReadsDuringCompaction,
+				res.LSMDiagnostics.FlushActiveOverlapMs, res.LSMDiagnostics.ReadsDuringFlush,
 				p50Us)
 		}
 	}
@@ -240,7 +256,7 @@ func runSmokeSuite(outDir string, gitRev string) {
 
 func runPilotSuite(outDir string, gitRev string) {
 	fmt.Println("================================================================================")
-	fmt.Println("[PILOT] Executing Official Phase I5 Parameter Pilot Suite (10s duration)")
+	fmt.Println("[PILOT] Executing Bounded Readiness Pilot Suite (10s duration)")
 	fmt.Println("================================================================================")
 
 	pilotConfigs := []struct {
@@ -249,8 +265,8 @@ func runPilotSuite(outDir string, gitRev string) {
 		setup    func(cfg *harness.TrialConfig)
 	}{
 		{
-			workload: harness.WorkloadB_MixedFlush,
-			name:     "Workload B (Mixed Flush, 1MB Memtable Threshold)",
+			workload: harness.WorkloadB1_NaturalWriteProgress,
+			name:     "Workload B1 (Natural Write Progress, 1MB Memtable Threshold)",
 			setup: func(cfg *harness.TrialConfig) {
 				cfg.ReaderConcurrency = 4
 				cfg.WriterConcurrency = 2
@@ -260,6 +276,23 @@ func runPilotSuite(outDir string, gitRev string) {
 				cfg.InitialKeysPerSSTable = 2500
 				cfg.KeyspaceCardinality = 10000
 				cfg.MemtableThresholdBytes = 1024 * 1024 // Official 1MB threshold
+				cfg.TargetReadHitRatio = 0.95
+				cfg.WalSync = true
+			},
+		},
+		{
+			workload: harness.WorkloadB2_ControlledFlushInterference,
+			name:     "Workload B2 (Controlled Flush Interference, 2000ms Flush Trigger Interval)",
+			setup: func(cfg *harness.TrialConfig) {
+				cfg.ReaderConcurrency = 4
+				cfg.WriterConcurrency = 0
+				cfg.MeasurementDurationMs = 10000
+				cfg.WarmupDurationMs = 500
+				cfg.InitialSSTableCount = 4
+				cfg.InitialKeysPerSSTable = 2500
+				cfg.KeyspaceCardinality = 10000
+				cfg.MemtableThresholdBytes = 64 * 1024 * 1024
+				cfg.FlushTriggerIntervalMs = 2000
 				cfg.TargetReadHitRatio = 0.95
 				cfg.WalSync = true
 			},
@@ -283,7 +316,7 @@ func runPilotSuite(outDir string, gitRev string) {
 		},
 		{
 			workload: harness.WorkloadD_ReaderChurn,
-			name:     "Workload D (Reader Churn, 512KB Threshold, 500ms Compaction)",
+			name:     "Workload D (Reader Churn, 16KB Threshold, 1500ms Compaction)",
 			setup: func(cfg *harness.TrialConfig) {
 				cfg.ReaderConcurrency = 4
 				cfg.WriterConcurrency = 3
@@ -292,8 +325,8 @@ func runPilotSuite(outDir string, gitRev string) {
 				cfg.InitialSSTableCount = 4
 				cfg.InitialKeysPerSSTable = 2500
 				cfg.KeyspaceCardinality = 10000
-				cfg.MemtableThresholdBytes = 512 * 1024 // Official 512KB threshold
-				cfg.CompactionTriggerIntervalMs = 500  // Official 500ms interval
+				cfg.MemtableThresholdBytes = 16 * 1024 // 16KB threshold to ensure continuous flush generation
+				cfg.CompactionTriggerIntervalMs = 1500 // 1500ms compaction interval for repeated churn
 				cfg.TargetReadHitRatio = 0.95
 				cfg.WalSync = true
 			},
@@ -347,8 +380,9 @@ func runPilotSuite(outDir string, gitRev string) {
 			fmt.Printf("        -> HitRate: %.1f%%, ValErrors: %d, Flushes: %d, Compactions: %d\n",
 				hitRate, res.Operations.ValidationErrorCount,
 				res.LSMDiagnostics.MeasuredFlushes, res.LSMDiagnostics.MeasuredCompactions)
-			fmt.Printf("        -> Overlap: %dms, OverlapReads: %d | p50: %.2f µs, p99: %.2f µs\n\n",
+			fmt.Printf("        -> CompOverlap: %dms, ReadsInComp: %d | FlushOverlap: %dms, ReadsInFlush: %d | p50: %.2f µs, p99: %.2f µs\n\n",
 				res.LSMDiagnostics.CompactionActiveOverlapMs, res.LSMDiagnostics.ReadsDuringCompaction,
+				res.LSMDiagnostics.FlushActiveOverlapMs, res.LSMDiagnostics.ReadsDuringFlush,
 				p50Us, p99Us)
 		}
 	}

@@ -4,6 +4,11 @@ package harness
 
 import "time"
 
+// EnsurePrecisionTimer verifies that the high-resolution timer is operational on Linux/POSIX.
+func EnsurePrecisionTimer() error {
+	return nil
+}
+
 // PrecisionTime represents a monotonic timestamp backed by Go's monotonic runtime clock.
 type PrecisionTime struct {
 	t time.Time

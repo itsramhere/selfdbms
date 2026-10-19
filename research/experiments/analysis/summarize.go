@@ -113,8 +113,8 @@ func printMarkdownTable(results []*harness.TrialResult) {
 	fmt.Println("### Preliminary Experiment Smoke Validation Summary")
 	fmt.Println("*Note: PRELIMINARY HARNESS VALIDATION — NOT OFFICIAL PERFORMANCE EVIDENCE.*")
 	fmt.Println()
-	fmt.Println("| Workload | Mode | Readers | Read Ops/s | p50 (µs) | p95 (µs) | p99 (µs) | HitRate% | ValErrs | Meas Flushes | Meas Compact | SST Reads | Mem Reads | Overlap (ms) | Overlap Reads | Status |")
-	fmt.Println("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+	fmt.Println("| Workload | Mode | Readers | Read Ops/s | p50 (µs) | p95 (µs) | p99 (µs) | HitRate% | ValErrs | Meas Flushes | Meas Compact | SST Reads | Mem Reads | CompOverlap (ms) | CompOverlap Rds | FlushOverlap (ms) | FlushOverlap Rds | Status |")
+	fmt.Println("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
 	for _, r := range results {
 		p50Us := float64(r.LatencyRead.P50Nanos) / 1000.0
 		p95Str := "n/a"
@@ -141,22 +141,23 @@ func printMarkdownTable(results []*harness.TrialResult) {
 			statusStr = fmt.Sprintf("%s (%s)", r.Status, *r.ExclusionReason)
 		}
 
-		fmt.Printf("| %s | %s | %d | %.1f | %.2f | %s | %s | %.1f%% | %d | %d | %d | %d | %d | %d | %d | %s |\n",
+		fmt.Printf("| %s | %s | %d | %.1f | %.2f | %s | %s | %.1f%% | %d | %d | %d | %d | %d | %d | %d | %d | %d | %s |\n",
 			workloadShort, modeShort, r.Config.ReaderConcurrency,
 			r.Throughput.ReadOpsPerSec, p50Us, p95Str, p99Str,
 			actualHitRate, r.Operations.ValidationErrorCount,
 			r.LSMDiagnostics.MeasuredFlushes, r.LSMDiagnostics.MeasuredCompactions,
 			r.LSMDiagnostics.MeasuredSSTablePointReads, r.LSMDiagnostics.MeasuredMemtablePointReads,
 			r.LSMDiagnostics.CompactionActiveOverlapMs, r.LSMDiagnostics.ReadsDuringCompaction,
+			r.LSMDiagnostics.FlushActiveOverlapMs, r.LSMDiagnostics.ReadsDuringFlush,
 			statusStr)
 	}
 	fmt.Println()
 }
 
 func printTextTable(results []*harness.TrialResult) {
-	fmt.Printf("%-24s %-6s %-7s %-12s %-10s %-10s %-10s %-8s %-10s %-10s %-10s %-10s %-10s\n",
-		"Workload", "Mode", "Readers", "Read Ops/s", "p50 (µs)", "p99 (µs)", "HitRate%", "ValErrs", "MeasFlush", "MeasCmp", "OverlapMs", "OverlapRds", "Status")
-	fmt.Println(strings.Repeat("-", 145))
+	fmt.Printf("%-28s %-6s %-7s %-12s %-10s %-10s %-8s %-8s %-10s %-10s %-12s %-12s %-12s %-12s %-10s\n",
+		"Workload", "Mode", "Readers", "Read Ops/s", "p50 (µs)", "p99 (µs)", "HitRate%", "ValErrs", "MeasFlush", "MeasCmp", "CompOverMs", "CompOverRds", "FlshOverMs", "FlshOverRds", "Status")
+	fmt.Println(strings.Repeat("-", 175))
 	for _, r := range results {
 		p50Us := float64(r.LatencyRead.P50Nanos) / 1000.0
 		p99Str := "n/a"
@@ -172,12 +173,13 @@ func printTextTable(results []*harness.TrialResult) {
 		if r.Operations.ReadOpsCompleted > 0 {
 			actualHitRate = float64(r.Operations.ActualHitCount) / float64(r.Operations.ReadOpsCompleted) * 100.0
 		}
-		fmt.Printf("%-24s %-6s %-7d %-12.1f %-10.2f %-10s %-9.1f%% %-8d %-10d %-10d %-10d %-10d %-10s\n",
+		fmt.Printf("%-28s %-6s %-7d %-12.1f %-10.2f %-10s %-8.1f%% %-8d %-10d %-10d %-12d %-12d %-12d %-12d %-10s\n",
 			workloadShort, modeShort, r.Config.ReaderConcurrency,
 			r.Throughput.ReadOpsPerSec, p50Us, p99Str,
 			actualHitRate, r.Operations.ValidationErrorCount,
 			r.LSMDiagnostics.MeasuredFlushes, r.LSMDiagnostics.MeasuredCompactions,
 			r.LSMDiagnostics.CompactionActiveOverlapMs, r.LSMDiagnostics.ReadsDuringCompaction,
+			r.LSMDiagnostics.FlushActiveOverlapMs, r.LSMDiagnostics.ReadsDuringFlush,
 			r.Status)
 	}
 	fmt.Println()
