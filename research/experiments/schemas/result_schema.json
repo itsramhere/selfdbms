@@ -214,8 +214,19 @@
         "reads_during_compaction_count": { "type": "integer" },
         "flush_active_overlap_ms": { "type": "integer" },
         "reads_during_flush_count": { "type": "integer" },
+        "reads_during_publication_count": { "type": "integer" },
+        "reads_during_queue_wait_count": { "type": "integer" },
         "attempted_flushes": { "type": "integer" },
+        "accepted_flushes": { "type": "integer" },
+        "rejected_flushes": { "type": "integer" },
+        "started_flushes": { "type": "integer" },
+        "completed_flushes": { "type": "integer" },
         "delayed_flushes": { "type": "integer" },
+        "failed_flushes": { "type": "integer" },
+        "admission_duration_ms": { "type": "integer" },
+        "queue_wait_duration_ms": { "type": "integer" },
+        "physical_flush_duration_ms": { "type": "integer" },
+        "publication_duration_ms": { "type": "integer" },
         "phase_metrics": {
           "type": "object",
           "required": [
@@ -277,6 +288,9 @@
       "enum": ["SUCCESS", "FAILED", "EXCLUDED"]
     },
     "exclusion_reason": {
+      "type": ["string", "null"]
+    },
+    "failure_reason": {
       "type": ["string", "null"]
     }
   },

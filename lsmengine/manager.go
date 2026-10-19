@@ -77,7 +77,10 @@ type Manager struct {
 	flushQueue                  []*Memtable
 	flushQueueMu                sync.Mutex
 	flushQueueCond              *sync.Cond
+	flushDoneCond               *sync.Cond
 	flushQueueClosed            bool
+	isFlushing                  bool
+	flushObserver               FlushObserver
 	Mem                         *Memtable
 	Log                         *Wal
 	Frozenmem                   []*Memtable
@@ -87,6 +90,7 @@ type Manager struct {
 	duringPointReadHook         func()
 	duringMemtableReadHook      func()
 	beforeFlushPublishHook      func()
+	beforeFlushWorkerBeginHook  func()
 	flushBuildHook              func() error
 	walRotationHook             func() error
 
@@ -289,6 +293,9 @@ func (m *Manager) Close() error {
 	if m.flushQueueCond != nil {
 		m.flushQueueCond.Broadcast()
 	}
+	if m.flushDoneCond != nil {
+		m.flushDoneCond.Broadcast()
+	}
 	m.flushQueueMu.Unlock()
 	m.Mu.Unlock()
 
@@ -404,6 +411,7 @@ func (m *Manager) latestValueLocked(userKey []byte) (uint64, error) {
 func (m *Manager) initFlushWorkerLocked() {
 	if m.flushQueueCond == nil {
 		m.flushQueueCond = sync.NewCond(&m.flushQueueMu)
+		m.flushDoneCond = sync.NewCond(&m.flushQueueMu)
 		m.flushWg.Add(1)
 		go m.flushLoop()
 	}
@@ -426,9 +434,24 @@ func (m *Manager) flushLoop() {
 		if len(m.flushQueue) == 0 {
 			m.flushQueue = nil
 		}
+		m.isFlushing = true
 		m.flushQueueMu.Unlock()
 
+		if m.beforeFlushWorkerBeginHook != nil {
+			m.beforeFlushWorkerBeginHook()
+		}
+		if m.flushObserver != nil {
+			m.flushObserver.OnFlushWorkerBegin()
+		}
+
 		m.flushToDisk(mem)
+
+		m.flushQueueMu.Lock()
+		m.isFlushing = false
+		if m.flushDoneCond != nil {
+			m.flushDoneCond.Broadcast()
+		}
+		m.flushQueueMu.Unlock()
 
 		// Option A (Fail-stop): Halt worker immediately upon encountering any fatal flush error.
 		// Halting prevents subsequent generations from being published to ActiveSSreaders
@@ -472,17 +495,67 @@ func (m *Manager) EnqueueFlush(mem *Memtable) {
 	m.enqueueFlushLocked(mem)
 }
 
+// SetFlushObserver sets the lifecycle observer for flush events.
+func (m *Manager) SetFlushObserver(observer FlushObserver) {
+	m.flushObserver = observer
+}
+
+// SetBeforeFlushWorkerBeginHook sets a hook called by the flush worker right after
+// dequeuing a Memtable before OnFlushWorkerBegin, used for deterministic testing.
+func (m *Manager) SetBeforeFlushWorkerBeginHook(hook func()) {
+	m.beforeFlushWorkerBeginHook = hook
+}
+
+// SetFlushBuildHook sets a hook called when building the SSTable file, used for deterministic testing.
+func (m *Manager) SetFlushBuildHook(hook func() error) {
+	m.flushBuildHook = hook
+}
+
+// WaitForFlushCompletion blocks until all queued and in-progress flushes complete.
+func (m *Manager) WaitForFlushCompletion() error {
+	m.flushQueueMu.Lock()
+	defer m.flushQueueMu.Unlock()
+	for (len(m.flushQueue) > 0 || m.isFlushing) && !m.flushQueueClosed {
+		m.Mu.RLock()
+		err := m.flushErr
+		m.Mu.RUnlock()
+		if err != nil {
+			return err
+		}
+		if m.flushDoneCond != nil {
+			m.flushDoneCond.Wait()
+		} else {
+			break
+		}
+	}
+	m.Mu.RLock()
+	defer m.Mu.RUnlock()
+	return m.flushErr
+}
+
 // TriggerFlush freezes the active Memtable and enqueues it to the background FIFO flush worker.
 func (m *Manager) TriggerFlush() error {
+	if m.flushObserver != nil {
+		m.flushObserver.OnFlushRequested()
+	}
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	if m.state != EngineOpen {
+		if m.flushObserver != nil {
+			m.flushObserver.OnFlushAdmitted(false, ErrClosed)
+		}
 		return ErrClosed
 	}
 	if m.flushErr != nil {
+		if m.flushObserver != nil {
+			m.flushObserver.OnFlushAdmitted(false, m.flushErr)
+		}
 		return m.flushErr
 	}
 	if m.Mem == nil || (m.Mem.SizeBytes == 0 && m.Mem.SK.headNode.Forward[0] == nil) {
+		if m.flushObserver != nil {
+			m.flushObserver.OnFlushAdmitted(false, nil)
+		}
 		return nil
 	}
 
@@ -492,6 +565,9 @@ func (m *Manager) TriggerFlush() error {
 			if err := m.walRotationHook(); err != nil {
 				if m.flushErr == nil {
 					m.flushErr = fmt.Errorf("wal rotation failed: %w", err)
+				}
+				if m.flushObserver != nil {
+					m.flushObserver.OnFlushAdmitted(false, m.flushErr)
 				}
 				return fmt.Errorf("wal rotation failed: %w", err)
 			}
@@ -505,6 +581,9 @@ func (m *Manager) TriggerFlush() error {
 		if err != nil {
 			if m.flushErr == nil {
 				m.flushErr = fmt.Errorf("wal rotation failed: %w", err)
+			}
+			if m.flushObserver != nil {
+				m.flushObserver.OnFlushAdmitted(false, m.flushErr)
 			}
 			return fmt.Errorf("wal rotation failed: %w", err)
 		}
@@ -528,6 +607,9 @@ func (m *Manager) TriggerFlush() error {
 	}
 
 	m.enqueueFlushLocked(frozen)
+	if m.flushObserver != nil {
+		m.flushObserver.OnFlushAdmitted(true, nil)
+	}
 	return nil
 }
 
@@ -547,12 +629,19 @@ func (m *Manager) checkAndTriggerFlush() {
 		return
 	}
 
+	if m.flushObserver != nil {
+		m.flushObserver.OnFlushRequested()
+	}
+
 	// Rotate WAL first before altering in-memory state
 	if m.Log != nil && m.Log.File != nil {
 		if m.walRotationHook != nil {
 			if err := m.walRotationHook(); err != nil {
 				if m.flushErr == nil {
 					m.flushErr = fmt.Errorf("wal rotation failed: %w", err)
+				}
+				if m.flushObserver != nil {
+					m.flushObserver.OnFlushAdmitted(false, m.flushErr)
 				}
 				m.Mu.Unlock()
 				return
@@ -567,6 +656,9 @@ func (m *Manager) checkAndTriggerFlush() {
 		if err != nil {
 			if m.flushErr == nil {
 				m.flushErr = fmt.Errorf("wal rotation failed: %w", err)
+			}
+			if m.flushObserver != nil {
+				m.flushObserver.OnFlushAdmitted(false, m.flushErr)
 			}
 			m.Mu.Unlock()
 			return
@@ -592,10 +684,16 @@ func (m *Manager) checkAndTriggerFlush() {
 	}
 
 	m.enqueueFlushLocked(frozen)
+	if m.flushObserver != nil {
+		m.flushObserver.OnFlushAdmitted(true, nil)
+	}
 	m.Mu.Unlock()
 }
 
 func (m *Manager) flushToDisk(mem *Memtable) {
+	if m.flushObserver != nil {
+		m.flushObserver.OnFlushBuildBegin()
+	}
 	if m.flushBuildHook != nil {
 		if err := m.flushBuildHook(); err != nil {
 			m.Mu.Lock()
@@ -603,6 +701,10 @@ func (m *Manager) flushToDisk(mem *Memtable) {
 				m.flushErr = err
 			}
 			m.Mu.Unlock()
+			if m.flushObserver != nil {
+				m.flushObserver.OnFlushBuildEnd(err)
+				m.flushObserver.OnFlushComplete(err)
+			}
 			return
 		}
 	}
@@ -618,6 +720,10 @@ func (m *Manager) flushToDisk(mem *Memtable) {
 			m.flushErr = err
 		}
 		m.Mu.Unlock()
+		if m.flushObserver != nil {
+			m.flushObserver.OnFlushBuildEnd(err)
+			m.flushObserver.OnFlushComplete(err)
+		}
 		return
 	}
 
@@ -640,6 +746,10 @@ func (m *Manager) flushToDisk(mem *Memtable) {
 			m.flushErr = err
 		}
 		m.Mu.Unlock()
+		if m.flushObserver != nil {
+			m.flushObserver.OnFlushBuildEnd(err)
+			m.flushObserver.OnFlushComplete(err)
+		}
 		return
 	}
 
@@ -651,11 +761,23 @@ func (m *Manager) flushToDisk(mem *Memtable) {
 			m.flushErr = err
 		}
 		m.Mu.Unlock()
+		if m.flushObserver != nil {
+			m.flushObserver.OnFlushBuildEnd(err)
+			m.flushObserver.OnFlushComplete(err)
+		}
 		return
+	}
+
+	if m.flushObserver != nil {
+		m.flushObserver.OnFlushBuildEnd(nil)
 	}
 
 	if m.beforeFlushPublishHook != nil {
 		m.beforeFlushPublishHook()
+	}
+
+	if m.flushObserver != nil {
+		m.flushObserver.OnFlushPublishBegin()
 	}
 
 	// Swap the newly built SSTable into the read path and remove the frozen memtable
@@ -666,15 +788,25 @@ func (m *Manager) flushToDisk(mem *Memtable) {
 	if m.state == EngineClosed {
 		reader.Close()
 		os.Remove(filename)
+		if m.flushObserver != nil {
+			m.flushObserver.OnFlushPublishEnd(ErrClosed)
+			m.flushObserver.OnFlushComplete(ErrClosed)
+		}
 		return
 	}
 
 	if m.syncMode == SyncModeApproachB {
 		sr := NewSharedReader(reader, filename)
+		var pubErr error
 		if err := m.publishFlushLockedApproachB(mem, sr); err != nil {
 			if m.flushErr == nil {
 				m.flushErr = err
 			}
+			pubErr = err
+		}
+		if m.flushObserver != nil {
+			m.flushObserver.OnFlushPublishEnd(pubErr)
+			m.flushObserver.OnFlushComplete(pubErr)
 		}
 		return
 	}
@@ -682,6 +814,10 @@ func (m *Manager) flushToDisk(mem *Memtable) {
 	m.ActiveSSreaders = append(m.ActiveSSreaders, reader)
 	m.removeFrozenMemtableLocked(mem)
 	m.flushesCompleted.Add(1)
+	if m.flushObserver != nil {
+		m.flushObserver.OnFlushPublishEnd(nil)
+		m.flushObserver.OnFlushComplete(nil)
+	}
 }
 
 func (m *Manager) removeFrozenMemtableLocked(mem *Memtable) {

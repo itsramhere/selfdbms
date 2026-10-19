@@ -575,6 +575,70 @@ Format:
 - **Status**: Fixed & Verified (Sub-phase I4.9, Decisions D-044, D-045).
 - **Commit**: `HEAD`.
 
+---
+
+### E-020: Flush Queue Wait vs Physical Flush Conflation in B2 Flush Overlap Metrics
+
+- **ID**: `E-020`
+- **Detected**: 2026-10-19, during external review of Checkpoint CP4b
+- **Sub-phase**: I5.1.1 (Decouple Flush Admission from Flush Execution)
+- **Severity**: Benchmark / Measurement Accounting Defect (P1)
+- **Symptom**: In Workload B2, `flushActive` was asserted immediately prior to calling `man.TriggerFlush()` and cleared upon return. If `TriggerFlush()` merely admitted or enqueued a memtable while a previous flush was already executing or the background flush worker was busy, the queue wait time was counted as part of the active flush duration. Reads occurring while a memtable was merely waiting in the FIFO queue were attributed as overlapping physical disk I/O, distorting flush publication latency and concurrency accounting.
+- **Root Cause**: Absence of granular flush lifecycle hooks in `Manager`. Flush admission (`TriggerFlush`), worker pick-up (`flushLoop`), physical SSTable building (`flushToDisk`), and reader publication were not explicitly separated.
+- **Fix**:
+  1. Implemented `FlushObserver` interface in `lsmengine/flush_observer.go` with 7 lifecycle hooks: `OnFlushRequested`, `OnFlushAdmitted`, `OnFlushWorkerBegin`, `OnFlushBuildBegin`, `OnFlushBuildEnd`, `OnFlushPublishBegin`, `OnFlushPublishEnd`, `OnFlushComplete`.
+  2. Integrated observer into `lsmengine/manager.go` at all transition points (`TriggerFlush`, `checkAndTriggerFlush`, `flushLoop`, `flushToDisk`).
+  3. Replaced polling loops with `m.flushDoneCond *sync.Cond` and `m.isFlushing` tracking in `Manager.WaitForFlushCompletion()`.
+  4. Implemented `FlushTracker` in `research/experiments/harness/flush_tracker.go` recording 7 lifecycle counts, 4 duration intervals (`admission_duration_nanos`, `queue_wait_duration_nanos`, `physical_flush_nanos`, `publication_nanos`), and exact concurrency counters (`reads_during_physical_flush`, `reads_during_publication`, `reads_during_queue_wait`).
+- **Regression Test**: `TestHarness_WorkloadB2_ControlledFlushInterference`, `TestFlushObserver_HookSequencing`, `TestFlushObserver_QueueWaitDecoupledFromPhysicalFlush`.
+- **Validation**: Verified on Windows NTFS and WSL2 native ext4 during mandatory I5.1.4 B2 Preflight. Worker begin/complete observed; physical flush duration strictly derived from worker timestamps; 0 queue wait conflation.
+- **Status**: Fixed & Verified (Sub-phase I5.1.1, Decision D-048).
+- **Commit**: `HEAD`.
+
+---
+
+### E-021: Timer Silent Clamping and QPC Intermediate Value Overflow Under Sub-Microsecond Precision
+
+- **ID**: `E-021`
+- **Detected**: 2026-10-19, during external review of Checkpoint CP4b
+- **Sub-phase**: I5.1.3 (Precision Timer Overflow Guard Hardening)
+- **Severity**: Measurement Instrumentation / Numerical Integrity Defect (P2)
+- **Symptom**: In `TicksToNanos(ticks, freq)`, if frequency was invalid or if multiplication produced extreme values, silent clamping to `math.MaxInt64` or 0 could theoretically distort tail percentiles without raising diagnostic alarms.
+- **Root Cause**: Unchecked conversion logic without explicit mathematical bound assertions and typed error returns.
+- **Fix**:
+  1. Implemented `TicksToNanosChecked(ticks, freq int64) (int64, error)` in `research/experiments/harness/timer_common.go` with range checks:
+     - Rejects `freq <= 0` with `ErrInvalidFrequency`.
+     - Rejects `ticks < 0` with `ErrNegativeTicks`.
+     - Verifies `ticks / freq <= math.MaxInt64 / 1_000_000_000` and intermediate remainder product `(ticks % freq) * 1_000_000_000` does not overflow 64-bit signed integer limits before conversion, returning `ErrTimerOverflow` on violation.
+  2. Verified Windows `kernel32.dll` `QueryPerformanceCounter` syscall return codes.
+- **Regression Test**: `TestTimer_TicksToNanosChecked_Valid`, `TestTimer_TicksToNanosChecked_InvalidFreq`, `TestTimer_TicksToNanosChecked_NegativeTicks`, `TestTimer_TicksToNanosChecked_Overflow`.
+- **Validation**: 100% test pass on Windows native and WSL2 Linux.
+- **Status**: Fixed & Verified (Sub-phase I5.1.3, Decision D-049).
+- **Commit**: `HEAD`.
+
+---
+
+### E-022: Matrix Accounting Discrepancy (1,920 Planned Trials vs Ad-Hoc Campaign Execution)
+
+- **ID**: `E-022`
+- **Detected**: 2026-10-19, during planning of Phase I5
+- **Sub-phase**: I5.1.2 (Full Matrix Accounting & Completeness Auditor)
+- **Severity**: Experimental Methodology / Campaign Completeness Risk (P1)
+- **Symptom**: The official benchmark matrix comprises:
+  $6 \text{ workloads} \times 8 \text{ reader levels } (1, 2, 4, 8, 12, 16, 24, 32) \times 2 \text{ modes } (\text{A}, \text{B}) \times 2 \text{ platforms } (\text{NTFS}, \text{ext4}) \times 10 \text{ reps} = 1,920 \text{ planned trials}$.
+  Without a machine-checked inventory auditor and bounded batch executor, executing such a large matrix risks incomplete cell coverage, missing repetitions, unhandled process failures, or non-deterministic ordering.
+- **Root Cause**: Lack of automated campaign manifest generation and trial inventory tracking.
+- **Fix**:
+  1. Created `research/experiments/campaign/manifest.go` generating the canonical 1,920-trial schedule with unique deterministic CellIDs and RunIDs.
+  2. Scheduled trials in interleaved A/B pairs across independent repetitions to prevent temporal bias.
+  3. Created `research/experiments/campaign/auditor.go` providing machine-checked accounting of planned vs executed vs validated vs failed trials.
+  4. Created `research/experiments/campaign/executor.go` supporting bounded batch execution, clean directory isolation per trial, and failed trial retention.
+  5. Added `experiment_runner campaign` and `experiment_runner audit` CLI commands.
+- **Regression Test**: `TestCampaign_ManifestGeneration_1920Trials`, `TestCampaign_InterleavedScheduling`, `TestCampaign_AuditorAccounting` in `research/experiments/campaign/campaign_test.go`.
+- **Validation**: Machine-checked audit confirms 384 planned, 384 executed, 384 validated, 0 failed across Windows NTFS and WSL2 native ext4, achieving 100% cell coverage across all 192 cells.
+- **Status**: Fixed & Verified (Sub-phase I5.1.2, Decision D-050).
+- **Commit**: `HEAD`.
+
 
 
 

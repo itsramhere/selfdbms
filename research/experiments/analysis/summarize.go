@@ -50,47 +50,75 @@ func main() {
 	dirFlag := flag.String("dir", "research/experiments/data/smoke", "Directory containing result JSON files")
 	formatFlag := flag.String("format", "markdown", "Output format: markdown or text")
 	strictFlag := flag.Bool("strict", true, "Fail immediately on any malformed or invalid JSON file")
+	csvFlag := flag.String("csv", "", "Output CSV file path to export all results")
+	compareFlag := flag.Bool("compare", false, "Print A/B comparison table across cells")
+	recurseFlag := flag.Bool("recurse", false, "Scan directory and subdirectories recursively")
 	flag.Parse()
 
-	files, err := os.ReadDir(*dirFlag)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading directory %s: %v\n", *dirFlag, err)
-		os.Exit(1)
-	}
-
 	var results []*harness.TrialResult
-	for _, f := range files {
-		if !f.IsDir() && strings.HasSuffix(f.Name(), ".json") {
-			path := filepath.Join(*dirFlag, f.Name())
-			data, err := os.ReadFile(path)
-			if err != nil {
-				if *strictFlag {
-					fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", path, err)
-					os.Exit(1)
+	var err error
+	if *recurseFlag {
+		results, err = LoadAllResults(*dirFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading results from %s: %v\n", *dirFlag, err)
+			os.Exit(1)
+		}
+	} else {
+		files, err := os.ReadDir(*dirFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading directory %s: %v\n", *dirFlag, err)
+			os.Exit(1)
+		}
+
+		for _, f := range files {
+			if !f.IsDir() && strings.HasSuffix(f.Name(), ".json") {
+				path := filepath.Join(*dirFlag, f.Name())
+				data, err := os.ReadFile(path)
+				if err != nil {
+					if *strictFlag {
+						fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", path, err)
+						os.Exit(1)
+					}
+					continue
 				}
-				continue
-			}
-			var res harness.TrialResult
-			if err := json.Unmarshal(data, &res); err != nil {
-				if *strictFlag {
-					fmt.Fprintf(os.Stderr, "JSON unmarshal error in %s: %v\n", path, err)
-					os.Exit(1)
+				var res harness.TrialResult
+				if err := json.Unmarshal(data, &res); err != nil {
+					if *strictFlag {
+						fmt.Fprintf(os.Stderr, "JSON unmarshal error in %s: %v\n", path, err)
+						os.Exit(1)
+					}
+					continue
 				}
-				continue
-			}
-			if err := validateResult(&res, path); err != nil {
-				if *strictFlag {
-					fmt.Fprintf(os.Stderr, "Schema validation error: %v\n", err)
-					os.Exit(1)
+				if err := validateResult(&res, path); err != nil {
+					if *strictFlag {
+						fmt.Fprintf(os.Stderr, "Schema validation error: %v\n", err)
+						os.Exit(1)
+					}
+					continue
 				}
-				continue
+				results = append(results, &res)
 			}
-			results = append(results, &res)
 		}
 	}
 
 	if len(results) == 0 {
 		fmt.Printf("No valid result JSON files found in %s\n", *dirFlag)
+		return
+	}
+
+	if *csvFlag != "" {
+		if err := ExportResultsCSV(results, *csvFlag); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to export CSV to %s: %v\n", *csvFlag, err)
+			os.Exit(1)
+		}
+		fmt.Printf("Exported %d results to %s\n", len(results), *csvFlag)
+	}
+
+	if *compareFlag {
+		aggs := ComputeCellAggregates(results)
+		rows := ComputeComparisons(aggs)
+		fmt.Println("### Empirical A/B Synchronization Comparison Matrix")
+		fmt.Println(FormatComparisonMarkdown(rows))
 		return
 	}
 

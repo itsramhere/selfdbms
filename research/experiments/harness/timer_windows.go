@@ -56,9 +56,9 @@ type PrecisionTime struct {
 // NowPrecision returns the current high-resolution monotonic timestamp.
 func NowPrecision() PrecisionTime {
 	var count int64
-	r, _, _ := procQPC.Call(uintptr(unsafe.Pointer(&count)))
+	r, _, err := procQPC.Call(uintptr(unsafe.Pointer(&count)))
 	if r == 0 {
-		return PrecisionTime{count: 0}
+		panic(fmt.Sprintf("QueryPerformanceCounter syscall failed: %v", err))
 	}
 	return PrecisionTime{count: count}
 }
@@ -66,9 +66,9 @@ func NowPrecision() PrecisionTime {
 // SincePrecisionNanos calculates elapsed monotonic nanoseconds from start.
 func SincePrecisionNanos(start PrecisionTime) int64 {
 	var count int64
-	r, _, _ := procQPC.Call(uintptr(unsafe.Pointer(&count)))
+	r, _, err := procQPC.Call(uintptr(unsafe.Pointer(&count)))
 	if r == 0 {
-		return 0
+		panic(fmt.Sprintf("QueryPerformanceCounter syscall failed: %v", err))
 	}
 	elapsedTicks := count - start.count
 	if elapsedTicks <= 0 {
@@ -76,9 +76,13 @@ func SincePrecisionNanos(start PrecisionTime) int64 {
 	}
 	freq := atomic.LoadInt64(&qpcFrequency)
 	if freq <= 0 {
-		return 0
+		panic("QueryPerformanceFrequency uninitialized or non-positive")
 	}
-	return TicksToNanos(elapsedTicks, freq)
+	nanos, err := TicksToNanosChecked(elapsedTicks, freq)
+	if err != nil {
+		panic(fmt.Sprintf("SincePrecisionNanos failed: %v", err))
+	}
+	return nanos
 }
 
 // QPCFrequencyHz returns the active QueryPerformanceFrequency in Hz.

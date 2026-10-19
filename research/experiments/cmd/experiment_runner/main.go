@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"owndbms/research/experiments/campaign"
 	"owndbms/research/experiments/harness"
 )
 
@@ -40,23 +41,73 @@ func getEnvironment(dataDir string) harness.EnvironmentInfo {
 	}
 }
 
+func detectPlatform() string {
+	if runtime.GOOS == "windows" {
+		return campaign.PlatformWindowsNTFS
+	}
+	return campaign.PlatformWSL2Ext4
+}
+
 func main() {
 	var (
-		workloadFlag   = flag.String("workload", "WORKLOAD_A_READ_ONLY", "Workload ID (A, B, C, D, E or full name)")
-		modeFlag       = flag.String("mode", "A", "Sync mode: A (ApproachA_RWMutexBaseline) or B (ApproachB_ReaderSnapshot)")
-		readersFlag    = flag.Int("readers", 4, "Number of reader goroutines")
-		writersFlag    = flag.Int("writers", -1, "Number of writer goroutines (-1 uses workload default)")
-		durationFlag   = flag.Int("duration", 2000, "Measurement duration in milliseconds")
-		warmupFlag     = flag.Int("warmup", 200, "Warm-up duration in milliseconds")
-		dirFlag        = flag.String("dir", "", "Target database directory (empty uses temporary directory)")
-		outputFlag     = flag.String("output", "", "Output JSON file path")
-		smokeFlag      = flag.Bool("smoke", false, "Execute standard preliminary smoke validation suite")
-		smokeOutputDir = flag.String("smoke-dir", "research/experiments/data/smoke", "Directory to store smoke test results")
-		pilotFlag      = flag.Bool("pilot", false, "Execute official Phase I5 parameter pilot suite (10s duration, 1MB threshold, 500ms compaction)")
-		pilotOutputDir = flag.String("pilot-dir", "research/experiments/data/pilot", "Directory to store pilot test results")
-		gitRevFlag     = flag.String("git-rev", "0b0021ef3a16c918e19812d8c8322015755396bd", "Git revision identifier")
+		workloadFlag      = flag.String("workload", "WORKLOAD_A_READ_ONLY", "Workload ID (A, B, B1, B2, C, D, E or full name)")
+		modeFlag          = flag.String("mode", "A", "Sync mode: A (ApproachA_RWMutexBaseline) or B (ApproachB_ReaderSnapshot)")
+		readersFlag       = flag.Int("readers", 4, "Number of reader goroutines")
+		writersFlag       = flag.Int("writers", -1, "Number of writer goroutines (-1 uses workload default)")
+		durationFlag      = flag.Int("duration", 2000, "Measurement duration in milliseconds")
+		warmupFlag        = flag.Int("warmup", 200, "Warm-up duration in milliseconds")
+		dirFlag           = flag.String("dir", "", "Target database directory (empty uses temporary directory)")
+		outputFlag        = flag.String("output", "", "Output JSON file path")
+		smokeFlag         = flag.Bool("smoke", false, "Execute standard preliminary smoke validation suite")
+		smokeOutputDir    = flag.String("smoke-dir", "research/experiments/data/smoke", "Directory to store smoke test results")
+		pilotFlag         = flag.Bool("pilot", false, "Execute official Phase I5 parameter pilot suite")
+		pilotOutputDir    = flag.String("pilot-dir", "research/experiments/data/pilot", "Directory to store pilot test results")
+		preflightFlag     = flag.Bool("preflight", false, "Execute mandatory I5.1.4 Workload B2 diagnostic preflight")
+		preflightDir      = flag.String("preflight-dir", "research/experiments/data/preflight", "Directory to store preflight test results")
+		campaignFlag      = flag.Bool("campaign", false, "Execute Phase I5 campaign trials in bounded batches")
+		campaignDir       = flag.String("campaign-dir", "research/experiments/data/campaign", "Base directory for campaign results")
+		auditFlag         = flag.Bool("audit", false, "Execute machine-checked campaign inventory auditor")
+		platformFlag      = flag.String("platform", "", "Platform identifier (windows_ntfs or wsl2_ext4, empty auto-detects)")
+		batchSizeFlag     = flag.Int("batch-size", 0, "Number of trials to execute in this batch (0 = all matching)")
+		resumeFlag        = flag.Bool("resume", true, "Skip trials that already completed successfully")
+		repFlag           = flag.Int("rep", 0, "Specific repetition to execute (0 = all)")
+		gitRevFlag        = flag.String("git-rev", "8900c817b1915e24dbf5087334bd054604926f7b", "Git revision identifier")
 	)
 	flag.Parse()
+
+	targetPlatform := *platformFlag
+	if targetPlatform == "" {
+		targetPlatform = detectPlatform()
+	}
+
+	if *preflightFlag {
+		runPreflightSuite(*preflightDir, targetPlatform, *gitRevFlag)
+		return
+	}
+
+	if *auditFlag {
+		runAuditor(*campaignDir, targetPlatform)
+		return
+	}
+
+	if *campaignFlag {
+		wFilter := ""
+		mFilter := ""
+		rFilter := 0
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "workload" {
+				wFilter = *workloadFlag
+			}
+			if f.Name == "mode" {
+				mFilter = *modeFlag
+			}
+			if f.Name == "readers" {
+				rFilter = *readersFlag
+			}
+		})
+		runCampaignSuite(*campaignDir, targetPlatform, *gitRevFlag, *batchSizeFlag, *resumeFlag, wFilter, mFilter, rFilter, *repFlag, *durationFlag, *warmupFlag)
+		return
+	}
 
 	if *smokeFlag {
 		runSmokeSuite(*smokeOutputDir, *gitRevFlag)
@@ -82,7 +133,7 @@ func main() {
 		case harness.WorkloadB_MixedFlush, harness.WorkloadB1_NaturalWriteProgress:
 			cfg.WriterConcurrency = 2
 			cfg.InitialSSTableCount = 4
-			cfg.MemtableThresholdBytes = 1024 * 1024 // 1MB natural threshold
+			cfg.MemtableThresholdBytes = 1024 * 1024
 		case harness.WorkloadB2_ControlledFlushInterference:
 			cfg.WriterConcurrency = 0
 			cfg.InitialSSTableCount = 4
@@ -96,8 +147,8 @@ func main() {
 		case harness.WorkloadD_ReaderChurn:
 			cfg.WriterConcurrency = 3
 			cfg.InitialSSTableCount = 4
-			cfg.MemtableThresholdBytes = 16 * 1024 // 16KB threshold to ensure continuous flush generation
-			cfg.CompactionTriggerIntervalMs = 1500 // 1500ms compaction interval for repeated churn
+			cfg.MemtableThresholdBytes = 16 * 1024
+			cfg.CompactionTriggerIntervalMs = 1500
 		case harness.WorkloadE_NegativeControlMemtable:
 			cfg.WriterConcurrency = 2
 			cfg.InitialSSTableCount = 0
@@ -160,6 +211,153 @@ func parseWorkload(raw string) harness.WorkloadID {
 	}
 }
 
+func runPreflightSuite(baseDir, platform, gitRev string) {
+	fmt.Println("================================================================================")
+	fmt.Printf("[PREFLIGHT] MANDATORY I5.1.4 WORKLOAD B2 DIAGNOSTIC PREFLIGHT (%s)\n", platform)
+	fmt.Println("================================================================================")
+
+	outDir := filepath.Join(baseDir, platform)
+	_ = os.MkdirAll(outDir, 0755)
+
+	modes := []string{"ApproachA_RWMutexBaseline", "ApproachB_ReaderSnapshot"}
+	allPassed := true
+
+	for _, mode := range modes {
+		modeShort := campaign.ShortModeName(mode)
+		fmt.Printf("\n--- Executing Workload B2 Diagnostic Preflight (Mode: %s) ---\n", modeShort)
+
+		cfg := harness.DefaultTrialConfig(harness.WorkloadB2_ControlledFlushInterference, mode, 4)
+		cfg.MeasurementDurationMs = 10000 // 10s measurement duration
+		cfg.WarmupDurationMs = 500
+		cfg.InitialSSTableCount = 4
+		cfg.InitialKeysPerSSTable = 2500
+		cfg.KeyspaceCardinality = 10000
+		cfg.MemtableThresholdBytes = 64 * 1024 * 1024
+		cfg.FlushTriggerIntervalMs = 1000 // Trigger flush every 1s (target ~8-10 flushes)
+		cfg.TargetReadHitRatio = 0.95
+		cfg.WalSync = true
+		cfg.TrialID = fmt.Sprintf("preflight_B2_%s_%s", platform, modeShort)
+
+		trialDir, err := os.MkdirTemp("", fmt.Sprintf("preflight_b2_%s_*", modeShort))
+		if err != nil {
+			fmt.Printf("[FAIL] Failed to create temp dir: %v\n", err)
+			allPassed = false
+			continue
+		}
+		cfg.DataDir = trialDir
+
+		env := getEnvironment(cfg.DataDir)
+		t0 := time.Now()
+		res, err := harness.RunTrial(cfg, gitRev, env)
+		elapsed := time.Since(t0)
+		_ = os.RemoveAll(trialDir)
+
+		if err != nil {
+			fmt.Printf("[FAIL] RunTrial returned error: %v\n", err)
+			allPassed = false
+			continue
+		}
+
+		targetFile := filepath.Join(outDir, fmt.Sprintf("preflight_B2_%s.json", modeShort))
+		if err := harness.SaveResultJSON(res, targetFile); err != nil {
+			fmt.Printf("[WARN] Failed to save JSON: %v\n", err)
+		} else {
+			fmt.Printf("Result archived at: %s\n", targetFile)
+		}
+
+		// Verification checks
+		c1WorkerObserved := res.LSMDiagnostics.StartedFlushes > 0 && res.LSMDiagnostics.FlushesCompleted > 0
+		c2PhysDerived := res.LSMDiagnostics.PhysicalFlushDurationMs > 0
+		c3OverlapRecorded := res.LSMDiagnostics.ReadsDuringFlush > 0
+		c4Reconciled := (res.LSMDiagnostics.FlushesCompleted >= uint64(res.LSMDiagnostics.StartedFlushes)) &&
+			(res.LSMDiagnostics.StartedFlushes == res.LSMDiagnostics.CompletedFlushes)
+		c5ZeroValErrors := res.Operations.ValidationErrorCount == 0
+		c6CleanShutdown := res.Status == "SUCCESS"
+
+		passStr := func(p bool) string {
+			if p {
+				return "PASS"
+			}
+			return "FAIL"
+		}
+
+		fmt.Println("Diagnostic Criteria Checklist:")
+		fmt.Printf("  1. Worker start/complete observed:              [%s] (started=%d, completed=%d)\n",
+			passStr(c1WorkerObserved), res.LSMDiagnostics.StartedFlushes, res.LSMDiagnostics.CompletedFlushes)
+		fmt.Printf("  2. Physical flush duration derived from worker: [%s] (%d ms physical, %d ms queue wait)\n",
+			passStr(c2PhysDerived), res.LSMDiagnostics.PhysicalFlushDurationMs, res.LSMDiagnostics.QueueWaitDurationMs)
+		fmt.Printf("  3. Reader overlap during active flush recorded: [%s] (%d reads during physical flush, %d in queue wait)\n",
+			passStr(c3OverlapRecorded), res.LSMDiagnostics.ReadsDuringFlush, res.LSMDiagnostics.ReadsDuringQueueWait)
+		fmt.Printf("  4. Flush completed counts reconciled:           [%s] (flushes_completed=%d == started=%d == completed=%d)\n",
+			passStr(c4Reconciled), res.LSMDiagnostics.FlushesCompleted, res.LSMDiagnostics.StartedFlushes, res.LSMDiagnostics.CompletedFlushes)
+		fmt.Printf("  5. Validation errors == 0:                      [%s] (%d errors)\n",
+			passStr(c5ZeroValErrors), res.Operations.ValidationErrorCount)
+		fmt.Printf("  6. Clean shutdown:                              [%s] (status=%s, elapsed=%v)\n",
+			passStr(c6CleanShutdown), res.Status, elapsed)
+
+		modePassed := c1WorkerObserved && c2PhysDerived && c3OverlapRecorded && c4Reconciled && c5ZeroValErrors && c6CleanShutdown
+		if !modePassed {
+			allPassed = false
+			fmt.Printf(">>> MODE %s FAILED MANDATORY PREFLIGHT CRITERIA <<<\n", modeShort)
+		} else {
+			fmt.Printf(">>> MODE %s PASSED ALL MANDATORY PREFLIGHT CRITERIA <<<\n", modeShort)
+		}
+	}
+
+	fmt.Println("================================================================================")
+	if allPassed {
+		fmt.Printf("[PREFLIGHT] WORKLOAD B2 PREFLIGHT FULLY PASSED ON %s.\n", platform)
+	} else {
+		fmt.Printf("[PREFLIGHT] WORKLOAD B2 PREFLIGHT FAILED ON %s.\n", platform)
+		os.Exit(1)
+	}
+	fmt.Println("================================================================================")
+}
+
+func runCampaignSuite(baseDir, platform, gitRev string, batchSize int, resume bool, workloadFilter, modeFilter string, readersFilter, repFilter, durationMs, warmupMs int) {
+	manifest := campaign.GeneratePlatformManifest(platform, durationMs, warmupMs)
+	filter := campaign.ExecutionFilter{
+		Platform:          platform,
+		WorkloadID:        workloadFilter,
+		SyncMode:          modeFilter,
+		ReaderConcurrency: readersFilter,
+		Repetition:        repFilter,
+		BatchSize:         batchSize,
+		SkipExisting:      resume,
+	}
+
+	env := getEnvironment(filepath.Join(baseDir, platform))
+	fmt.Printf("[CAMPAIGN] Starting campaign execution for platform %s (Manifest: %d total trials)\n", platform, len(manifest))
+	executed, err := campaign.ExecuteCampaign(manifest, filter, baseDir, gitRev, env, func(msg string) {
+		fmt.Println(msg)
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Campaign execution error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("[CAMPAIGN] Batch complete. Executed %d trials.\n", executed)
+}
+
+func runAuditor(baseDir, platform string) {
+	var manifest []campaign.PlannedTrial
+	if platform != "" && platform != "all" {
+		manifest = campaign.GeneratePlatformManifest(platform, 2000, 200)
+	} else {
+		manifest = campaign.GeneratePlannedManifest(2000, 200)
+	}
+
+	report, err := campaign.AuditCampaign(baseDir, manifest)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] Audit failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Print(report.String())
+	if report.TotalFailed > 0 {
+		os.Exit(1)
+	}
+}
+
 func runSmokeSuite(outDir string, gitRev string) {
 	fmt.Println("================================================================================")
 	fmt.Println("PRELIMINARY HARNESS VALIDATION — NOT OFFICIAL PERFORMANCE EVIDENCE.")
@@ -218,7 +416,6 @@ func runSmokeSuite(outDir string, gitRev string) {
 				cfg.KeyspaceCardinality = 2000
 			}
 
-			// Dedicated trial directory
 			trialDir, err := os.MkdirTemp("", fmt.Sprintf("smoke_%s_%s_*", w, m))
 			if err != nil {
 				fmt.Printf("Failed to create trial dir: %v\n", err)
@@ -275,7 +472,7 @@ func runPilotSuite(outDir string, gitRev string) {
 				cfg.InitialSSTableCount = 4
 				cfg.InitialKeysPerSSTable = 2500
 				cfg.KeyspaceCardinality = 10000
-				cfg.MemtableThresholdBytes = 1024 * 1024 // Official 1MB threshold
+				cfg.MemtableThresholdBytes = 1024 * 1024
 				cfg.TargetReadHitRatio = 0.95
 				cfg.WalSync = true
 			},
@@ -309,7 +506,7 @@ func runPilotSuite(outDir string, gitRev string) {
 				cfg.InitialKeysPerSSTable = 2500
 				cfg.KeyspaceCardinality = 10000
 				cfg.MemtableThresholdBytes = 64 * 1024 * 1024
-				cfg.CompactionTriggerIntervalMs = 500 // Official 500ms interval
+				cfg.CompactionTriggerIntervalMs = 500
 				cfg.TargetReadHitRatio = 0.95
 				cfg.WalSync = true
 			},
@@ -325,8 +522,8 @@ func runPilotSuite(outDir string, gitRev string) {
 				cfg.InitialSSTableCount = 4
 				cfg.InitialKeysPerSSTable = 2500
 				cfg.KeyspaceCardinality = 10000
-				cfg.MemtableThresholdBytes = 16 * 1024 // 16KB threshold to ensure continuous flush generation
-				cfg.CompactionTriggerIntervalMs = 1500 // 1500ms compaction interval for repeated churn
+				cfg.MemtableThresholdBytes = 16 * 1024
+				cfg.CompactionTriggerIntervalMs = 1500
 				cfg.TargetReadHitRatio = 0.95
 				cfg.WalSync = true
 			},

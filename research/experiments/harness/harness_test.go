@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -530,15 +531,28 @@ func TestTimerOverheadCharacterization(t *testing.T) {
 func TestTicksToNanos_OverflowGuards(t *testing.T) {
 	const freq = 10_000_000 // 10 MHz standard Windows QPC
 
-	// Zero and negative cases
-	if got := TicksToNanos(0, freq); got != 0 {
-		t.Fatalf("expected 0 for 0 ticks, got %d", got)
+	// Zero ticks
+	got, err := TicksToNanosChecked(0, freq)
+	if err != nil || got != 0 {
+		t.Fatalf("expected (0, nil) for 0 ticks, got (%d, %v)", got, err)
 	}
-	if got := TicksToNanos(-10, freq); got != 0 {
-		t.Fatalf("expected 0 for negative ticks, got %d", got)
+
+	// Negative ticks error
+	if _, err := TicksToNanosChecked(-10, freq); !errors.Is(err, ErrNegativeTicks) {
+		t.Fatalf("expected ErrNegativeTicks for negative ticks, got %v", err)
 	}
-	if got := TicksToNanos(100, 0); got != 0 {
-		t.Fatalf("expected 0 for 0 freq, got %d", got)
+
+	// Non-positive frequency error
+	if _, err := TicksToNanosChecked(100, 0); !errors.Is(err, ErrInvalidFrequency) {
+		t.Fatalf("expected ErrInvalidFrequency for 0 freq, got %v", err)
+	}
+	if _, err := TicksToNanosChecked(100, -100); !errors.Is(err, ErrInvalidFrequency) {
+		t.Fatalf("expected ErrInvalidFrequency for negative freq, got %v", err)
+	}
+
+	// Overflow check: math.MaxInt64 ticks with 1 Hz frequency overflows int64 nanoseconds
+	if _, err := TicksToNanosChecked(math.MaxInt64, 1); !errors.Is(err, ErrTimerOverflow) {
+		t.Fatalf("expected ErrTimerOverflow for math.MaxInt64 at 1 Hz, got %v", err)
 	}
 
 	// Normal small duration: 100 ticks at 10 MHz = 10,000 ns = 10 µs
@@ -565,6 +579,14 @@ func TestTicksToNanos_OverflowGuards(t *testing.T) {
 	if got := TicksToNanos(extremeTicks, freq); got != expectedExtremeNanos {
 		t.Fatalf("overflow guard failed for extreme ticks: expected %d ns, got %d ns", expectedExtremeNanos, got)
 	}
+
+	// Panic check for TicksToNanos on invalid inputs
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic on overflow in TicksToNanos")
+		}
+	}()
+	_ = TicksToNanos(math.MaxInt64, 1)
 }
 
 func TestEnsurePrecisionTimer_Operational(t *testing.T) {
@@ -760,6 +782,229 @@ func TestWorkloadD_RepeatedReaderSetChurn(t *testing.T) {
 			}
 			if res.Operations.ValidationErrorCount != 0 {
 				t.Fatalf("expected 0 validation errors, got %d", res.Operations.ValidationErrorCount)
+			}
+		})
+	}
+}
+
+func TestFlushTracker_WorkerBlocked_CountedAsQueuedNotPhysicalIO(t *testing.T) {
+	modes := []lsmengine.SyncMode{lsmengine.SyncModeApproachA, lsmengine.SyncModeApproachB}
+	for _, mode := range modes {
+		t.Run(mode.String(), func(t *testing.T) {
+			dir := t.TempDir()
+			man, err := lsmengine.CreateManagerWithConfig(lsmengine.Config{
+				Mode:                   mode,
+				WalPath:                filepath.Join(dir, "wal.log"),
+				DataDir:                dir,
+				MemtableThresholdBytes: 64 * 1024 * 1024,
+			})
+			if err != nil {
+				t.Fatalf("failed to create manager: %v", err)
+			}
+			defer man.Close()
+
+			tracker := NewFlushTracker()
+			man.SetFlushObserver(tracker)
+
+			workerReached := make(chan struct{})
+			unblockWorker := make(chan struct{})
+			var unblockOnce sync.Once
+			unblock := func() { unblockOnce.Do(func() { close(unblockWorker) }) }
+			defer unblock()
+
+			man.SetBeforeFlushWorkerBeginHook(func() {
+				close(workerReached)
+				<-unblockWorker
+			})
+
+			// Write a key so active memtable is dirty
+			tx := man.Begin()
+			tx.Put("key1", "val1")
+			if err := tx.Commit(); err != nil {
+				t.Fatalf("commit failed: %v", err)
+			}
+
+			if err := man.TriggerFlush(); err != nil {
+				t.Fatalf("TriggerFlush failed: %v", err)
+			}
+
+			// Wait until worker is blocked
+			select {
+			case <-workerReached:
+			case <-time.After(3 * time.Second):
+				t.Fatalf("timed out waiting for worker to reach hook")
+			}
+
+			// Verify that flush is admitted and queued, but NOT actively executing physical I/O
+			if tracker.AttemptedRequests.Load() != 1 {
+				t.Fatalf("expected 1 attempted request, got %d", tracker.AttemptedRequests.Load())
+			}
+			if tracker.AcceptedRequests.Load() != 1 {
+				t.Fatalf("expected 1 accepted request, got %d", tracker.AcceptedRequests.Load())
+			}
+			if tracker.StartedFlushes.Load() != 0 {
+				t.Fatalf("expected 0 started flushes while blocked, got %d", tracker.StartedFlushes.Load())
+			}
+			if tracker.IsPhysicalFlushActive() {
+				t.Fatalf("expected IsPhysicalFlushActive() == false while queued in worker hook")
+			}
+			if tracker.IsPublicationActive() {
+				t.Fatalf("expected IsPublicationActive() == false while queued")
+			}
+
+			// Sleep to accumulate measurable queue wait time
+			time.Sleep(30 * time.Millisecond)
+
+			// Unblock the worker and wait for completion
+			unblock()
+			if err := man.WaitForFlushCompletion(); err != nil {
+				t.Fatalf("WaitForFlushCompletion failed: %v", err)
+			}
+
+			// Verify post-completion state
+			if tracker.StartedFlushes.Load() != 1 {
+				t.Fatalf("expected 1 started flush, got %d", tracker.StartedFlushes.Load())
+			}
+			if tracker.CompletedFlushes.Load() != 1 {
+				t.Fatalf("expected 1 completed flush, got %d", tracker.CompletedFlushes.Load())
+			}
+			if tracker.QueueWaitDurationNanos.Load() < 20_000_000 {
+				t.Fatalf("expected >= 20ms queue wait time, got %d ns", tracker.QueueWaitDurationNanos.Load())
+			}
+			if tracker.PhysicalFlushNanos.Load() <= 0 {
+				t.Fatalf("expected positive physical flush duration, got %d ns", tracker.PhysicalFlushNanos.Load())
+			}
+			if tracker.IsPhysicalFlushActive() {
+				t.Fatalf("expected IsPhysicalFlushActive() == false after completion")
+			}
+		})
+	}
+}
+
+func TestFlushTracker_BlockedWorker_ConcurrentReaderOverlap(t *testing.T) {
+	modes := []lsmengine.SyncMode{lsmengine.SyncModeApproachA, lsmengine.SyncModeApproachB}
+	for _, mode := range modes {
+		t.Run(mode.String(), func(t *testing.T) {
+			dir := t.TempDir()
+			man, err := lsmengine.CreateManagerWithConfig(lsmengine.Config{
+				Mode:                   mode,
+				WalPath:                filepath.Join(dir, "wal.log"),
+				DataDir:                dir,
+				MemtableThresholdBytes: 64 * 1024 * 1024,
+			})
+			if err != nil {
+				t.Fatalf("failed to create manager: %v", err)
+			}
+			defer man.Close()
+
+			// Populate initial key and flush it to disk
+			tx := man.Begin()
+			tx.Put("existing_key", "existing_val")
+			if err := tx.Commit(); err != nil {
+				t.Fatalf("commit failed: %v", err)
+			}
+			if err := man.TriggerFlush(); err != nil {
+				t.Fatalf("initial flush failed: %v", err)
+			}
+			if err := man.WaitForFlushCompletion(); err != nil {
+				t.Fatalf("initial flush wait failed: %v", err)
+			}
+
+			// Attach tracker
+			tracker := NewFlushTracker()
+			man.SetFlushObserver(tracker)
+
+			workerReached := make(chan struct{})
+			unblockWorker := make(chan struct{})
+			var unblockWorkerOnce sync.Once
+			unblockW := func() { unblockWorkerOnce.Do(func() { close(unblockWorker) }) }
+			defer unblockW()
+
+			man.SetBeforeFlushWorkerBeginHook(func() {
+				close(workerReached)
+				<-unblockWorker
+			})
+
+			// Write a new key to make memtable dirty
+			tx2 := man.Begin()
+			tx2.Put("new_key", "new_val")
+			if err := tx2.Commit(); err != nil {
+				t.Fatalf("commit failed: %v", err)
+			}
+
+			if err := man.TriggerFlush(); err != nil {
+				t.Fatalf("TriggerFlush failed: %v", err)
+			}
+
+			// Wait until worker is blocked
+			select {
+			case <-workerReached:
+			case <-time.After(3 * time.Second):
+				t.Fatalf("timed out waiting for worker to reach hook")
+			}
+
+			// Reader runs 100 queries while flush is blocked in queue
+			for i := 0; i < 100; i++ {
+				_, _ = man.Get("existing_key", math.MaxUint64)
+				tracker.RecordPointRead()
+			}
+
+			// Verify: ALL 100 queries were during queue wait, ZERO during physical flush or publication!
+			if readsInPhys := tracker.ReadsDuringPhysicalFlush.Load(); readsInPhys != 0 {
+				t.Fatalf("expected 0 reads during physical flush while worker blocked, got %d", readsInPhys)
+			}
+			if readsInPub := tracker.ReadsDuringPublication.Load(); readsInPub != 0 {
+				t.Fatalf("expected 0 reads during publication while worker blocked, got %d", readsInPub)
+			}
+			if readsInQueue := tracker.ReadsDuringQueueWait.Load(); readsInQueue != 100 {
+				t.Fatalf("expected 100 reads during queue wait, got %d", readsInQueue)
+			}
+
+			// Now block SSTable building to capture active physical flush reads
+			buildStarted := make(chan struct{})
+			unblockBuild := make(chan struct{})
+			var unblockBuildOnce sync.Once
+			unblockB := func() { unblockBuildOnce.Do(func() { close(unblockBuild) }) }
+			defer unblockB()
+
+			man.SetFlushBuildHook(func() error {
+				close(buildStarted)
+				<-unblockBuild
+				return nil
+			})
+
+			// Unblock worker so it begins physical execution
+			unblockW()
+			select {
+			case <-buildStarted:
+			case <-time.After(3 * time.Second):
+				t.Fatalf("timed out waiting for build to start")
+			}
+
+			// Worker is now actively building SSTable! IsPhysicalFlushActive() must be true!
+			if !tracker.IsPhysicalFlushActive() {
+				t.Fatalf("expected IsPhysicalFlushActive() == true during build")
+			}
+
+			// Reader runs 50 queries during active physical flush
+			for i := 0; i < 50; i++ {
+				_, _ = man.Get("existing_key", math.MaxUint64)
+				tracker.RecordPointRead()
+			}
+
+			// Verify: 50 reads recorded during physical flush!
+			if readsInPhys := tracker.ReadsDuringPhysicalFlush.Load(); readsInPhys != 50 {
+				t.Fatalf("expected 50 reads during physical flush, got %d", readsInPhys)
+			}
+
+			// Unblock build and wait for completion
+			unblockB()
+			if err := man.WaitForFlushCompletion(); err != nil {
+				t.Fatalf("WaitForFlushCompletion failed: %v", err)
+			}
+
+			if tracker.CompletedFlushes.Load() != 1 {
+				t.Fatalf("expected 1 completed flush, got %d", tracker.CompletedFlushes.Load())
 			}
 		})
 	}
