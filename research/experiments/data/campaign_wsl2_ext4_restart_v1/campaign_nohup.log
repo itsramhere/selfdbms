@@ -1,0 +1,10 @@
+[CAMPAIGN_DRIVER] Resuming Phase I5 WSL2 campaign (Campaign ID: I5_WSL2_EXT4_RESTART_V1)
+[CAMPAIGN_DRIVER] Initial Validated: 153 / 960 | Batch Size: 24 | Duration: 10000ms | Warmup: 2000ms
+================================================================================
+[BATCH 1] Starting batch at 2026-10-26T13:15:39Z
+[CAMPAIGN] Starting campaign execution for platform wsl2_ext4 (Manifest: 960 total trials)
+[CAMPAIGN] [1] Running WORKLOAD_C_COMPACTION_OVERLAP (ApproachB_ReaderSnapshot, r=12, rep=2)...
+         -> Done in 43.983991322s: 56542 reads (5652.2/s), p50=117.4µs | MeasFlushes=0, MeasComp=1, OverlapReads=536
+[CAMPAIGN] [2] Running WORKLOAD_C_COMPACTION_OVERLAP (ApproachA_RWMutexBaseline, r=16, rep=2)...
+         -> Done in 44.08628828s: 74438 reads (7442.9/s), p50=116.1µs | MeasFlushes=0, MeasComp=1, OverlapReads=997
+[CAMPAIGN] [3] Running WORKLOAD_C_COMPACTION_OVERLAP (ApproachB_ReaderSnapshot, r=16, rep=2)...
