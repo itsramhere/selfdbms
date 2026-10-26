@@ -86,7 +86,7 @@ func main() {
 	}
 
 	if *auditFlag {
-		runAuditor(*campaignDir, targetPlatform)
+		runAuditor(*campaignDir, targetPlatform, *durationFlag, *warmupFlag)
 		return
 	}
 
@@ -338,12 +338,12 @@ func runCampaignSuite(baseDir, platform, gitRev string, batchSize int, resume bo
 	fmt.Printf("[CAMPAIGN] Batch complete. Executed %d trials.\n", executed)
 }
 
-func runAuditor(baseDir, platform string) {
+func runAuditor(baseDir, platform string, durationMs, warmupMs int) {
 	var manifest []campaign.PlannedTrial
 	if platform != "" && platform != "all" {
-		manifest = campaign.GeneratePlatformManifest(platform, 2000, 200)
+		manifest = campaign.GeneratePlatformManifest(platform, durationMs, warmupMs)
 	} else {
-		manifest = campaign.GeneratePlannedManifest(2000, 200)
+		manifest = campaign.GeneratePlannedManifest(durationMs, warmupMs)
 	}
 
 	report, err := campaign.AuditCampaign(baseDir, manifest)

@@ -1,10 +1,11 @@
 # LSM-Tree Synchronization Experiment Methodology: Approach A vs Approach B
 
-**Protocol Version**: 1.0.0  
+**Protocol Version**: 2.0.0 (Phase I5-R Protocol Amendment: WSL2 Native ext4 Primary Campaign)  
 **Authors**: Antigravity Autonomous Engineering & Verification Agent  
 **Approved Baseline Commit**: `ae8c034c438d56abbe6664e6472f7a0c1278797f` (`baseline-approach-a-verified`)  
 **Approach B Implementation Revision**: `c58bc6177b5a925a0b25ba795957839866d0b040` (Phase I3 complete)  
-**Target Milestone**: Phase I4 (Checkpoint CP4)
+**Official Campaign Identifier**: `I5_WSL2_EXT4_RESTART_V1`  
+**Target Milestone**: Phase I5 (Checkpoint CP5b)
 
 ---
 
@@ -204,9 +205,66 @@ flowchart TD
 
 ---
 
-## 8. Repeatability, Statistical Analysis, and Uncertainty (I4.5)
+## 8. Experimental Campaign Protocol & Platform Scope Amendment (Phase I5-R)
 
-- **Number of Trials**: In Phase I5, every cell in the concurrency matrix ($6 \text{ workloads} \times 7 \text{ thread counts} \times 2 \text{ modes} \times 2 \text{ platforms}$) will be executed with **$N = 10$ independent trials**.
-- **Interleaved Execution**: Trials alternate strictly between Approach A and Approach B (`A1, B1, A2, B2, ...`) to eliminate temporal and thermal drift.
-- **Statistical Aggregation**: Results report median ($p50$), 95th percentile ($p95$), 99th percentile ($p99$), interquartile range (IQR), and standard deviation. Confidence intervals (95% bootstrap CI) will be computed over the 10 trial medians. Fixed $p$-values are not used as substitutes for empirical effect sizes and distributions.
-- **Auditability**: Every raw JSON trial output is saved with its Git commit hash, timestamps, random seed, system manifest, and fixture manifest.
+### 8.1 Protocol Amendment: Scope & Platform Selection
+
+Under the original Protocol 1.0.0, the measurement campaign was planned as a dual-platform evaluation:
+- **Former Protocol (Dual-Platform)**: 6 workloads $\times$ 8 reader levels $\times$ 2 sync modes $\times$ 2 platforms (Windows NTFS and WSL2 ext4) $\times$ 10 repetitions = **1,920 planned trials**.
+
+Following empirical pilot execution and partial campaign runs (Checkpoint CP5 / CP5a), the external reviewer formally approved reducing the primary empirical evaluation to **WSL2 Ubuntu on native Linux ext4 only**:
+- **Revised Protocol (WSL2 Native ext4 Primary)**: 6 workloads $\times$ 8 reader levels $\times$ 2 sync modes $\times$ 1 platform (WSL2 native ext4) $\times$ 10 repetitions = **960 planned trials**.
+
+### 8.2 Rationale for Windows NTFS Exclusion from Primary Campaign
+
+1. **Filesystem Driver Serialization Overhead**: On Windows NTFS, synchronous file system metadata updates, mandatory locking semantics, and path resolution overhead dominate execution time during write-heavy workloads (e.g. Workload B1 completed only 15 writes in 10s under Approach A on NTFS due to OS-level write serialization). This creates an artificial bottleneck that reflects Windows NTFS kernel I/O characteristics rather than LSM-tree reader-compactor synchronization concurrency.
+2. **Excessive Wall-Clock Trial Cost**: Windows NTFS trials required 30–100 seconds per trial under load, projecting to >30–36 hours for remaining repetitions. By contrast, WSL2 native ext4 executes cleanly at ~10–12 seconds wall-clock per 10s trial, permitting complete, statistically robust 10-repetition coverage within ~3.2 hours.
+3. **Preservation of Scientific Integrity**: Windows NTFS exploratory data collected during Phase I4/I5 (including 314 raw trial JSONs and preliminary CP5 CSV records) is permanently archived in `research/experiments/data/campaign/windows_ntfs/` and documented as exploratory evidence. It is not deleted, but is excluded from the primary statistical comparison.
+
+### 8.3 Prospective & Independent Campaign Execution Contract
+
+- **Campaign Identifier**: `I5_WSL2_EXT4_RESTART_V1`
+- **Output Destination**: All official measurement records are written to a fresh, isolated directory:
+  `research/experiments/data/campaign_wsl2_ext4_restart_v1/wsl2_ext4/`
+- **Clean Baseline from Repetition 1**: The official campaign executes all 10 independent repetitions prospectively ($rep = 1 \dots 10$). Old observations are never mixed into this fresh dataset.
+- **Anti-Cherry-Picking Invariant**: Substituting, interpolating, or cherry-picking previous favorable measurements into the official dataset is strictly prohibited. Every cell must be measured afresh under identical, controlled conditions.
+- **Single Frozen Source Revision**: All 960 trials are executed using the exact frozen Git commit SHA recorded in the trial manifest.
+
+### 8.4 Virtualization & Threats to External Validity
+
+> [!WARNING]
+> **WSL2 Virtualization Boundary Limitation**:
+> Measurements are collected inside a WSL2 virtual machine running Ubuntu 24.04.3 LTS (Linux kernel 6.6.87.2-microsoft-standard-WSL2) backed by a virtual disk mounted on ext4 (`/dev/sdd`).
+> - WSL2 ext4 is **virtualized Linux**, not bare-metal Linux. Virtualized page cache interactions, Hyper-V memory ballooning, and virtual disk I/O scheduling differ from bare-metal physical NVMe storage.
+> - Conclusions apply strictly to the evaluated WSL2 Linux environment and cannot establish universal filesystem or operating-system performance claims across bare-metal Linux, macOS APFS, or physical server environments.
+
+### 8.5 Workload & Concurrency Matrix Dimensions
+
+The 960 official trials explore the full Cartesian product:
+
+| Dimension | Values | Count |
+| :--- | :--- | :---: |
+| **Workloads** | A (Read-Only), B1 (Natural Write Progress), B2 (Controlled Flush Interference), C (Compaction Overlap), D (Reader Churn), E (Negative Control Memtable) | 6 |
+| **Reader Concurrency** | 1, 2, 4, 8, 12, 16, 24, 32 goroutines | 8 |
+| **Sync Modes** | Approach A (`SyncModeApproachA`), Approach B (`SyncModeApproachB`) | 2 |
+| **Platform** | WSL2 Ubuntu Native Linux ext4 | 1 |
+| **Repetitions** | 10 independent trials per cell ($rep = 1 \dots 10$) | 10 |
+| **Total Official Trials** | $6 \times 8 \times 2 \times 1 \times 10$ | **960** |
+
+### 8.6 Invariant Timing & Workload Parameters
+
+All trials adhere strictly to the frozen calibrated parameters:
+- **Measurement Duration**: Exactly 10,000 ms (10 seconds) per trial.
+- **Warmup Duration**: 2,000 ms unmetered warmup preceding measurement.
+- **Durability**: `wal_sync = true` synchronously enforced on all writes.
+- **SSTable Counts**: 4 initial SSTables (Workloads A, B1, B2, D); 8 tables (Workload C); 0 tables (Workload E).
+- **Keyspace Cardinality**: 10,000 keys (Workloads A–D); 2,000 keys (Workload E).
+- **Target Hit Rate**: 95% (Workloads A–D); 100% (Workload E).
+- **PRNG Seeds**: Deterministically derived per trial: `42000000 + (wIdx * 100000) + (readers * 1000) + (rep * 10) + mIdx`.
+
+### 8.7 Statistical Aggregation & Uncertainty Reporting
+
+- **Sample Sufficiency Rules (D-043)**: $p50$ requires $N \ge 1$; $p95$ requires $N \ge 20$; $p99$ requires $N \ge 100$; $p999$ requires $N \ge 1,000$. Underpowered percentiles are serialized strictly as `null`.
+- **Effect Sizes & 95% Confidence Intervals**: For each configuration cell, the 10 independent trial observations are aggregated using non-parametric medians, interquartile ranges (IQR), and 95% bootstrap confidence intervals over trial medians.
+- **Paired A/B Comparisons**: Measured B/A throughput speedup ratios and tail-latency reduction factors are evaluated with paired statistical tests across identical random seeds.
+- **No Claims of Universal Superiority**: Findings will report both operational regimes where Approach B demonstrates marked superiority (Workloads C, D) and regimes of equivalence or minor tradeoff (Workloads A, E, publication critical section variance).
