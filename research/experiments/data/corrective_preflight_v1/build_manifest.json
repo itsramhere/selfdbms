@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0.0",
+  "protocol_version": "1.1.0",
+  "campaign_id": "I6_CORRECTIVE_MECHANISMS_V1",
+  "git_commit": "29c7ce5fbacae4e30280619a470306e94ac16d68",
+  "git_branch": "research/i6.9-corrective-preflight",
+  "source_clean": false,
+  "source_tree_hash": "f1b9f47dae8b183149196792cda51cb32898abb8c01d651808bcd16177d81663",
+  "go_version": "go1.27.3",
+  "compiler": "gc",
+  "platform": "linux",
+  "architecture": "amd64",
+  "build_timestamp": "2026-10-27T16:31:51Z",
+  "binary_sha256": "a20930f71f89f002609386777590db8e1ba60d9d7dc9f69b79be8c81f7d1891d",
+  "binary_path": "/tmp/corrective_runner",
+  "execution_dir": "/home/ramst/selfdbms_clean",
+  "filesystem_type": "ext4 (Native Linux)",
+  "validated_at": "2026-10-27T16:31:51.606711847Z"
+}
