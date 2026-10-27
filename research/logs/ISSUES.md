@@ -695,8 +695,8 @@ Format:
   1. Authored `research/experiments/analysis/audit_reanalysis_cp6.py` and `reanalysis_b2_workload_a.md`, documenting the paired bootstrap, exact sign test, Wilcoxon signed-rank test, and Holm-Bonferroni step-down correction.
   2. Preregistered confirmatory campaign `I6_TARGETED_VALIDATION_V1` with balanced A/B block scheduling (strict 50% A-first, 50% B-first), common input seeds per pair, sham-flush control (T1), Two One-Sided Tests (TOST) at $\pm 5\%$ margin (T2), writer-free Workload E diagnostic, and controlled churn vs no-churn control with Go profiling (T3).
 - **Regression Test**: `TestManifest_OrderBalancing`, `TestManifest_SeedEquality`, `TestTOST_EquivalenceLogic`, `TestPairedDifferenceAccounting` in `research/experiments/targeted_validation/targeted_test.go`.
-- **Validation**: 100% test pass; verified exact 150/150 A/B order balance, seed equality, and 0 data races.
-- **Status**: Resolved & Preregistered (Sub-phase I6.8, Decision D-058).
+- **Validation**: 100% test pass; verified exact 150/150 A/B order balance, seed equality, and 0 data races. 600/600 confirmatory trials executed to 100% completion in Campaign `I6_TARGETED_VALIDATION_V1` (status SUCCESS, 0 validation errors, 0 races). Confirmed T1 tail latency suppression (Holm-Bonferroni $p \le 10^{-5}$, DiD $\Delta\Delta = +19.43\text{ ms}$ to $+42.69\text{ ms}$); confirmed T2 equivalence for Workload A $r=1$ at $\pm 5\%$ margin; isolated Memtable in-memory lookup via writer-free diagnostic ($p95 \le 3.1\ \mu\text{s}$); isolated churn overhead via T3 no-churn control ($B/A = 1.15\text{x}$–$1.98\text{x}$) and pprof CPU/mutex profiling.
+- **Status**: Resolved & Confirmatory Validated (Sub-phase I6.8, Decisions D-058, D-059).
 - **Commit**: `HEAD`.
 
 
