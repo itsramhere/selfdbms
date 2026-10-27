@@ -658,6 +658,26 @@ Format:
 - **Status**: Fixed & Verified (Sub-phase I5.2-R.4, Decision D-052).
 - **Commit**: `HEAD`.
 
+---
+
+### E-024: Overlap Instrumentation Counter Conflation (ReadsDuringPublication Accounting In-Flight Reader Drain Time Rather Than Lock Hold Time)
+
+- **ID**: `E-024`
+- **Detected**: 2026-10-27, during external review of Checkpoint CP5b (I6.2)
+- **Sub-phase**: I6.2 (Audit Overlap-Instrumentation Semantics)
+- **Severity**: Instrumentation Semantics & Interpretability Defect (P2)
+- **Symptom**: In Workload B2 (Controlled Flush Interference), all 80 Approach A trials recorded positive `reads_during_publication` counts (scaling from 19 at $r=1$ to 480 at $r=32$), creating the potential misinterpretation that Approach A permitted concurrent reads during its exclusive publication critical section.
+- **Root Cause**: In `lsmengine/manager.go`, `m.flushObserver.OnFlushPublishBegin()` is invoked immediately before `m.Mu.Lock()` is acquired, and `OnFlushPublishEnd()` is invoked after `m.Mu.Unlock()`. In Approach A, when the background flush worker attempts to acquire `m.Mu.Lock()`, existing active readers holding `m.Mu.RLock()` are in flight. The worker blocks waiting for these readers to release `RLock()`. Because `isPublicationActive` was set to `true` upon entering the publication phase, each in-flight reader that completes and records its query before the worker acquires `m.Mu.Lock()` increments `ReadsDuringPublication`. Exactly zero reads ever execute or complete while `m.Mu.Lock()` is actually held.
+- **Fix**:
+  1. Authored deterministic unit tests `TestMetricSemantics_ApproachA_ReadsDuringPublicationAudit` and `TestMetricSemantics_ApproachB_SnapshotReadersDoNotBlockPublication` in `lsmengine/flush_publication_overlap_test.go`, verifying that in Approach A, positive counts measure in-flight reader drain delay rather than concurrency during lock holding.
+  2. Redesigned Figure 4 (`fig4_flush_compaction_overlap.png`) to eliminate raw count comparisons, displaying actual active flush/compaction duration windows, exposure-normalized rates, and tail latency suppression ($p95$).
+  3. Reconciled Workload C compaction exposure: demonstrated that compaction active windows account for $<1.6\%$ of trial operations and duration, refuting whole-trial causal attribution.
+- **Regression Test**: `TestMetricSemantics_ApproachA_ReadsDuringPublicationAudit` in `lsmengine/flush_publication_overlap_test.go`.
+- **Validation**: 100% test pass on Windows native and WSL2 Linux with Go's race detector.
+- **Status**: Resolved & Documented (Sub-phase I6.2, Decision D-057).
+- **Commit**: `HEAD`.
+
+
 
 
 

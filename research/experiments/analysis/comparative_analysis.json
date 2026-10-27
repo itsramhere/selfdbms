@@ -1,0 +1,1472 @@
+{
+  "WORKLOAD_A_READ_ONLY": {
+    "title": "Workload A: Uncontended Read-Only SSTables",
+    "cells": {
+      "1": {
+        "reader_concurrency": 1,
+        "tput_a_median": 72.51,
+        "tput_a_iqr": 15.79,
+        "tput_b_median": 70.78,
+        "tput_b_iqr": 14.06,
+        "diff_median": -1.73,
+        "diff_ci95": [
+          -17.85,
+          15.07
+        ],
+        "ratio_median": 0.98,
+        "ratio_ci95": [
+          0.76,
+          1.27
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 0,
+        "writes_b_median": 0,
+        "writes_ratio": 1.0,
+        "writes_ratio_ci95": null,
+        "p50_a_us": 11012.9,
+        "p50_b_us": 12508.3,
+        "p95_a_us": 31129.9,
+        "p95_b_us": 31431.0,
+        "p99_a_us": 33897.4,
+        "p99_b_us": 34693.3
+      },
+      "2": {
+        "reader_concurrency": 2,
+        "tput_a_median": 135.94,
+        "tput_a_iqr": 34.33,
+        "tput_b_median": 135.59,
+        "tput_b_iqr": 31.65,
+        "diff_median": -0.35,
+        "diff_ci95": [
+          -40.25,
+          38.0
+        ],
+        "ratio_median": 1.0,
+        "ratio_ci95": [
+          0.7,
+          1.39
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 0,
+        "writes_b_median": 0,
+        "writes_ratio": 1.0,
+        "writes_ratio_ci95": null,
+        "p50_a_us": 12507.6,
+        "p50_b_us": 11780.3,
+        "p95_a_us": 31904.3,
+        "p95_b_us": 32162.5,
+        "p99_a_us": 34562.3,
+        "p99_b_us": 34808.0
+      },
+      "4": {
+        "reader_concurrency": 4,
+        "tput_a_median": 258.41,
+        "tput_a_iqr": 58.23,
+        "tput_b_median": 262.71,
+        "tput_b_iqr": 63.29,
+        "diff_median": 4.3,
+        "diff_ci95": [
+          -71.8,
+          80.36
+        ],
+        "ratio_median": 1.02,
+        "ratio_ci95": [
+          0.72,
+          1.45
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 0,
+        "writes_b_median": 0,
+        "writes_ratio": 1.0,
+        "writes_ratio_ci95": null,
+        "p50_a_us": 12399.0,
+        "p50_b_us": 12065.1,
+        "p95_a_us": 33805.2,
+        "p95_b_us": 33189.1,
+        "p99_a_us": 35975.0,
+        "p99_b_us": 35466.6
+      },
+      "8": {
+        "reader_concurrency": 8,
+        "tput_a_median": 441.76,
+        "tput_a_iqr": 109.25,
+        "tput_b_median": 450.12,
+        "tput_b_iqr": 106.16,
+        "diff_median": 8.36,
+        "diff_ci95": [
+          -131.09,
+          135.38
+        ],
+        "ratio_median": 1.02,
+        "ratio_ci95": [
+          0.71,
+          1.43
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 0,
+        "writes_b_median": 0,
+        "writes_ratio": 1.0,
+        "writes_ratio_ci95": null,
+        "p50_a_us": 14821.9,
+        "p50_b_us": 14556.7,
+        "p95_a_us": 39292.7,
+        "p95_b_us": 39106.3,
+        "p99_a_us": 42533.7,
+        "p99_b_us": 42458.2
+      },
+      "12": {
+        "reader_concurrency": 12,
+        "tput_a_median": 518.65,
+        "tput_a_iqr": 93.58,
+        "tput_b_median": 523.26,
+        "tput_b_iqr": 121.93,
+        "diff_median": 4.61,
+        "diff_ci95": [
+          -154.32,
+          120.57
+        ],
+        "ratio_median": 1.01,
+        "ratio_ci95": [
+          0.7,
+          1.3
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 0,
+        "writes_b_median": 0,
+        "writes_ratio": 1.0,
+        "writes_ratio_ci95": null,
+        "p50_a_us": 21004.1,
+        "p50_b_us": 21052.0,
+        "p95_a_us": 51286.6,
+        "p95_b_us": 51288.3,
+        "p99_a_us": 59192.1,
+        "p99_b_us": 59543.1
+      },
+      "16": {
+        "reader_concurrency": 16,
+        "tput_a_median": 526.16,
+        "tput_a_iqr": 139.97,
+        "tput_b_median": 510.79,
+        "tput_b_iqr": 164.26,
+        "diff_median": -15.38,
+        "diff_ci95": [
+          -169.18,
+          142.08
+        ],
+        "ratio_median": 0.97,
+        "ratio_ci95": [
+          0.68,
+          1.39
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 0,
+        "writes_b_median": 0,
+        "writes_ratio": 1.0,
+        "writes_ratio_ci95": null,
+        "p50_a_us": 28684.7,
+        "p50_b_us": 28987.0,
+        "p95_a_us": 77100.2,
+        "p95_b_us": 81266.7,
+        "p99_a_us": 99596.9,
+        "p99_b_us": 108514.7
+      },
+      "24": {
+        "reader_concurrency": 24,
+        "tput_a_median": 520.13,
+        "tput_a_iqr": 187.91,
+        "tput_b_median": 518.67,
+        "tput_b_iqr": 201.94,
+        "diff_median": -1.46,
+        "diff_ci95": [
+          -202.39,
+          179.5
+        ],
+        "ratio_median": 1.0,
+        "ratio_ci95": [
+          0.62,
+          1.51
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 0,
+        "writes_b_median": 0,
+        "writes_ratio": 1.0,
+        "writes_ratio_ci95": null,
+        "p50_a_us": 33432.8,
+        "p50_b_us": 34298.0,
+        "p95_a_us": 143365.9,
+        "p95_b_us": 142743.5,
+        "p99_a_us": 204198.6,
+        "p99_b_us": 204378.5
+      },
+      "32": {
+        "reader_concurrency": 32,
+        "tput_a_median": 512.89,
+        "tput_a_iqr": 165.13,
+        "tput_b_median": 514.38,
+        "tput_b_iqr": 188.53,
+        "diff_median": 1.5,
+        "diff_ci95": [
+          -187.63,
+          159.99
+        ],
+        "ratio_median": 1.0,
+        "ratio_ci95": [
+          0.63,
+          1.44
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 0,
+        "writes_b_median": 0,
+        "writes_ratio": 1.0,
+        "writes_ratio_ci95": null,
+        "p50_a_us": 36463.5,
+        "p50_b_us": 37009.1,
+        "p95_a_us": 220021.2,
+        "p95_b_us": 214927.5,
+        "p99_a_us": 326024.0,
+        "p99_b_us": 325981.8
+      }
+    }
+  },
+  "WORKLOAD_B1_NATURAL_WRITE_PROGRESS": {
+    "title": "Workload B1: Natural Write Progress (Concurrent Disk Reads)",
+    "cells": {
+      "1": {
+        "reader_concurrency": 1,
+        "tput_a_median": 53.37,
+        "tput_a_iqr": 19.64,
+        "tput_b_median": 69.35,
+        "tput_b_iqr": 19.5,
+        "diff_median": 15.98,
+        "diff_ci95": [
+          -6.23,
+          32.34
+        ],
+        "ratio_median": 1.3,
+        "ratio_ci95": [
+          0.9,
+          1.88
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 270,
+        "writes_b_median": 2918,
+        "writes_ratio": 10.81,
+        "writes_ratio_ci95": [
+          9.1,
+          15.56
+        ],
+        "p50_a_us": 18001.7,
+        "p50_b_us": 12071.3,
+        "p95_a_us": 42443.3,
+        "p95_b_us": 34417.5,
+        "p99_a_us": 55439.6,
+        "p99_b_us": 39219.5
+      },
+      "2": {
+        "reader_concurrency": 2,
+        "tput_a_median": 75.31,
+        "tput_a_iqr": 29.29,
+        "tput_b_median": 131.55,
+        "tput_b_iqr": 31.54,
+        "diff_median": 56.24,
+        "diff_ci95": [
+          24.54,
+          82.37
+        ],
+        "ratio_median": 1.75,
+        "ratio_ci95": [
+          1.31,
+          2.56
+        ],
+        "outcome_classification": "Positive (Advantage B)",
+        "writes_a_median": 190,
+        "writes_b_median": 2878,
+        "writes_ratio": 15.15,
+        "writes_ratio_ci95": [
+          13.09,
+          22.21
+        ],
+        "p50_a_us": 26187.3,
+        "p50_b_us": 12414.9,
+        "p95_a_us": 56454.7,
+        "p95_b_us": 35371.4,
+        "p99_a_us": 68127.4,
+        "p99_b_us": 44017.1
+      },
+      "4": {
+        "reader_concurrency": 4,
+        "tput_a_median": 125.47,
+        "tput_a_iqr": 48.04,
+        "tput_b_median": 260.26,
+        "tput_b_iqr": 74.19,
+        "diff_median": 134.79,
+        "diff_ci95": [
+          61.29,
+          181.27
+        ],
+        "ratio_median": 2.07,
+        "ratio_ci95": [
+          1.47,
+          3.21
+        ],
+        "outcome_classification": "Positive (Advantage B)",
+        "writes_a_median": 159,
+        "writes_b_median": 2871,
+        "writes_ratio": 18.06,
+        "writes_ratio_ci95": [
+          15.23,
+          28.08
+        ],
+        "p50_a_us": 29849.3,
+        "p50_b_us": 12950.1,
+        "p95_a_us": 69500.5,
+        "p95_b_us": 36118.0,
+        "p99_a_us": 89258.7,
+        "p99_b_us": 39830.4
+      },
+      "8": {
+        "reader_concurrency": 8,
+        "tput_a_median": 219.19,
+        "tput_a_iqr": 78.77,
+        "tput_b_median": 450.7,
+        "tput_b_iqr": 141.45,
+        "diff_median": 231.51,
+        "diff_ci95": [
+          95.94,
+          314.36
+        ],
+        "ratio_median": 2.06,
+        "ratio_ci95": [
+          1.44,
+          3.18
+        ],
+        "outcome_classification": "Positive (Advantage B)",
+        "writes_a_median": 139,
+        "writes_b_median": 2573,
+        "writes_ratio": 18.51,
+        "writes_ratio_ci95": [
+          16.79,
+          28.43
+        ],
+        "p50_a_us": 33045.5,
+        "p50_b_us": 15142.4,
+        "p95_a_us": 84094.8,
+        "p95_b_us": 40746.1,
+        "p99_a_us": 118492.9,
+        "p99_b_us": 45783.4
+      },
+      "12": {
+        "reader_concurrency": 12,
+        "tput_a_median": 259.66,
+        "tput_a_iqr": 110.49,
+        "tput_b_median": 504.7,
+        "tput_b_iqr": 185.14,
+        "diff_median": 245.04,
+        "diff_ci95": [
+          58.61,
+          336.81
+        ],
+        "ratio_median": 1.94,
+        "ratio_ci95": [
+          1.21,
+          2.9
+        ],
+        "outcome_classification": "Positive (Advantage B)",
+        "writes_a_median": 110,
+        "writes_b_median": 1205,
+        "writes_ratio": 10.95,
+        "writes_ratio_ci95": [
+          8.66,
+          16.48
+        ],
+        "p50_a_us": 39713.2,
+        "p50_b_us": 21919.2,
+        "p95_a_us": 109402.0,
+        "p95_b_us": 52769.8,
+        "p99_a_us": 165341.3,
+        "p99_b_us": 62027.0
+      },
+      "16": {
+        "reader_concurrency": 16,
+        "tput_a_median": 300.83,
+        "tput_a_iqr": 125.88,
+        "tput_b_median": 464.83,
+        "tput_b_iqr": 159.16,
+        "diff_median": 164.0,
+        "diff_ci95": [
+          38.62,
+          292.04
+        ],
+        "ratio_median": 1.55,
+        "ratio_ci95": [
+          1.12,
+          2.48
+        ],
+        "outcome_classification": "Positive (Advantage B)",
+        "writes_a_median": 96,
+        "writes_b_median": 535,
+        "writes_ratio": 5.57,
+        "writes_ratio_ci95": [
+          4.45,
+          8.82
+        ],
+        "p50_a_us": 44872.4,
+        "p50_b_us": 32420.8,
+        "p95_a_us": 128939.9,
+        "p95_b_us": 77278.3,
+        "p99_a_us": 201950.4,
+        "p99_b_us": 111099.1
+      },
+      "24": {
+        "reader_concurrency": 24,
+        "tput_a_median": 358.57,
+        "tput_a_iqr": 119.15,
+        "tput_b_median": 489.0,
+        "tput_b_iqr": 156.55,
+        "diff_median": 130.42,
+        "diff_ci95": [
+          -17.35,
+          251.88
+        ],
+        "ratio_median": 1.36,
+        "ratio_ci95": [
+          0.95,
+          2.01
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 77,
+        "writes_b_median": 264,
+        "writes_ratio": 3.43,
+        "writes_ratio_ci95": [
+          2.65,
+          4.98
+        ],
+        "p50_a_us": 55873.9,
+        "p50_b_us": 45462.6,
+        "p95_a_us": 164045.4,
+        "p95_b_us": 115565.6,
+        "p99_a_us": 243277.9,
+        "p99_b_us": 155902.0
+      },
+      "32": {
+        "reader_concurrency": 32,
+        "tput_a_median": 375.44,
+        "tput_a_iqr": 149.08,
+        "tput_b_median": 484.08,
+        "tput_b_iqr": 95.31,
+        "diff_median": 108.64,
+        "diff_ci95": [
+          15.96,
+          245.17
+        ],
+        "ratio_median": 1.29,
+        "ratio_ci95": [
+          1.04,
+          1.99
+        ],
+        "outcome_classification": "Positive (Advantage B)",
+        "writes_a_median": 60,
+        "writes_b_median": 198,
+        "writes_ratio": 3.3,
+        "writes_ratio_ci95": [
+          2.65,
+          5.05
+        ],
+        "p50_a_us": 71846.0,
+        "p50_b_us": 60311.1,
+        "p95_a_us": 210437.2,
+        "p95_b_us": 149413.5,
+        "p99_a_us": 318873.5,
+        "p99_b_us": 198162.0
+      }
+    }
+  },
+  "WORKLOAD_B2_CONTROLLED_FLUSH_INTERFERENCE": {
+    "title": "Workload B2: Controlled Flush Interference",
+    "cells": {
+      "1": {
+        "reader_concurrency": 1,
+        "tput_a_median": 39.73,
+        "tput_a_iqr": 14.83,
+        "tput_b_median": 40.61,
+        "tput_b_iqr": 13.87,
+        "diff_median": 0.89,
+        "diff_ci95": [
+          -11.15,
+          14.69
+        ],
+        "ratio_median": 1.02,
+        "ratio_ci95": [
+          0.73,
+          1.49
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 0,
+        "writes_b_median": 0,
+        "writes_ratio": 1.0,
+        "writes_ratio_ci95": null,
+        "p50_a_us": 17081.2,
+        "p50_b_us": 18523.9,
+        "p95_a_us": 45209.7,
+        "p95_b_us": 39083.0,
+        "p99_a_us": 237621.7,
+        "p99_b_us": 236859.5
+      },
+      "2": {
+        "reader_concurrency": 2,
+        "tput_a_median": 72.56,
+        "tput_a_iqr": 23.77,
+        "tput_b_median": 82.81,
+        "tput_b_iqr": 26.91,
+        "diff_median": 10.25,
+        "diff_ci95": [
+          -17.18,
+          33.38
+        ],
+        "ratio_median": 1.14,
+        "ratio_ci95": [
+          0.76,
+          1.68
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 0,
+        "writes_b_median": 0,
+        "writes_ratio": 1.0,
+        "writes_ratio_ci95": null,
+        "p50_a_us": 18980.7,
+        "p50_b_us": 16733.4,
+        "p95_a_us": 175434.2,
+        "p95_b_us": 42735.0,
+        "p99_a_us": 248289.3,
+        "p99_b_us": 220788.4
+      },
+      "4": {
+        "reader_concurrency": 4,
+        "tput_a_median": 135.86,
+        "tput_a_iqr": 57.01,
+        "tput_b_median": 162.97,
+        "tput_b_iqr": 55.97,
+        "diff_median": 27.11,
+        "diff_ci95": [
+          -33.25,
+          89.27
+        ],
+        "ratio_median": 1.2,
+        "ratio_ci95": [
+          0.76,
+          2.21
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 0,
+        "writes_b_median": 0,
+        "writes_ratio": 1.0,
+        "writes_ratio_ci95": null,
+        "p50_a_us": 20288.7,
+        "p50_b_us": 14591.8,
+        "p95_a_us": 180965.7,
+        "p95_b_us": 48916.2,
+        "p99_a_us": 252268.8,
+        "p99_b_us": 223211.9
+      },
+      "8": {
+        "reader_concurrency": 8,
+        "tput_a_median": 195.76,
+        "tput_a_iqr": 72.5,
+        "tput_b_median": 236.11,
+        "tput_b_iqr": 61.64,
+        "diff_median": 40.35,
+        "diff_ci95": [
+          -14.79,
+          120.95
+        ],
+        "ratio_median": 1.21,
+        "ratio_ci95": [
+          0.92,
+          2.06
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 0,
+        "writes_b_median": 0,
+        "writes_ratio": 1.0,
+        "writes_ratio_ci95": null,
+        "p50_a_us": 26391.7,
+        "p50_b_us": 23760.5,
+        "p95_a_us": 220895.7,
+        "p95_b_us": 179813.6,
+        "p99_a_us": 281146.3,
+        "p99_b_us": 250908.0
+      },
+      "12": {
+        "reader_concurrency": 12,
+        "tput_a_median": 217.42,
+        "tput_a_iqr": 73.63,
+        "tput_b_median": 253.07,
+        "tput_b_iqr": 94.29,
+        "diff_median": 35.65,
+        "diff_ci95": [
+          -32.0,
+          119.5
+        ],
+        "ratio_median": 1.16,
+        "ratio_ci95": [
+          0.85,
+          1.72
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 0,
+        "writes_b_median": 0,
+        "writes_ratio": 1.0,
+        "writes_ratio_ci95": null,
+        "p50_a_us": 33554.1,
+        "p50_b_us": 32353.1,
+        "p95_a_us": 251005.5,
+        "p95_b_us": 219715.2,
+        "p99_a_us": 316754.9,
+        "p99_b_us": 303395.7
+      },
+      "16": {
+        "reader_concurrency": 16,
+        "tput_a_median": 197.13,
+        "tput_a_iqr": 74.09,
+        "tput_b_median": 263.81,
+        "tput_b_iqr": 82.49,
+        "diff_median": 66.67,
+        "diff_ci95": [
+          -21.19,
+          127.52
+        ],
+        "ratio_median": 1.34,
+        "ratio_ci95": [
+          0.91,
+          1.83
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 0,
+        "writes_b_median": 0,
+        "writes_ratio": 1.0,
+        "writes_ratio_ci95": null,
+        "p50_a_us": 47427.3,
+        "p50_b_us": 39715.3,
+        "p95_a_us": 298729.4,
+        "p95_b_us": 245078.5,
+        "p99_a_us": 392035.7,
+        "p99_b_us": 317169.7
+      },
+      "24": {
+        "reader_concurrency": 24,
+        "tput_a_median": 212.34,
+        "tput_a_iqr": 54.82,
+        "tput_b_median": 267.61,
+        "tput_b_iqr": 104.35,
+        "diff_median": 55.27,
+        "diff_ci95": [
+          -48.45,
+          105.76
+        ],
+        "ratio_median": 1.26,
+        "ratio_ci95": [
+          0.8,
+          1.56
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 0,
+        "writes_b_median": 0,
+        "writes_ratio": 1.0,
+        "writes_ratio_ci95": null,
+        "p50_a_us": 70492.4,
+        "p50_b_us": 52818.4,
+        "p95_a_us": 352200.2,
+        "p95_b_us": 307522.2,
+        "p99_a_us": 439863.3,
+        "p99_b_us": 424833.1
+      },
+      "32": {
+        "reader_concurrency": 32,
+        "tput_a_median": 249.3,
+        "tput_a_iqr": 41.0,
+        "tput_b_median": 273.37,
+        "tput_b_iqr": 77.99,
+        "diff_median": 24.07,
+        "diff_ci95": [
+          -38.44,
+          72.23
+        ],
+        "ratio_median": 1.1,
+        "ratio_ci95": [
+          0.85,
+          1.33
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 0,
+        "writes_b_median": 0,
+        "writes_ratio": 1.0,
+        "writes_ratio_ci95": null,
+        "p50_a_us": 87765.2,
+        "p50_b_us": 69954.6,
+        "p95_a_us": 370843.7,
+        "p95_b_us": 355866.5,
+        "p99_a_us": 478402.9,
+        "p99_b_us": 485791.8
+      }
+    }
+  },
+  "WORKLOAD_C_COMPACTION_OVERLAP": {
+    "title": "Workload C: Compaction Overlap",
+    "cells": {
+      "1": {
+        "reader_concurrency": 1,
+        "tput_a_median": 546.61,
+        "tput_a_iqr": 50.13,
+        "tput_b_median": 407.67,
+        "tput_b_iqr": 57.01,
+        "diff_median": -138.93,
+        "diff_ci95": [
+          -171.66,
+          -78.87
+        ],
+        "ratio_median": 0.75,
+        "ratio_ci95": [
+          0.7,
+          0.85
+        ],
+        "outcome_classification": "Negative (Overhead B)",
+        "writes_a_median": 2692,
+        "writes_b_median": 2837,
+        "writes_ratio": 1.05,
+        "writes_ratio_ci95": [
+          0.98,
+          1.2
+        ],
+        "p50_a_us": 280.2,
+        "p50_b_us": 2994.6,
+        "p95_a_us": 3801.2,
+        "p95_b_us": 4281.5,
+        "p99_a_us": 5271.1,
+        "p99_b_us": 6366.1
+      },
+      "2": {
+        "reader_concurrency": 2,
+        "tput_a_median": 1042.18,
+        "tput_a_iqr": 179.68,
+        "tput_b_median": 827.28,
+        "tput_b_iqr": 134.06,
+        "diff_median": -214.9,
+        "diff_ci95": [
+          -333.81,
+          -66.18
+        ],
+        "ratio_median": 0.79,
+        "ratio_ci95": [
+          0.7,
+          0.93
+        ],
+        "outcome_classification": "Negative (Overhead B)",
+        "writes_a_median": 2593,
+        "writes_b_median": 2797,
+        "writes_ratio": 1.08,
+        "writes_ratio_ci95": [
+          0.94,
+          1.27
+        ],
+        "p50_a_us": 314.4,
+        "p50_b_us": 3040.8,
+        "p95_a_us": 4134.9,
+        "p95_b_us": 4250.5,
+        "p99_a_us": 7412.9,
+        "p99_b_us": 6952.9
+      },
+      "4": {
+        "reader_concurrency": 4,
+        "tput_a_median": 2001.26,
+        "tput_a_iqr": 309.47,
+        "tput_b_median": 1842.84,
+        "tput_b_iqr": 292.71,
+        "diff_median": -158.41,
+        "diff_ci95": [
+          -445.38,
+          89.26
+        ],
+        "ratio_median": 0.92,
+        "ratio_ci95": [
+          0.79,
+          1.05
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 2491,
+        "writes_b_median": 2906,
+        "writes_ratio": 1.17,
+        "writes_ratio_ci95": [
+          1.0,
+          1.34
+        ],
+        "p50_a_us": 235.0,
+        "p50_b_us": 2759.7,
+        "p95_a_us": 6436.2,
+        "p95_b_us": 6403.6,
+        "p99_a_us": 9612.2,
+        "p99_b_us": 10308.6
+      },
+      "8": {
+        "reader_concurrency": 8,
+        "tput_a_median": 3877.68,
+        "tput_a_iqr": 751.14,
+        "tput_b_median": 3685.94,
+        "tput_b_iqr": 477.29,
+        "diff_median": -191.74,
+        "diff_ci95": [
+          -631.44,
+          502.23
+        ],
+        "ratio_median": 0.95,
+        "ratio_ci95": [
+          0.84,
+          1.14
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 2413,
+        "writes_b_median": 2714,
+        "writes_ratio": 1.12,
+        "writes_ratio_ci95": [
+          1.03,
+          1.36
+        ],
+        "p50_a_us": 142.0,
+        "p50_b_us": 126.0,
+        "p95_a_us": 7726.2,
+        "p95_b_us": 8448.8,
+        "p99_a_us": 14614.0,
+        "p99_b_us": 15401.2
+      },
+      "12": {
+        "reader_concurrency": 12,
+        "tput_a_median": 5669.39,
+        "tput_a_iqr": 666.07,
+        "tput_b_median": 5472.47,
+        "tput_b_iqr": 857.48,
+        "diff_median": -196.93,
+        "diff_ci95": [
+          -923.57,
+          497.86
+        ],
+        "ratio_median": 0.97,
+        "ratio_ci95": [
+          0.84,
+          1.1
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 2340,
+        "writes_b_median": 2559,
+        "writes_ratio": 1.09,
+        "writes_ratio_ci95": [
+          0.97,
+          1.27
+        ],
+        "p50_a_us": 119.7,
+        "p50_b_us": 116.8,
+        "p95_a_us": 9773.2,
+        "p95_b_us": 10420.6,
+        "p99_a_us": 18319.1,
+        "p99_b_us": 19546.3
+      },
+      "16": {
+        "reader_concurrency": 16,
+        "tput_a_median": 7342.9,
+        "tput_a_iqr": 1183.51,
+        "tput_b_median": 7637.02,
+        "tput_b_iqr": 1556.72,
+        "diff_median": 294.12,
+        "diff_ci95": [
+          -1101.21,
+          1377.13
+        ],
+        "ratio_median": 1.04,
+        "ratio_ci95": [
+          0.85,
+          1.22
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 2275,
+        "writes_b_median": 2631,
+        "writes_ratio": 1.16,
+        "writes_ratio_ci95": [
+          0.94,
+          1.35
+        ],
+        "p50_a_us": 114.7,
+        "p50_b_us": 106.6,
+        "p95_a_us": 11204.7,
+        "p95_b_us": 10639.7,
+        "p99_a_us": 20303.8,
+        "p99_b_us": 20821.1
+      },
+      "24": {
+        "reader_concurrency": 24,
+        "tput_a_median": 10292.31,
+        "tput_a_iqr": 1770.06,
+        "tput_b_median": 10809.72,
+        "tput_b_iqr": 1360.77,
+        "diff_median": 517.41,
+        "diff_ci95": [
+          -710.5,
+          2252.46
+        ],
+        "ratio_median": 1.05,
+        "ratio_ci95": [
+          0.93,
+          1.26
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 2134,
+        "writes_b_median": 2481,
+        "writes_ratio": 1.16,
+        "writes_ratio_ci95": [
+          1.01,
+          1.38
+        ],
+        "p50_a_us": 103.1,
+        "p50_b_us": 104.6,
+        "p95_a_us": 12461.5,
+        "p95_b_us": 13269.7,
+        "p99_a_us": 24878.5,
+        "p99_b_us": 27370.4
+      },
+      "32": {
+        "reader_concurrency": 32,
+        "tput_a_median": 13488.71,
+        "tput_a_iqr": 2940.12,
+        "tput_b_median": 13855.44,
+        "tput_b_iqr": 3235.88,
+        "diff_median": 366.73,
+        "diff_ci95": [
+          -1451.89,
+          3773.06
+        ],
+        "ratio_median": 1.03,
+        "ratio_ci95": [
+          0.89,
+          1.34
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 2079,
+        "writes_b_median": 2304,
+        "writes_ratio": 1.11,
+        "writes_ratio_ci95": [
+          0.97,
+          1.44
+        ],
+        "p50_a_us": 100.3,
+        "p50_b_us": 102.2,
+        "p95_a_us": 12751.5,
+        "p95_b_us": 14507.9,
+        "p99_a_us": 27774.9,
+        "p99_b_us": 30813.9
+      }
+    }
+  },
+  "WORKLOAD_D_READER_CHURN": {
+    "title": "Workload D: High Reader-Set Churn (16KB Threshold)",
+    "cells": {
+      "1": {
+        "reader_concurrency": 1,
+        "tput_a_median": 475.4,
+        "tput_a_iqr": 48.16,
+        "tput_b_median": 298.03,
+        "tput_b_iqr": 36.49,
+        "diff_median": -177.37,
+        "diff_ci95": [
+          -212.38,
+          -133.32
+        ],
+        "ratio_median": 0.63,
+        "ratio_ci95": [
+          0.55,
+          0.7
+        ],
+        "outcome_classification": "Negative (Overhead B)",
+        "writes_a_median": 2354,
+        "writes_b_median": 2978,
+        "writes_ratio": 1.27,
+        "writes_ratio_ci95": [
+          1.12,
+          1.41
+        ],
+        "p50_a_us": 1109.9,
+        "p50_b_us": 3166.2,
+        "p95_a_us": 4346.4,
+        "p95_b_us": 4546.2,
+        "p99_a_us": 6859.9,
+        "p99_b_us": 11223.8
+      },
+      "2": {
+        "reader_concurrency": 2,
+        "tput_a_median": 904.8,
+        "tput_a_iqr": 133.61,
+        "tput_b_median": 598.93,
+        "tput_b_iqr": 43.64,
+        "diff_median": -305.87,
+        "diff_ci95": [
+          -339.17,
+          -162.6
+        ],
+        "ratio_median": 0.66,
+        "ratio_ci95": [
+          0.63,
+          0.79
+        ],
+        "outcome_classification": "Negative (Overhead B)",
+        "writes_a_median": 2241,
+        "writes_b_median": 2882,
+        "writes_ratio": 1.29,
+        "writes_ratio_ci95": [
+          1.21,
+          1.55
+        ],
+        "p50_a_us": 1169.0,
+        "p50_b_us": 3231.4,
+        "p95_a_us": 4607.9,
+        "p95_b_us": 4847.7,
+        "p99_a_us": 8064.2,
+        "p99_b_us": 11366.2
+      },
+      "4": {
+        "reader_concurrency": 4,
+        "tput_a_median": 1701.71,
+        "tput_a_iqr": 327.35,
+        "tput_b_median": 1267.32,
+        "tput_b_iqr": 165.4,
+        "diff_median": -434.39,
+        "diff_ci95": [
+          -609.88,
+          -136.17
+        ],
+        "ratio_median": 0.74,
+        "ratio_ci95": [
+          0.65,
+          0.9
+        ],
+        "outcome_classification": "Negative (Overhead B)",
+        "writes_a_median": 2105,
+        "writes_b_median": 2901,
+        "writes_ratio": 1.38,
+        "writes_ratio_ci95": [
+          1.18,
+          1.67
+        ],
+        "p50_a_us": 1073.4,
+        "p50_b_us": 3215.2,
+        "p95_a_us": 5666.7,
+        "p95_b_us": 5947.4,
+        "p99_a_us": 10199.7,
+        "p99_b_us": 11614.8
+      },
+      "8": {
+        "reader_concurrency": 8,
+        "tput_a_median": 3142.07,
+        "tput_a_iqr": 568.3,
+        "tput_b_median": 2598.47,
+        "tput_b_iqr": 313.24,
+        "diff_median": -543.6,
+        "diff_ci95": [
+          -820.88,
+          27.82
+        ],
+        "ratio_median": 0.83,
+        "ratio_ci95": [
+          0.74,
+          1.01
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 1943,
+        "writes_b_median": 2566,
+        "writes_ratio": 1.32,
+        "writes_ratio_ci95": [
+          1.23,
+          1.62
+        ],
+        "p50_a_us": 948.2,
+        "p50_b_us": 3219.4,
+        "p95_a_us": 7899.9,
+        "p95_b_us": 7854.8,
+        "p99_a_us": 14231.9,
+        "p99_b_us": 14986.1
+      },
+      "12": {
+        "reader_concurrency": 12,
+        "tput_a_median": 4084.14,
+        "tput_a_iqr": 410.89,
+        "tput_b_median": 3937.62,
+        "tput_b_iqr": 656.64,
+        "diff_median": -146.52,
+        "diff_ci95": [
+          -829.56,
+          100.48
+        ],
+        "ratio_median": 0.96,
+        "ratio_ci95": [
+          0.8,
+          1.03
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 1681,
+        "writes_b_median": 2371,
+        "writes_ratio": 1.41,
+        "writes_ratio_ci95": [
+          1.2,
+          1.49
+        ],
+        "p50_a_us": 982.2,
+        "p50_b_us": 2812.0,
+        "p95_a_us": 8847.1,
+        "p95_b_us": 9909.8,
+        "p99_a_us": 14706.6,
+        "p99_b_us": 19199.2
+      },
+      "16": {
+        "reader_concurrency": 16,
+        "tput_a_median": 5344.95,
+        "tput_a_iqr": 73.26,
+        "tput_b_median": 5048.2,
+        "tput_b_iqr": 1117.17,
+        "diff_median": -296.76,
+        "diff_ci95": [
+          -1185.85,
+          94.47
+        ],
+        "ratio_median": 0.94,
+        "ratio_ci95": [
+          0.78,
+          1.02
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 1643,
+        "writes_b_median": 2089,
+        "writes_ratio": 1.27,
+        "writes_ratio_ci95": [
+          1.08,
+          1.38
+        ],
+        "p50_a_us": 741.9,
+        "p50_b_us": 663.1,
+        "p95_a_us": 11162.9,
+        "p95_b_us": 11981.5,
+        "p99_a_us": 18976.8,
+        "p99_b_us": 22435.8
+      },
+      "24": {
+        "reader_concurrency": 24,
+        "tput_a_median": 7947.05,
+        "tput_a_iqr": 1226.5,
+        "tput_b_median": 7933.97,
+        "tput_b_iqr": 1036.98,
+        "diff_median": -13.08,
+        "diff_ci95": [
+          -1218.51,
+          1606.4
+        ],
+        "ratio_median": 1.0,
+        "ratio_ci95": [
+          0.85,
+          1.25
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 1631,
+        "writes_b_median": 1918,
+        "writes_ratio": 1.18,
+        "writes_ratio_ci95": [
+          0.99,
+          1.47
+        ],
+        "p50_a_us": 481.5,
+        "p50_b_us": 450.9,
+        "p95_a_us": 13451.2,
+        "p95_b_us": 14503.8,
+        "p99_a_us": 24452.8,
+        "p99_b_us": 29855.8
+      },
+      "32": {
+        "reader_concurrency": 32,
+        "tput_a_median": 10442.39,
+        "tput_a_iqr": 1562.27,
+        "tput_b_median": 9584.26,
+        "tput_b_iqr": 1425.71,
+        "diff_median": -858.13,
+        "diff_ci95": [
+          -1805.45,
+          1240.19
+        ],
+        "ratio_median": 0.92,
+        "ratio_ci95": [
+          0.83,
+          1.15
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 1610,
+        "writes_b_median": 1691,
+        "writes_ratio": 1.05,
+        "writes_ratio_ci95": [
+          0.92,
+          1.34
+        ],
+        "p50_a_us": 264.5,
+        "p50_b_us": 393.0,
+        "p95_a_us": 15830.6,
+        "p95_b_us": 18292.8,
+        "p99_a_us": 30375.0,
+        "p99_b_us": 39591.6
+      }
+    }
+  },
+  "WORKLOAD_E_NEGATIVE_CONTROL_MEMTABLE": {
+    "title": "Workload E: In-Memory Memtable (2 Concurrent Writers)",
+    "cells": {
+      "1": {
+        "reader_concurrency": 1,
+        "tput_a_median": 656.15,
+        "tput_a_iqr": 82.48,
+        "tput_b_median": 666.13,
+        "tput_b_iqr": 65.32,
+        "diff_median": 9.98,
+        "diff_ci95": [
+          -52.79,
+          96.47
+        ],
+        "ratio_median": 1.02,
+        "ratio_ci95": [
+          0.92,
+          1.17
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 3248,
+        "writes_b_median": 3272,
+        "writes_ratio": 1.01,
+        "writes_ratio_ci95": [
+          0.93,
+          1.16
+        ],
+        "p50_a_us": 47.4,
+        "p50_b_us": 43.4,
+        "p95_a_us": 3492.1,
+        "p95_b_us": 3376.2,
+        "p99_a_us": 4333.0,
+        "p99_b_us": 4205.5
+      },
+      "2": {
+        "reader_concurrency": 2,
+        "tput_a_median": 1307.1,
+        "tput_a_iqr": 120.44,
+        "tput_b_median": 1282.54,
+        "tput_b_iqr": 113.21,
+        "diff_median": -24.56,
+        "diff_ci95": [
+          -176.01,
+          111.01
+        ],
+        "ratio_median": 0.98,
+        "ratio_ci95": [
+          0.86,
+          1.09
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 3268,
+        "writes_b_median": 3190,
+        "writes_ratio": 0.98,
+        "writes_ratio_ci95": [
+          0.87,
+          1.08
+        ],
+        "p50_a_us": 6.7,
+        "p50_b_us": 6.5,
+        "p95_a_us": 4528.1,
+        "p95_b_us": 4305.9,
+        "p99_a_us": 8885.5,
+        "p99_b_us": 9050.1
+      },
+      "4": {
+        "reader_concurrency": 4,
+        "tput_a_median": 2576.6,
+        "tput_a_iqr": 131.77,
+        "tput_b_median": 2605.57,
+        "tput_b_iqr": 324.53,
+        "diff_median": 28.97,
+        "diff_ci95": [
+          -493.35,
+          356.6
+        ],
+        "ratio_median": 1.01,
+        "ratio_ci95": [
+          0.81,
+          1.17
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 3217,
+        "writes_b_median": 3236,
+        "writes_ratio": 1.01,
+        "writes_ratio_ci95": [
+          0.83,
+          1.19
+        ],
+        "p50_a_us": 3.4,
+        "p50_b_us": 3.4,
+        "p95_a_us": 6305.7,
+        "p95_b_us": 6311.8,
+        "p99_a_us": 21671.5,
+        "p99_b_us": 21638.7
+      },
+      "8": {
+        "reader_concurrency": 8,
+        "tput_a_median": 5159.53,
+        "tput_a_iqr": 952.52,
+        "tput_b_median": 5066.02,
+        "tput_b_iqr": 596.39,
+        "diff_median": -93.51,
+        "diff_ci95": [
+          -874.44,
+          1042.44
+        ],
+        "ratio_median": 0.98,
+        "ratio_ci95": [
+          0.82,
+          1.25
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 3224,
+        "writes_b_median": 3162,
+        "writes_ratio": 0.98,
+        "writes_ratio_ci95": [
+          0.82,
+          1.26
+        ],
+        "p50_a_us": 2.5,
+        "p50_b_us": 2.6,
+        "p95_a_us": 8629.9,
+        "p95_b_us": 8607.9,
+        "p99_a_us": 29811.1,
+        "p99_b_us": 30767.9
+      },
+      "12": {
+        "reader_concurrency": 12,
+        "tput_a_median": 7671.88,
+        "tput_a_iqr": 1126.73,
+        "tput_b_median": 7641.97,
+        "tput_b_iqr": 958.99,
+        "diff_median": -29.91,
+        "diff_ci95": [
+          -1787.02,
+          1881.53
+        ],
+        "ratio_median": 1.0,
+        "ratio_ci95": [
+          0.77,
+          1.34
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 3202,
+        "writes_b_median": 3192,
+        "writes_ratio": 1.0,
+        "writes_ratio_ci95": [
+          0.77,
+          1.28
+        ],
+        "p50_a_us": 2.1,
+        "p50_b_us": 2.2,
+        "p95_a_us": 7116.4,
+        "p95_b_us": 7912.2,
+        "p99_a_us": 36742.3,
+        "p99_b_us": 36331.7
+      },
+      "16": {
+        "reader_concurrency": 16,
+        "tput_a_median": 10509.67,
+        "tput_a_iqr": 961.85,
+        "tput_b_median": 10314.65,
+        "tput_b_iqr": 1300.92,
+        "diff_median": -195.02,
+        "diff_ci95": [
+          -1457.59,
+          1134.78
+        ],
+        "ratio_median": 0.98,
+        "ratio_ci95": [
+          0.86,
+          1.12
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 3250,
+        "writes_b_median": 3222,
+        "writes_ratio": 0.99,
+        "writes_ratio_ci95": [
+          0.87,
+          1.12
+        ],
+        "p50_a_us": 1.9,
+        "p50_b_us": 2.0,
+        "p95_a_us": 8028.9,
+        "p95_b_us": 8147.1,
+        "p99_a_us": 38307.9,
+        "p99_b_us": 38629.3
+      },
+      "24": {
+        "reader_concurrency": 24,
+        "tput_a_median": 15106.83,
+        "tput_a_iqr": 2096.34,
+        "tput_b_median": 15605.42,
+        "tput_b_iqr": 1386.78,
+        "diff_median": 498.59,
+        "diff_ci95": [
+          -1366.01,
+          2462.84
+        ],
+        "ratio_median": 1.03,
+        "ratio_ci95": [
+          0.91,
+          1.19
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 3152,
+        "writes_b_median": 3202,
+        "writes_ratio": 1.02,
+        "writes_ratio_ci95": [
+          0.9,
+          1.19
+        ],
+        "p50_a_us": 1.8,
+        "p50_b_us": 1.7,
+        "p95_a_us": 5772.3,
+        "p95_b_us": 5707.0,
+        "p99_a_us": 43117.6,
+        "p99_b_us": 42479.7
+      },
+      "32": {
+        "reader_concurrency": 32,
+        "tput_a_median": 20150.81,
+        "tput_a_iqr": 1599.97,
+        "tput_b_median": 20601.77,
+        "tput_b_iqr": 2312.62,
+        "diff_median": 450.97,
+        "diff_ci95": [
+          -2755.8,
+          1701.91
+        ],
+        "ratio_median": 1.02,
+        "ratio_ci95": [
+          0.86,
+          1.09
+        ],
+        "outcome_classification": "Inconclusive / Similar",
+        "writes_a_median": 3145,
+        "writes_b_median": 3205,
+        "writes_ratio": 1.02,
+        "writes_ratio_ci95": [
+          0.86,
+          1.1
+        ],
+        "p50_a_us": 1.6,
+        "p50_b_us": 1.5,
+        "p95_a_us": 3310.6,
+        "p95_b_us": 3280.2,
+        "p99_a_us": 47805.0,
+        "p99_b_us": 47748.8
+      }
+    }
+  }
+}
