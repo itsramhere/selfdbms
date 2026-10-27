@@ -108,9 +108,13 @@ func main() {
 
 		for _, trial := range manifest.Trials {
 			if trial.PairIndex == 1 {
-				cellKey := fmt.Sprintf("%s_%s_%s_r%d", trial.Experiment, trial.WorkloadID, trial.Condition, trial.ReaderConcurrency)
-				// Include both trials of pair 1
+				// Bound preflight strictly to 12 pairs (24 trials) across key representative conditions:
+				// In T3 writer_free_churn (which tests r=1, 4, 16), preflight tests r=4 alongside r=4 equal_work_churn
+				if trial.Experiment == "T3" && trial.Condition == "writer_free_churn" && trial.ReaderConcurrency != 4 {
+					continue
+				}
 				preflightTrials = append(preflightTrials, trial)
+				cellKey := fmt.Sprintf("%s_%s_%s_r%d", trial.Experiment, trial.WorkloadID, trial.Condition, trial.ReaderConcurrency)
 				seenCells[cellKey] = true
 			}
 		}
