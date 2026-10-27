@@ -41,21 +41,24 @@ type TimestampInfo struct {
 	TotalDurationMs       int    `json:"total_duration_ms"`
 }
 
-// OperationCounts tracks attempted and completed operations across all workers.
+// OperationCounts tracks attempted, admitted, and completed operations across all workers.
 type OperationCounts struct {
-	ReadOpsAttempted       int64 `json:"read_ops_attempted"`
-	ReadOpsCompleted       int64 `json:"read_ops_completed"`
-	ExpectedHitCount       int64 `json:"expected_hit_count"`
-	ExpectedMissCount      int64 `json:"expected_miss_count"`
-	ActualHitCount         int64 `json:"actual_hit_count"`
-	ActualMissCount        int64 `json:"actual_miss_count"`
-	ActualMemtableHitCount int64 `json:"actual_memtable_hit_count"`
-	ActualSSTableHitCount  int64 `json:"actual_sstable_hit_count"`
-	WriteOpsAttempted      int64 `json:"write_ops_attempted"`
-	WriteOpsCompleted      int64 `json:"write_ops_completed"`
-	ErrorOpsCount          int64 `json:"error_ops_count"`
-	TimeoutOpsCount        int64 `json:"timeout_ops_count"`
-	ValidationErrorCount   int64 `json:"validation_error_count"`
+	ReadOpsAttempted       int64            `json:"read_ops_attempted"`
+	ReadOpsAdmitted        int64            `json:"read_ops_admitted"`
+	ReadOpsCompleted       int64            `json:"read_ops_completed"`
+	ExpectedHitCount       int64            `json:"expected_hit_count"`
+	ExpectedMissCount      int64            `json:"expected_miss_count"`
+	ActualHitCount         int64            `json:"actual_hit_count"`
+	ActualMissCount        int64            `json:"actual_miss_count"`
+	ActualMemtableHitCount int64            `json:"actual_memtable_hit_count"`
+	ActualSSTableHitCount  int64            `json:"actual_sstable_hit_count"`
+	WriteOpsAttempted      int64            `json:"write_ops_attempted"`
+	WriteOpsAdmitted       int64            `json:"write_ops_admitted"`
+	WriteOpsCompleted      int64            `json:"write_ops_completed"`
+	ErrorOpsCount          int64            `json:"error_ops_count"`
+	TimeoutOpsCount        int64            `json:"timeout_ops_count"`
+	ValidationErrorCount   int64            `json:"validation_error_count"`
+	WorkerSeeds            map[string]int64 `json:"worker_seeds,omitempty"`
 }
 
 // ThroughputInfo captures completed operations per second.
@@ -171,8 +174,15 @@ type TrialConfig struct {
 	WalSync                     bool       `json:"wal_sync"`
 	CompactionTriggerIntervalMs int        `json:"compaction_trigger_interval_ms"`
 	FlushTriggerIntervalMs      int        `json:"flush_trigger_interval_ms"`
-	ShamFlush                   bool       `json:"sham_flush,omitempty"`
-	FixtureFaultPhase           string     `json:"-"` // Deterministic fault injection: "commit", "flush", "count", "readback"
+	ShamFlush                   bool        `json:"sham_flush,omitempty"`
+	FixtureFaultPhase           string      `json:"-"` // Deterministic fault injection: "commit", "flush", "count", "readback"
+	Hooks                       *TrialHooks `json:"-"` // Lifecycle hooks for measurement window profiling
+}
+
+// TrialHooks allows external profilers or observers to intercept exact measurement boundaries.
+type TrialHooks struct {
+	OnMeasurementStart func()
+	OnMeasurementEnd   func()
 }
 
 // DefaultTrialConfig returns a robust default configuration for testing and smoke verification.
@@ -301,7 +311,7 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 	}
 
 	f0, c0, s0, m0 := captureLSMCounts(man)
-	baseSeed := cfg.Seed + int64(cfg.TrialIndex)*10007
+	workerSeeds := make(map[string]int64)
 	if cfg.InitialSSTableCount > 0 && cfg.WorkloadID != WorkloadE_NegativeControlMemtable {
 		keysPerTable := cfg.InitialKeysPerSSTable
 		if keysPerTable*cfg.InitialSSTableCount < cfg.KeyspaceCardinality {
@@ -421,7 +431,8 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 		var warmupWg sync.WaitGroup
 		for r := 0; r < cfg.ReaderConcurrency; r++ {
 			warmupWg.Add(1)
-			wSeed := baseSeed + int64(r)*101 + 999
+			wSeed := DeriveWorkerSeed(cfg.Seed, RoleWarmupReader, r, "keys")
+			workerSeeds[fmt.Sprintf("warmup_reader_%d", r)] = wSeed
 			go func(seed int64) {
 				defer warmupWg.Done()
 				warmupSampler := NewKeySampler(seed, cfg.KeyspaceCardinality, cfg.TargetReadHitRatio, cfg.ReadDistribution, cfg.ZipfS)
@@ -448,12 +459,14 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 	writeLatency := NewLatencyRecorder(100000)
 	var (
 		readAttempted          atomic.Int64
+		readAdmitted           atomic.Int64
 		readCompleted          atomic.Int64
 		expectedHit            atomic.Int64
 		expectedMiss           atomic.Int64
 		actualHit              atomic.Int64
 		actualMiss             atomic.Int64
 		writeAttempted         atomic.Int64
+		writeAdmitted          atomic.Int64
 		writeCompleted         atomic.Int64
 		errorOps               atomic.Int64
 		timeoutOps             atomic.Int64
@@ -471,7 +484,8 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 	// Launch reader workers
 	for r := 0; r < cfg.ReaderConcurrency; r++ {
 		workerWg.Add(1)
-		readerSeed := baseSeed + int64(r)*101 + 1
+		readerSeed := DeriveWorkerSeed(cfg.Seed, RoleReader, r, "keys")
+		workerSeeds[fmt.Sprintf("reader_%d", r)] = readerSeed
 		go func(seed int64) {
 			defer workerWg.Done()
 			sampler := NewKeySampler(seed, cfg.KeyspaceCardinality, cfg.TargetReadHitRatio, cfg.ReadDistribution, cfg.ZipfS)
@@ -488,6 +502,7 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 						expectedMiss.Add(1)
 					}
 					readAttempted.Add(1)
+					readAdmitted.Add(1)
 					t0 := NowPrecision()
 					val, err := man.Get(key, math.MaxUint64)
 					durNanos := SincePrecisionNanos(t0)
@@ -522,7 +537,8 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 	if cfg.WriterConcurrency > 0 {
 		for w := 0; w < cfg.WriterConcurrency; w++ {
 			workerWg.Add(1)
-			writerSeed := baseSeed + int64(w)*503 + 2000
+			writerSeed := DeriveWorkerSeed(cfg.Seed, RoleWriter, w, "keys")
+			workerSeeds[fmt.Sprintf("writer_%d", w)] = writerSeed
 			go func(seed int64, workerID int) {
 				defer workerWg.Done()
 				rnd := rand.New(rand.NewSource(seed))
@@ -538,6 +554,7 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 						key := FormatKey(keyIdx)
 						val := FormatVal(keyIdx, cfg.ValSizeBytes)
 						writeAttempted.Add(1)
+						writeAdmitted.Add(1)
 						t0 := NowPrecision()
 						tx := man.Begin()
 						if tx != nil {
@@ -585,9 +602,12 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 
 	// Launch background flush coordinator if interval configured (e.g. Workload B2)
 	if cfg.FlushTriggerIntervalMs > 0 {
+		flushSeed := DeriveWorkerSeed(cfg.Seed, RoleFlushBatch, 0, "keys")
+		workerSeeds["flush_coordinator"] = flushSeed
 		workerWg.Add(1)
-		go func() {
+		go func(seed int64) {
 			defer workerWg.Done()
+			flushRnd := rand.New(rand.NewSource(seed))
 			<-startBarrier
 			ticker := time.NewTicker(time.Duration(cfg.FlushTriggerIntervalMs) * time.Millisecond)
 			defer ticker.Stop()
@@ -606,7 +626,7 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 						continue
 					}
 					for k := 0; k < batchKeys; k++ {
-						kIdx := (flushSeq*1000 + k) % cfg.KeyspaceCardinality
+						kIdx := (flushSeq*1000 + k + flushRnd.Intn(100)) % cfg.KeyspaceCardinality
 						tx.Put(FormatKey(kIdx), FormatVal(kIdx, cfg.ValSizeBytes))
 					}
 					if err := tx.Commit(); err != nil {
@@ -622,18 +642,24 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 					}
 				}
 			}
-		}()
+		}(flushSeed)
 	}
 
 	// Trigger measurement start
 	startISO := time.Now().UTC().Format(time.RFC3339Nano)
 	measureStart := time.Now()
+	if cfg.Hooks != nil && cfg.Hooks.OnMeasurementStart != nil {
+		cfg.Hooks.OnMeasurementStart()
+	}
 	close(startBarrier)
 
 	// Measure for configured duration
 	time.Sleep(time.Duration(cfg.MeasurementDurationMs) * time.Millisecond)
 	close(stopMeasure)
 	workerWg.Wait()
+	if cfg.Hooks != nil && cfg.Hooks.OnMeasurementEnd != nil {
+		cfg.Hooks.OnMeasurementEnd()
+	}
 	measureDuration := time.Since(measureStart)
 	finishISO := time.Now().UTC().Format(time.RFC3339Nano)
 
@@ -698,6 +724,7 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 		},
 		Operations: OperationCounts{
 			ReadOpsAttempted:       readAttempted.Load(),
+			ReadOpsAdmitted:        readAdmitted.Load(),
 			ReadOpsCompleted:       readOps,
 			ExpectedHitCount:       expectedHit.Load(),
 			ExpectedMissCount:      expectedMiss.Load(),
@@ -706,10 +733,12 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 			ActualMemtableHitCount: int64(phaseMeasured.DeltaMemtableReads),
 			ActualSSTableHitCount:  int64(phaseMeasured.DeltaSSTableReads),
 			WriteOpsAttempted:      writeAttempted.Load(),
+			WriteOpsAdmitted:       writeAdmitted.Load(),
 			WriteOpsCompleted:      writeOps,
 			ErrorOpsCount:          errorOps.Load(),
 			TimeoutOpsCount:        timeoutOps.Load(),
 			ValidationErrorCount:   validationErrs.Load(),
+			WorkerSeeds:            workerSeeds,
 		},
 		Throughput: ThroughputInfo{
 			ReadOpsPerSec:  float64(readOps) / secs,
