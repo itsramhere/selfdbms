@@ -171,6 +171,7 @@ type TrialConfig struct {
 	WalSync                     bool       `json:"wal_sync"`
 	CompactionTriggerIntervalMs int        `json:"compaction_trigger_interval_ms"`
 	FlushTriggerIntervalMs      int        `json:"flush_trigger_interval_ms"`
+	ShamFlush                   bool       `json:"sham_flush,omitempty"`
 	FixtureFaultPhase           string     `json:"-"` // Deterministic fault injection: "commit", "flush", "count", "readback"
 }
 
@@ -612,11 +613,13 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 						flushTracker.DelayedRequests.Add(1)
 						continue
 					}
-					if err := man.TriggerFlush(); err != nil {
-						flushTracker.DelayedRequests.Add(1)
-						continue
+					if !cfg.ShamFlush {
+						if err := man.TriggerFlush(); err != nil {
+							flushTracker.DelayedRequests.Add(1)
+							continue
+						}
+						_ = man.WaitForFlushCompletion()
 					}
-					_ = man.WaitForFlushCompletion()
 				}
 			}
 		}()

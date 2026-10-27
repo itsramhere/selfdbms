@@ -677,6 +677,29 @@ Format:
 - **Status**: Resolved & Documented (Sub-phase I6.2, Decision D-057).
 - **Commit**: `HEAD`.
 
+---
+
+### E-025: Unpaired Bootstrap Resampling Artificially Inflating Workload B2 Tail Latency CIs & Storage Writeback Confound in Outermost Repetition Loop
+
+- **ID**: `E-025`
+- **Detected**: 2026-10-27, during external review of Checkpoint CP6 (I6.8.0)
+- **Sub-phase**: I6.8.0 (Targeted Hypothesis Verification & Independent Statistical Reanalysis)
+- **Severity**: Statistical Methodology & Experimental Protocol Defect (P2)
+- **Symptom**:
+  1. In Workload B2 (Controlled Flush Interference), Approach B had lower $p95$ read latency than Approach A in 10 out of 10 matching repetition pairs for $r \in \{2, 4, 8\}$, yet the CP6 exploratory bootstrap reported wide confidence intervals crossing 1.0 (e.g. $[0.18\text{x}, 2.75\text{x}]$ at $r=2$), falsely suggesting inconclusive evidence.
+  2. In Workload A (Read-Only), repetition 2 showed an abrupt 43%–60% throughput drop compared to repetition 1 across all reader concurrencies, though both Approach A and Approach B dropped in unison (ratios 0.91x–1.02x).
+- **Root Cause**:
+  1. *Unpaired Resampling Confound*: The exploratory bootstrap in `compute_comparative_stats.py` resampled $A$ and $B$ independently, ignoring the matched temporal blocking across repetitions. Because background host storage latency varied widely between quiet and noisy repetitions, independent resampling paired quiet A trials with noisy B trials, inflating the ratio CI. Under paired bootstrap, $B < A$ in 10/10 pairs ($p = 0.000977$ on Wilcoxon signed-rank test), surviving Holm-Bonferroni correction ($[0.22\text{x}, 0.93\text{x}]$ at $r=2$).
+  2. *Outermost Repetition Confound*: In `manifest.go`, `repetition` was the outermost execution loop. Repetition 1 concluded with heavy write/compaction workloads (Workloads D and E), filling host Linux ext4 dirty page cache buffers. When Repetition 2 commenced with Workload A, kernel page writeback triggered storage I/O stall cycles, penalizing both modes equally.
+- **Fix**:
+  1. Authored `research/experiments/analysis/audit_reanalysis_cp6.py` and `reanalysis_b2_workload_a.md`, documenting the paired bootstrap, exact sign test, Wilcoxon signed-rank test, and Holm-Bonferroni step-down correction.
+  2. Preregistered confirmatory campaign `I6_TARGETED_VALIDATION_V1` with balanced A/B block scheduling (strict 50% A-first, 50% B-first), common input seeds per pair, sham-flush control (T1), Two One-Sided Tests (TOST) at $\pm 5\%$ margin (T2), writer-free Workload E diagnostic, and controlled churn vs no-churn control with Go profiling (T3).
+- **Regression Test**: `TestManifest_OrderBalancing`, `TestManifest_SeedEquality`, `TestTOST_EquivalenceLogic`, `TestPairedDifferenceAccounting` in `research/experiments/targeted_validation/targeted_test.go`.
+- **Validation**: 100% test pass; verified exact 150/150 A/B order balance, seed equality, and 0 data races.
+- **Status**: Resolved & Preregistered (Sub-phase I6.8, Decision D-058).
+- **Commit**: `HEAD`.
+
+
 
 
 

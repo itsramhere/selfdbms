@@ -763,6 +763,43 @@ func TestWorkloadB2_ControlledFlushInterference(t *testing.T) {
 	}
 }
 
+func TestWorkloadB2_ShamFlushControl(t *testing.T) {
+	modes := []string{"ApproachA_RWMutexBaseline", "ApproachB_ReaderSnapshot"}
+	for _, mode := range modes {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := DefaultTrialConfig(WorkloadB2_ControlledFlushInterference, mode, 2)
+			cfg.DataDir = dir
+			cfg.InitialSSTableCount = 2
+			cfg.InitialKeysPerSSTable = 100
+			cfg.KeyspaceCardinality = 200
+			cfg.WriterConcurrency = 0
+			cfg.MemtableThresholdBytes = 64 * 1024 * 1024
+			cfg.FlushTriggerIntervalMs = 150
+			cfg.ShamFlush = true
+			cfg.MeasurementDurationMs = 800
+			cfg.WarmupDurationMs = 50
+
+			res, err := RunTrial(cfg, "test_rev", dummyEnv(dir))
+			if err != nil {
+				t.Fatalf("RunTrial failed for %s: %v", mode, err)
+			}
+			if res.Status != "SUCCESS" {
+				t.Fatalf("expected SUCCESS, got %s", res.Status)
+			}
+			if res.LSMDiagnostics.MeasuredFlushes != 0 {
+				t.Fatalf("expected 0 measured flushes under sham flush, got %d", res.LSMDiagnostics.MeasuredFlushes)
+			}
+			if res.LSMDiagnostics.FlushActiveOverlapMs != 0 {
+				t.Fatalf("expected 0 flush overlap duration under sham flush, got %d", res.LSMDiagnostics.FlushActiveOverlapMs)
+			}
+			if res.LSMDiagnostics.ReadsDuringFlush != 0 {
+				t.Fatalf("expected 0 reads during flush under sham flush, got %d", res.LSMDiagnostics.ReadsDuringFlush)
+			}
+		})
+	}
+}
+
 func TestWorkloadD_RepeatedReaderSetChurn(t *testing.T) {
 	modes := []string{"ApproachA_RWMutexBaseline", "ApproachB_ReaderSnapshot"}
 	for _, mode := range modes {
