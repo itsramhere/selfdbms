@@ -39,6 +39,7 @@ function Copy-Into([string]$src, [string]$dstRel) {
 
 # 1. Packet + commands
 Copy-Into (Join-Path $phaseDir 'I7_G2_REVIEW_PACKET.md') 'README.md'
+Copy-Into (Join-Path $phaseDir 'I7_G2_FINAL_FIX_PACKET.md') 'FINAL_FIX_PACKET.md'
 
 $cmd = @'
 # Exact commands for the 12-trial preflight (gate G3)
