@@ -7,12 +7,67 @@ import (
 	"io"
 	"math"
 	"os"
+	"sync"
+	"sync/atomic"
+	"time"
 )
 
 type SSTableReader struct {
 	File          *os.File
 	Index         []IndexEntry
 	DataEndOffset int64
+
+	// Approach A-min lifetime bookkeeping (Decision D-I7-02).
+	// leaseCount counts readers that may touch this table outside Manager.Mu.
+	// retired is set exactly once, under Manager.Mu, at the instant the table is
+	// removed from Manager.ActiveSSreaders. freeOnce guards close+unlink.
+	// Approaches A and B never increment leaseCount, so these fields are inert there.
+	leaseCount  atomic.Int32
+	retired     atomic.Bool
+	freeOnce    sync.Once
+	reclaimDone atomic.Bool
+	freeErr     error
+}
+
+// lease registers an in-flight reader. PRECONDITION: the caller holds
+// Manager.Mu.RLock() and the table is still present in ActiveSSreaders.
+func (sst *SSTableReader) lease() { sst.leaseCount.Add(1) }
+
+// releaseLease drops an in-flight reader and reports whether this release made a
+// retired table eligible for reclamation.
+func (sst *SSTableReader) releaseLease() bool {
+	return sst.leaseCount.Add(-1) == 0 && sst.retired.Load()
+}
+
+// reclaim closes the descriptor and unlinks the path exactly once.
+// Close precedes unlink (required by Windows NTFS sharing semantics).
+// If Close fails, unlinking is abandoned so that a live path is never deleted
+// from under another handle.
+func (sst *SSTableReader) reclaim() error {
+	sst.freeOnce.Do(func() {
+		defer sst.reclaimDone.Store(true)
+		path := ""
+		if sst.File != nil {
+			path = sst.File.Name()
+			if err := sst.File.Close(); err != nil {
+				sst.freeErr = err
+				return
+			}
+		}
+		if path == "" {
+			return
+		}
+		var unlinkErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			unlinkErr = os.Remove(path)
+			if unlinkErr == nil || errors.Is(unlinkErr, os.ErrNotExist) {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		sst.freeErr = unlinkErr
+	})
+	return sst.freeErr
 }
 
 func NewSSTableReader(filename string) (*SSTableReader, error) {

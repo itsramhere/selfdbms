@@ -236,11 +236,33 @@ func (m *Manager) CompactAll() error {
 	}
 	m.ActiveSSreaders = updatedReaders
 	m.compactionsCompleted.Add(1)
+
+	// Approach A-min: the linearization point of supersession is here, inside the
+	// same write-lock section that removed the inputs from ActiveSSreaders. After
+	// this point no new lease can be granted to them (INV I-3/I-4).
+	amin := m.syncMode == SyncModeApproachAMin
+	if amin {
+		for _, r := range readersToCompact {
+			r.retired.Store(true)
+			// Track retired tables so shutdown can drain leases on them and
+			// finish their reclamation (see Manager.countOutstandingLeasesLocked).
+			m.retiredReaders = append(m.retiredReaders, r)
+		}
+		m.pruneRetiredReadersLocked()
+	}
 	m.Mu.Unlock()
 
 	// Retirement and resource cleanup
 	for _, it := range iterators {
 		it.Close()
+	}
+	if amin {
+		// Free only tables whose last in-flight reader has already left; the
+		// remainder are reclaimed by their last lease release.
+		for _, r := range readersToCompact {
+			m.reclaimIfDrained(r)
+		}
+		return nil
 	}
 	for _, r := range readersToCompact {
 		r.Close()

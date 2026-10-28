@@ -792,6 +792,7 @@ func (m *Manager) closeApproachB() error {
 		m.flushQueueCond.Broadcast()
 	}
 	m.flushQueueMu.Unlock()
+	m.DisableFlushInjectionGate() // never let shutdown block on the E2 gate
 	m.flushWg.Wait() // Waits for admitted flushes (publishFlushLocked succeeds in EngineClosing!)
 
 	// 4. Retire current published snapshot and wait for query pins

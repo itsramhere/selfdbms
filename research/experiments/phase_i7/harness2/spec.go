@@ -1,0 +1,250 @@
+// Package harness2 is the Phase I7 (Windows-native) trial executor.
+//
+// It exists because the frozen harness in research/experiments/harness has three
+// properties that Phase I7 must not inherit:
+//
+//   - one global mutex per read sample (LatencyRecorder) and another for flush
+//     overlap accounting, both on the read hot path and both correlated with the
+//     reader count (audit findings IA-1, IA-2);
+//   - a single PRNG stream per worker, so paired arms stop issuing identical
+//     requests as soon as their operation counts diverge (IA-8);
+//   - a publication driver that injects 50-key write batches into the window
+//     (AF-3) instead of publishing memtables frozen before it.
+//
+// Nothing here is pooled with the frozen campaigns' data.
+package harness2
+
+import (
+	"fmt"
+	"time"
+
+	"owndbms/research/experiments/harness"
+)
+
+// Block identifies an I7 experimental block.
+type Block string
+
+const (
+	BlockE1    Block = "E1"
+	BlockE2    Block = "E2"
+	BlockE3    Block = "E3"
+	BlockE4    Block = "E4"
+	BlockE5    Block = "E5"
+	BlockE7    Block = "E7"
+	BlockPF    Block = "PF"
+	BlockSMOKE Block = "SMOKE"
+)
+
+// PublicationMode distinguishes "no events" from scheduled physical publications.
+type PublicationMode string
+
+const (
+	PubNone     PublicationMode = "none"
+	PubPhysical PublicationMode = "physical"
+)
+
+// Spec is the per-trial instruction emitted by run_i7.ps1 from runlist.csv.
+// JSON names are a contract with the PowerShell driver and must not change
+// without a schema version bump.
+type Spec struct {
+	Schema                  string  `json:"schema"`
+	TrialID                 string  `json:"trial_id"`
+	Block                   string  `json:"block"`
+	Cell                    string  `json:"cell"`
+	Triplet                 int     `json:"triplet"`
+	Arm                     string  `json:"arm"`
+	OrderPosition           int     `json:"order_position"`
+	RunlistPosition         int     `json:"runlist_position"`
+	Seed                    int64   `json:"seed"`
+	WorkloadID              string  `json:"workload_id"`
+	ReaderConcurrency       int     `json:"reader_concurrency"`
+	WriterConcurrency       int     `json:"writer_concurrency"`
+	MeasurementDurationMs   int     `json:"measurement_duration_ms"`
+	WarmupDurationMs        int     `json:"warmup_duration_ms"`
+	CooldownDurationMs      int     `json:"cooldown_duration_ms"`
+	KeyspaceCardinality     int     `json:"keyspace_cardinality"`
+	InitialSSTableCount     int     `json:"initial_sstable_count"`
+	InitialKeysPerSSTable   int     `json:"initial_keys_per_sstable"`
+	TargetReadHitRatio      float64 `json:"target_read_hit_ratio"`
+	MemtableThresholdBytes  int64   `json:"memtable_threshold_bytes"`
+	FlushTriggerIntervalMs  int     `json:"flush_trigger_interval_ms"`
+	CompactionTriggerMs     int     `json:"compaction_trigger_interval_ms"`
+	WalSync                 bool    `json:"wal_sync"`
+	ReadDistribution        string  `json:"read_distribution"`
+	DataDir                 string  `json:"data_dir"`
+	ExpectedReaderSetSize   int     `json:"expected_reader_set_size"`
+	Notes                   string  `json:"notes,omitempty"`
+
+	// Driver extensions (Phase I7 G2). Zero values mean "not applicable".
+	PublicationEvents   int     `json:"publication_events,omitempty"`
+	PublicationMode     string  `json:"publication_mode,omitempty"`
+	OpenLoopRatePerSec  float64 `json:"open_loop_rate_per_sec,omitempty"`
+	PacedWriteRatePerSec float64 `json:"paced_write_rate_per_sec,omitempty"`
+	MaxLatenessMs       int     `json:"max_lateness_ms,omitempty"`
+}
+
+// Mode returns the driver mode implied by the block and cell.
+type Mode int
+
+const (
+	ModeClosedLoop Mode = iota
+	ModePublicationOnly
+	ModePacedWrites
+	ModeOpenLoop
+)
+
+// ResolveMode classifies a spec. An unsupported combination returns an error so
+// the runner fails closed instead of silently running a different experiment.
+func (s Spec) ResolveMode() (Mode, error) {
+	switch Block(s.Block) {
+	case BlockE2:
+		if s.PublicationMode != string(PubPhysical) && s.PublicationMode != string(PubNone) {
+			return 0, errf("E2 requires publication_mode none|physical, got %q", s.PublicationMode)
+		}
+		return ModePublicationOnly, nil
+	case BlockE4:
+		if s.OpenLoopRatePerSec <= 0 {
+			return 0, errf("E4 requires open_loop_rate_per_sec > 0 (set from the G3 calibration)")
+		}
+		return ModeOpenLoop, nil
+	case BlockE3:
+		if len(s.Cell) >= 6 && s.Cell[:6] == "equal_" {
+			if s.PacedWriteRatePerSec <= 0 {
+				return 0, errf("E3 equal-work requires paced_write_rate_per_sec > 0 (W_paced)")
+			}
+			return ModePacedWrites, nil
+		}
+		return ModeClosedLoop, nil
+	case BlockE1, BlockE5, BlockPF, BlockSMOKE:
+		return ModeClosedLoop, nil
+	case BlockE7:
+		return 0, errf("E7 is executed by the separate pebble_runner binary")
+	}
+	return 0, errf("unknown block %q", s.Block)
+}
+
+// Environment is the harness-compatible environment record.
+type Environment = harness.EnvironmentInfo
+
+// TimestampInfo mirrors the frozen schema for downstream tooling.
+type TimestampInfo struct {
+	StartISO              string `json:"start_iso"`
+	FinishISO             string `json:"finish_iso"`
+	WarmupDurationMs      int    `json:"warmup_duration_ms"`
+	MeasurementDurationMs int    `json:"measurement_duration_ms"`
+	MeasuredWindowNs      int64  `json:"measured_window_ns"`
+}
+
+// OperationCounts extends the frozen counters with the scheduled/issued/
+// abandoned/unissued accounting required for open-loop measurement.
+type OperationCounts struct {
+	ReadOpsScheduled       int64 `json:"read_ops_scheduled"`
+	ReadOpsIssued          int64 `json:"read_ops_issued"`
+	ReadOpsCompleted       int64 `json:"read_ops_completed"`
+	ReadOpsAbandoned       int64 `json:"read_ops_abandoned"`
+	ReadOpsUnissued        int64 `json:"read_ops_unissued"`
+	ExpectedHitCount       int64 `json:"expected_hit_count"`
+	ExpectedMissCount      int64 `json:"expected_miss_count"`
+	ActualHitCount         int64 `json:"actual_hit_count"`
+	ActualMissCount        int64 `json:"actual_miss_count"`
+	ActualMemtableHitCount int64 `json:"actual_memtable_hit_count"`
+	ActualSSTableHitCount  int64 `json:"actual_sstable_hit_count"`
+	WriteOpsAttempted      int64 `json:"write_ops_attempted"`
+	WriteOpsCompleted      int64 `json:"write_ops_completed"`
+	ErrorOpsCount          int64 `json:"error_ops_count"`
+	ValidationErrorCount   int64 `json:"validation_error_count"`
+	WorkerSeeds            map[string]int64 `json:"worker_seeds,omitempty"`
+}
+
+// ThroughputInfo mirrors the frozen schema.
+type ThroughputInfo struct {
+	ReadOpsPerSec  float64 `json:"read_ops_per_sec"`
+	WriteOpsPerSec float64 `json:"write_ops_per_sec"`
+	TotalOpsPerSec float64 `json:"total_ops_per_sec"`
+}
+
+// Diagnostics carries engine activity plus the accounting needed to keep
+// per-trial work visible (audit AF-4: composition shifts must not be hidden).
+type Diagnostics struct {
+	InitialSSTables       int    `json:"initial_sstables"`
+	FinalSSTables         int    `json:"final_sstables"`
+	MeasuredFlushes       uint64 `json:"measured_flushes"`
+	MeasuredCompactions   uint64 `json:"measured_compactions"`
+	MeasuredSSTableReads  uint64 `json:"measured_sstable_point_reads"`
+	MeasuredMemtableReads uint64 `json:"measured_memtable_point_reads"`
+	SnapshotSeq           uint64 `json:"snapshot_seq"`
+	ActiveSnapshotPins    int64  `json:"active_snapshot_pins"`
+	RetiredSnapshots      int    `json:"retired_snapshots_count"`
+	PendingCleanupCount   int    `json:"pending_cleanup_count"`
+	LivePhysicalReaders   int    `json:"live_physical_readers"`
+	// New in I7.
+	PendingFlushesAtEnd   int   `json:"pending_flushes_at_end"`
+	MaxOutstandingLeases  int32 `json:"max_outstanding_leases"`
+	DataDirRemoved        bool  `json:"data_dir_removed"`
+}
+
+// EventRecord is one scheduled or observed publication.
+type EventRecord struct {
+	Index        int    `json:"index"`
+	ReleasedNs   int64  `json:"released_ns"`
+	BeginNs      int64  `json:"begin_ns"`
+	EndNs        int64  `json:"end_ns"`
+	HoldNs       int64  `json:"hold_ns"`
+	BuildNs      int64  `json:"build_ns"`
+	MemtableKeys int    `json:"memtable_keys"`
+}
+
+// EventConditioned summarises reads whose execution overlapped an event window.
+type EventConditioned struct {
+	EventIndex   int     `json:"event_index"`
+	OverlapReads int     `json:"overlap_reads"`
+	MaxResponseNs int64  `json:"max_response_ns"`
+	P50ResponseNs int64  `json:"p50_response_ns"`
+	P95ResponseNs *int64  `json:"p95_response_ns"`
+	HoldNs       int64   `json:"hold_ns"`
+	BlockRatio   float64 `json:"block_ratio"`
+}
+
+// LatencyStats mirrors the frozen schema, including the sample-sufficiency rules.
+type LatencyStats struct {
+	Count     int64   `json:"sample_count"`
+	MinNanos  int64   `json:"min"`
+	MaxNanos  int64   `json:"max"`
+	MeanNanos float64 `json:"mean"`
+	P50Nanos  int64   `json:"p50"`
+	P95Nanos  *int64  `json:"p95"`
+	P99Nanos  *int64  `json:"p99"`
+	P999Nanos *int64  `json:"p999"`
+}
+
+// TrialResult is the per-trial envelope consumed by the analysis layer.
+type TrialResult struct {
+	SchemaVersion   string                `json:"schema_version"`
+	TrialID         string                `json:"trial_id"`
+	TrialIndex      int                   `json:"trial_index"`
+	WorkloadID      string                `json:"workload_id"`
+	Block           string                `json:"block"`
+	Cell            string                `json:"cell"`
+	Arm             string                `json:"arm"`
+	SyncMode        string                `json:"sync_mode"`
+	GitRevision     string                `json:"git_revision"`
+	Environment     Environment           `json:"environment"`
+	Config          Spec                  `json:"config"`
+	Timestamps      TimestampInfo         `json:"timestamps"`
+	Operations      OperationCounts       `json:"operations"`
+	Throughput      ThroughputInfo        `json:"throughput"`
+	LatencyRead     LatencyStats          `json:"latency_read_nanos"`
+	LatencyResponse LatencyStats          `json:"latency_response_nanos"`
+	LSMDiagnostics  Diagnostics           `json:"lsm_diagnostics"`
+	Events          []EventRecord         `json:"publication_events,omitempty"`
+	EventCond       []EventConditioned    `json:"event_conditioned,omitempty"`
+	FixtureManifest harness.FixtureManifest `json:"fixture_manifest"`
+	Status          string                `json:"status"`
+	Error           string                `json:"error,omitempty"`
+}
+
+// helperError keeps error construction in one place.
+func errf(format string, args ...any) error { return fmt.Errorf(format, args...) }
+
+// defaultWindow is only used by tests that omit durations.
+const defaultWindow = 400 * time.Millisecond

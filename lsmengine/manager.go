@@ -33,6 +33,13 @@ const (
 	// SyncModeApproachB represents atomic pointer reader snapshot swap (Approach B).
 	// Readers acquire short-lived immutable reader-set snapshots without holding Manager.Mu across disk I/O.
 	SyncModeApproachB
+
+	// SyncModeApproachAMin keeps Approach A's single Manager.Mu RWMutex but releases
+	// the read lock before any SSTable scan. Correctness is preserved by a per-table
+	// lease (in-flight counter) taken while still holding RLock; superseded tables are
+	// closed and unlinked only after their last lease is released.
+	// It has no version chain, no snapshot descriptor and no cleanup worker.
+	SyncModeApproachAMin
 )
 
 func (m SyncMode) String() string {
@@ -41,6 +48,8 @@ func (m SyncMode) String() string {
 		return "ApproachA_RWMutexBaseline"
 	case SyncModeApproachB:
 		return "ApproachB_ReaderSnapshot"
+	case SyncModeApproachAMin:
+		return "ApproachAMin_Lease"
 	default:
 		return "Unknown"
 	}
@@ -127,12 +136,25 @@ type Manager struct {
 	compactionsCompleted   atomic.Uint64
 	sstablePointReads      atomic.Uint64
 	memtablePointReads     atomic.Uint64
+
+	// Approach A-min fields (Decision D-I7-02). Inert for A and B.
+	leasePool         sync.Pool // reuse []*SSTableReader read-set scratch buffers
+	cleanupErrMu      sync.Mutex
+	cleanupErrs       []error // reclamation errors surfaced by Manager.Close
+	retiredReaders    []*SSTableReader
+	leaseDrainTimeout time.Duration
+
+	// Publication-injection gate (Phase I7 E2). Inert unless explicitly enabled.
+	flushGateMu      sync.Mutex
+	flushGateCond    *sync.Cond
+	flushGateEnabled bool
+	flushGateTokens  int
 }
 
 var sstableFileSeq atomic.Uint64
 
 func CreateManagerWithConfig(cfg Config) (*Manager, error) {
-	if cfg.Mode != SyncModeApproachA && cfg.Mode != SyncModeApproachB {
+	if cfg.Mode != SyncModeApproachA && cfg.Mode != SyncModeApproachB && cfg.Mode != SyncModeApproachAMin {
 		return nil, fmt.Errorf("unknown synchronization mode: %v", cfg.Mode)
 	}
 
@@ -153,6 +175,8 @@ func CreateManagerWithConfig(cfg Config) (*Manager, error) {
 	man.closeDone = make(chan struct{})
 	man.snapshotDrainCond = sync.NewCond(&man.snapshotMu)
 	man.snapshotPhase = SnapshotPhaseOpen
+	man.leaseDrainTimeout = 5 * time.Second
+	man.flushGateCond = sync.NewCond(&man.flushGateMu)
 
 	sk := &SkipList{
 		headNode:     &Node{Forward: make([]*Node, 32)},
@@ -197,8 +221,11 @@ func (m *Manager) Begin() *Transaction {
 }
 
 func (m *Manager) Get(key string, readTs uint64) (string, error) {
-	if m.syncMode == SyncModeApproachB {
+	switch m.syncMode {
+	case SyncModeApproachB:
 		return m.getApproachB(key, readTs)
+	case SyncModeApproachAMin:
+		return m.getApproachAMin(key, readTs)
 	}
 
 	byteKey := []byte(key)
@@ -272,6 +299,320 @@ func (m *Manager) Get(key string, readTs uint64) (string, error) {
 
 }
 
+// ---------------------------------------------------------------------------
+// Approach A-min: one RWMutex; the SSTable scan runs outside the read critical
+// section. Correctness rests on a per-table lease taken while RLock is held.
+// Invariants and proofs: research/experiments/phase_i7/01_A_MIN_DESIGN.md.
+// ---------------------------------------------------------------------------
+
+// leaseScratch is a reusable read-set buffer. The pool holds *leaseScratch so
+// that Pool.Put stores a pointer: putting a bare slice header into an interface
+// would allocate one box per read and break decision M-7.
+type leaseScratch struct {
+	buf []*SSTableReader
+}
+
+// acquireLeaseScratch returns a scratch buffer whose slice has length n.
+func (m *Manager) acquireLeaseScratch(n int) *leaseScratch {
+	sc, _ := m.leasePool.Get().(*leaseScratch)
+	if sc == nil {
+		sc = &leaseScratch{}
+	}
+	if cap(sc.buf) < n {
+		c := n
+		if c < 8 {
+			c = 8
+		}
+		sc.buf = make([]*SSTableReader, c)[:n]
+	} else {
+		sc.buf = sc.buf[:n]
+	}
+	return sc
+}
+
+// releaseLeaseScratch clears references and returns the buffer to the pool.
+// The pointer clearing is required: retaining entries past len would keep
+// superseded readers reachable and defeat reclamation.
+func (m *Manager) releaseLeaseScratch(sc *leaseScratch) {
+	if sc == nil || cap(sc.buf) == 0 || cap(sc.buf) > 8192 {
+		return
+	}
+	for i := range sc.buf {
+		sc.buf[i] = nil
+	}
+	sc.buf = sc.buf[:0]
+	m.leasePool.Put(sc)
+}
+
+func (m *Manager) recordCleanupErr(err error) {
+	if err == nil {
+		return
+	}
+	m.cleanupErrMu.Lock()
+	m.cleanupErrs = append(m.cleanupErrs, err)
+	m.cleanupErrMu.Unlock()
+}
+
+func (m *Manager) drainCleanupErrs() error {
+	m.cleanupErrMu.Lock()
+	defer m.cleanupErrMu.Unlock()
+	if len(m.cleanupErrs) == 0 {
+		return nil
+	}
+	err := m.cleanupErrs[0]
+	m.cleanupErrs = nil
+	return err
+}
+
+// reclaimIfDrained frees a superseded table whose leases have all been released.
+// Safe only after the table has been removed from ActiveSSreaders under m.Mu.
+func (m *Manager) reclaimIfDrained(sr *SSTableReader) {
+	if sr == nil || sr.leaseCount.Load() != 0 {
+		return
+	}
+	if err := sr.reclaim(); err != nil {
+		m.recordCleanupErr(err)
+	}
+}
+
+// drainActiveReaderLeases waits until no reader holds a lease on an active or a
+// retired table. Called from Close after the engine state has left EngineOpen, so
+// no new lease can be granted. A timeout is reported, never ignored: Close then
+// fails closed and leaves leased descriptors untouched.
+func (m *Manager) drainReaderLeases() error {
+	timeout := m.leaseDrainTimeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		m.Mu.RLock()
+		outstanding := m.countOutstandingLeasesLocked()
+		m.Mu.RUnlock()
+		if outstanding == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("reader lease drain timeout after %s: %d lease(s) outstanding; no leased descriptor was closed", timeout, outstanding)
+		}
+		time.Sleep(100 * time.Microsecond)
+	}
+}
+
+// countOutstandingLeasesLocked counts leases over active AND retired tables.
+// Retirement is precisely the case the previous implementation missed: a table
+// superseded while a reader is scanning keeps its descriptor alive until the
+// reader releases, so it must participate in the shutdown drain.
+// PRECONDITION: m.Mu is held (read or write).
+func (m *Manager) countOutstandingLeasesLocked() int32 {
+	var n int32
+	for _, r := range m.ActiveSSreaders {
+		if r != nil {
+			n += r.leaseCount.Load()
+		}
+	}
+	for _, r := range m.retiredReaders {
+		if r != nil {
+			n += r.leaseCount.Load()
+		}
+	}
+	return n
+}
+
+// pruneRetiredReadersLocked drops retired tables that have completed reclamation.
+// The list is needed at shutdown to drain outstanding leases on superseded tables
+// and to finish their reclamation, so it may only forget tables that are done.
+// PRECONDITION: m.Mu must be held for writing.
+func (m *Manager) pruneRetiredReadersLocked() {
+	if len(m.retiredReaders) <= 64 {
+		return
+	}
+	kept := m.retiredReaders[:0]
+	for _, r := range m.retiredReaders {
+		if r != nil && !r.reclaimDone.Load() {
+			kept = append(kept, r)
+		}
+	}
+	for i := len(kept); i < len(m.retiredReaders); i++ {
+		m.retiredReaders[i] = nil
+	}
+	m.retiredReaders = kept
+}
+
+// getApproachAMin executes a point read with a short read critical section.
+func (m *Manager) getApproachAMin(key string, readTs uint64) (string, error) {
+	byteKey := []byte(key)
+
+	// ---- one RLock window: memory tiers + read-set capture + leases ----
+	m.Mu.RLock()
+	if m.state != EngineOpen {
+		m.Mu.RUnlock()
+		return "", ErrClosed
+	}
+
+	if m.duringMemtableReadHook != nil {
+		m.duringMemtableReadHook()
+	}
+
+	sol, err := m.Mem.Get(byteKey, readTs)
+	if err == nil {
+		m.memtablePointReads.Add(1)
+		m.Mu.RUnlock()
+		return string(sol), nil
+	}
+	if errors.Is(err, ErrKeyDeleted) {
+		m.memtablePointReads.Add(1)
+		m.Mu.RUnlock()
+		return "Key is Deleted", err
+	}
+	if !errors.Is(err, ErrNotFound) {
+		m.Mu.RUnlock()
+		return "", err
+	}
+
+	for i := len(m.Frozenmem) - 1; i >= 0; i-- {
+		val, ferr := m.Frozenmem[i].Get(byteKey, readTs)
+		if ferr == nil {
+			m.memtablePointReads.Add(1)
+			m.Mu.RUnlock()
+			return string(val), nil
+		}
+		if errors.Is(ferr, ErrKeyDeleted) {
+			m.memtablePointReads.Add(1)
+			m.Mu.RUnlock()
+			return " ", ferr
+		}
+		if !errors.Is(ferr, ErrNotFound) {
+			m.Mu.RUnlock()
+			return "", ferr
+		}
+	}
+
+	n := len(m.ActiveSSreaders)
+	if n == 0 {
+		m.Mu.RUnlock()
+		return " ", ErrNotFound
+	}
+
+	sc := m.acquireLeaseScratch(n)
+	buf := sc.buf
+	copy(buf, m.ActiveSSreaders)
+	for i := 0; i < n; i++ {
+		buf[i].lease()
+	}
+	m.Mu.RUnlock()
+
+	// From here on: zero manager locks held; every captured table is leased.
+	// There is deliberately no deferred closure: a single release path keeps the
+	// read allocation-neutral (decision M-7) and makes lease balance syntactic.
+	if m.duringPointReadHook != nil {
+		m.duringPointReadHook()
+	}
+
+	val, serr := m.scanLeasedTables(buf[:n], byteKey, readTs)
+
+	for i := 0; i < n; i++ {
+		if buf[i].releaseLease() {
+			if rerr := buf[i].reclaim(); rerr != nil {
+				m.recordCleanupErr(rerr)
+			}
+		}
+	}
+	m.releaseLeaseScratch(sc)
+	return val, serr
+}
+
+// scanLeasedTables probes a leased reader set newest-to-oldest with zero locks held.
+// The caller owns the leases and must release them on return.
+func (m *Manager) scanLeasedTables(buf []*SSTableReader, byteKey []byte, readTs uint64) (string, error) {
+	for i := len(buf) - 1; i >= 0; i-- {
+		val, serr := buf[i].Get(byteKey, readTs)
+		if serr == nil {
+			m.sstablePointReads.Add(1)
+			return string(val), nil
+		}
+		if errors.Is(serr, ErrKeyDeleted) {
+			m.sstablePointReads.Add(1)
+			return " ", serr
+		}
+		if !errors.Is(serr, ErrNotFound) {
+			return "", serr
+		}
+	}
+	return " ", ErrNotFound
+}
+
+// ---------------------------------------------------------------------------
+// Flush injection gate (Phase I7 E2: publication-only driver).
+//
+// When enabled, the background flush worker blocks after dequeuing a frozen
+// memtable and before building it, until a token is released. This lets a
+// harness publish previously frozen memtables at scheduled instants without
+// injecting any writes into the measurement window. Disabled by default: the
+// production path never waits here.
+// ---------------------------------------------------------------------------
+
+// initFlushGateLocked lazily creates the condition variable. Some tests build a
+// Manager literal instead of calling CreateManagerWithConfig, so every gate
+// entry point must tolerate a zero-valued Manager.
+// PRECONDITION: m.flushGateMu is held.
+func (m *Manager) initFlushGateLocked() {
+	if m.flushGateCond == nil {
+		m.flushGateCond = sync.NewCond(&m.flushGateMu)
+	}
+}
+
+// EnableFlushInjectionGate arms the gate with zero tokens.
+func (m *Manager) EnableFlushInjectionGate() {
+	m.flushGateMu.Lock()
+	defer m.flushGateMu.Unlock()
+	m.initFlushGateLocked()
+	m.flushGateEnabled = true
+	m.flushGateTokens = 0
+}
+
+// ReleaseOneFlush admits exactly one pending publication.
+func (m *Manager) ReleaseOneFlush() {
+	m.flushGateMu.Lock()
+	defer m.flushGateMu.Unlock()
+	m.initFlushGateLocked()
+	m.flushGateTokens++
+	m.flushGateCond.Broadcast()
+}
+
+// DisableFlushInjectionGate opens the gate permanently and wakes the worker.
+// Called by Close so shutdown can never block on the gate.
+func (m *Manager) DisableFlushInjectionGate() {
+	m.flushGateMu.Lock()
+	defer m.flushGateMu.Unlock()
+	m.initFlushGateLocked()
+	m.flushGateEnabled = false
+	m.flushGateCond.Broadcast()
+}
+
+// PendingFlushes reports queued plus in-flight flush tasks (diagnostics only).
+func (m *Manager) PendingFlushes() int {
+	m.flushQueueMu.Lock()
+	defer m.flushQueueMu.Unlock()
+	n := len(m.flushQueue)
+	if m.isFlushing {
+		n++
+	}
+	return n
+}
+
+func (m *Manager) waitFlushGate() {
+	m.flushGateMu.Lock()
+	defer m.flushGateMu.Unlock()
+	m.initFlushGateLocked()
+	for m.flushGateEnabled && m.flushGateTokens == 0 {
+		m.flushGateCond.Wait()
+	}
+	if m.flushGateEnabled && m.flushGateTokens > 0 {
+		m.flushGateTokens--
+	}
+}
+
 func (m *Manager) Close() error {
 	if m.syncMode == SyncModeApproachB {
 		return m.closeApproachB()
@@ -299,28 +640,74 @@ func (m *Manager) Close() error {
 	m.flushQueueMu.Unlock()
 	m.Mu.Unlock()
 
+	// Never let shutdown block on the publication-injection gate.
+	m.DisableFlushInjectionGate()
+
 	// Drain in-flight flushes outside m.Mu to prevent self-deadlock
 	m.flushWg.Wait()
 
+	// Approach A-min: readers may still be scanning outside m.Mu with a lease
+	// held on an ACTIVE or a RETIRED table. No new lease can be granted (state
+	// != EngineOpen), so wait for the outstanding ones. A timeout does NOT
+	// license closing a leased descriptor: the loops below skip any reader that
+	// still reports a lease and fail closed with an error instead.
+	var drainErr error
+	if m.syncMode == SyncModeApproachAMin {
+		drainErr = m.drainReaderLeases()
+	}
+
 	m.Mu.Lock()
-	defer m.Mu.Unlock()
-
 	m.state = EngineClosed
+	active := m.ActiveSSreaders
+	retired := m.retiredReaders
+	m.ActiveSSreaders = nil
+	m.retiredReaders = nil
+	m.Mu.Unlock()
 
-	for _, reader := range m.ActiveSSreaders {
-		if reader != nil {
-			if err := reader.Close(); err != nil && m.flushErr == nil {
-				m.flushErr = err
-			}
+	// All descriptor closing happens outside m.Mu.
+	var closeErr error
+	note := func(err error) {
+		if err != nil && closeErr == nil {
+			closeErr = err
 		}
 	}
-	m.ActiveSSreaders = nil
+	note(drainErr)
+
+	for _, reader := range active {
+		if reader == nil {
+			continue
+		}
+		if n := reader.leaseCount.Load(); n != 0 {
+			note(fmt.Errorf("unsafe close refused: active table %s still has %d outstanding lease(s); descriptor left open", reader.File.Name(), n))
+			continue
+		}
+		note(reader.Close())
+	}
+
+	if m.syncMode == SyncModeApproachAMin {
+		for _, reader := range retired {
+			if reader == nil {
+				continue
+			}
+			if n := reader.leaseCount.Load(); n != 0 {
+				note(fmt.Errorf("unsafe reclaim refused: retired table %s still has %d outstanding lease(s); descriptor left open", reader.File.Name(), n))
+				continue
+			}
+			note(reader.reclaim())
+		}
+	}
 
 	if m.Log != nil && m.Log.File != nil {
-		if err := m.Log.File.Close(); err != nil && m.flushErr == nil {
-			m.flushErr = err
-		}
+		note(m.Log.File.Close())
 	}
+
+	// Surface any deferred reclamation error (close/unlink of a superseded table).
+	note(m.drainCleanupErrs())
+
+	if m.flushErr != nil {
+		return m.flushErr
+	}
+	m.flushErr = closeErr
 	return m.flushErr
 }
 
@@ -436,6 +823,9 @@ func (m *Manager) flushLoop() {
 		}
 		m.isFlushing = true
 		m.flushQueueMu.Unlock()
+
+		// Publication-injection gate: blocks only when a harness has armed it.
+		m.waitFlushGate()
 
 		if m.beforeFlushWorkerBeginHook != nil {
 			m.beforeFlushWorkerBeginHook()

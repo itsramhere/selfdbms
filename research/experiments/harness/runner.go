@@ -286,6 +286,9 @@ func RunTrial(cfg TrialConfig, gitRev string, env EnvironmentInfo) (*TrialResult
 	case "ApproachB_ReaderSnapshot", "B":
 		lsmMode = lsmengine.SyncModeApproachB
 		cfg.SyncMode = "ApproachB_ReaderSnapshot"
+	case "ApproachAMin_Lease", "AMIN", "ApproachAMin":
+		lsmMode = lsmengine.SyncModeApproachAMin
+		cfg.SyncMode = "ApproachAMin_Lease"
 	default:
 		return nil, fmt.Errorf("unsupported sync mode: %s", cfg.SyncMode)
 	}

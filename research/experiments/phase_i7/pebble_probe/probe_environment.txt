@@ -1,0 +1,6 @@
+﻿go version go1.26.3 windows/amd64
+
+CGO_ENABLED=0
+GOOS=windows
+GOARCH=amd64
+GOMODCACHE=C:\Users\ramst\go\pkg\mod
