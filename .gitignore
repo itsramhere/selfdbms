@@ -13,3 +13,5 @@ research/experiments/phase_i7/I7_WINDOWS_RESULTS/
 research/experiments/phase_i7/evidence/
 research/experiments/phase_i7/**/bin/
 research/experiments/phase_i7/**/_storage_probe.bin
+research/experiments/phase_i7/*.zip
+research/experiments/phase_i7/*.zip.sha256
