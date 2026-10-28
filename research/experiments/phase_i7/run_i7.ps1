@@ -47,6 +47,7 @@ param(
 
     [switch]$DryRun,
     [switch]$RefreshRunlist,
+    [switch]$RefreezeManifest,
     [switch]$WriteApprovalTemplate,
 
     [string]$Root = '',
@@ -830,6 +831,14 @@ function Get-OrCreateRunlist($Layout) {
 }
 
 function Initialize-CampaignManifest($Layout, $Runlist, $Platform, $RunnerInfo) {
+    # Refreezing is only legal before the first attempt: the manifest exists to
+    # bind a frozen artifact set, not to be rewritten mid-campaign.
+    if ($RefreezeManifest) {
+        $priorStarted = @(Read-JsonLines $Layout.Results | Where-Object { $_.event -eq 'STARTED' })
+        if ($priorStarted.Count -gt 0) { throw 'refusing to refreeze the campaign manifest after attempts were recorded' }
+        Remove-Item -LiteralPath $Layout.Manifest -Force -ErrorAction SilentlyContinue
+        Write-Warn2 'campaign manifest removed for refreeze (no attempts recorded)'
+    }
     $manifest = Read-JsonFile $Layout.Manifest
     if ($null -eq $manifest) {
         $manifest = [ordered]@{

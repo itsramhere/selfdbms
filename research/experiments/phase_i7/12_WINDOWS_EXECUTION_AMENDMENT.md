@@ -362,19 +362,33 @@ A file for gate `G3` cannot start `-Campaign`, and an approval for another campa
 
 ---
 
-## 11. Open G2 items (blocking a complete campaign)
+## 11. G2 implementation status (updated 2026-10-28)
 
-1. **H-05** open-loop scheduler (QPC-based, pre-computed exponential schedule, `W_max` abandonment) — E4.
-2. **H-06** publication event log + event-conditioned latency — E2/E4.
-3. **H-07** publication-only driver (pre-frozen memtables, non-blocking injector) — E2.
-4. **H-08** equal-work paced writer at `W_paced` — E3 equal-work.
-5. **H-22** Pebble runner (`pebble_runner` submodule, Y1–Y3) — E7.
-6. **H-10** instrumented build (`-tags i7instr`) + **D1/D2** automation.
-7. **H-02/H-03** per-worker recorders to remove the two global mutexes from the read loop (measurement validity, not a blocker for E1).
-8. **H-11** counter-based key stream (paired per-operation identity).
-9. **H-20** new per-trial metrics (`k`, `records_scanned`, stall statistics, abandon counts).
+**All five campaign blockers are implemented.** Full evidence, raw logs and the synthetic orchestration results are in [I7_G2_REVIEW_PACKET.md](I7_G2_REVIEW_PACKET.md).
 
-Until 1–5 land, `-Campaign` will refuse (by design) or run a clearly-labelled partial set.
+| Item | Status | Where |
+| :--- | :--- | :--- |
+| H-05 open-loop scheduler (QPC, exponential schedule, `W_max`) | **DONE** | `harness2/clock.go`, `run.go` |
+| H-06 publication event log + event-conditioned latency | **DONE** | `harness2/events.go` |
+| H-07 publication-only driver (pre-frozen memtables) | **DONE** | engine injection gate + `harness2/run.go` |
+| H-08 equal-work paced writer | **DONE** | `harness2/run.go`, `W_paced` fixed at 235/210 |
+| H-22 Pebble runner | **DONE** | `pebble_runner/` (v1.1.5, CGO-free, QPC) |
+| H-02/H-03 per-worker metrics | **DONE** | `harness2/metrics.go` |
+| H-11 deterministic request stream | **DONE** | `harness2/keystream.go` |
+| H-20 new per-trial metrics | **DONE** | `harness2/spec.go` accounting |
+| H-17/H-18/H-19 ledger, budget, drift | **DONE** | `run_i7.ps1` |
+| Orchestration hardening (integrity, approval binding, resume, stopping rules) | **DONE** | `run_i7.ps1` + 25 synthetic scenarios |
+
+Still open, and **not** blocking G3:
+
+1. **H-10** instrumented build (`-tags i7instr`) and **D1/D2** automation — G5 only.
+2. **H-09** optional bulk fixture (cost lever, not a correctness item).
+3. **H-21** analysis tooling (offline; runs after G4).
+4. `-Diagnostics` intentionally refuses until G5 is implemented.
+
+**Requirement before `-Campaign` can run E4:** `calibration.json`. E4 requires
+`C_ref`, which is produced by `-Calibrate` under gate G3. Until then `-Campaign`
+refuses with a clear message and `-DryRun` reports those 54 rows as skipped.
 
 ---
 

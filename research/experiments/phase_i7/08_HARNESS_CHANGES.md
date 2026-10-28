@@ -15,31 +15,34 @@
 | Item | Status |
 | :--- | :--- |
 | H-01 third arm | **DONE** — `SyncModeApproachAMin`, one additive `case` in the harness switch |
-| H-02 sharded latency recorder | OPEN (measurement validity; needed before E1 analysis) |
-| H-03 per-worker flush tracking | OPEN |
-| H-04 honest op accounting | PARTIAL — `cmd/i7trial` records intended/issued/completed counts, but the harness fields are unchanged |
-| H-05 open-loop scheduler | OPEN — blocks E4 |
-| H-06 event log + event-conditioned latency | OPEN — blocks E2/E4 |
-| H-07 publication-only driver | OPEN — blocks E2 |
-| H-08 equal-work paced writer | OPEN — blocks E3-equal |
+| H-02 sharded latency recorder | **DONE (G2)** — `harness2/metrics.go` per-worker shards, merged after the window; no read-path mutex |
+| H-03 per-worker flush tracking | **DONE (G2)** — `harness2/events.go` records publication windows with a single mutex per *event*, not per read |
+| H-04 honest op accounting | **DONE (G2)** — scheduled/issued/completed/abandoned/unissued in `harness2.OperationCounts` |
+| H-05 open-loop scheduler | **DONE (G2)** — `harness2/clock.go` QPC schedule, pre-computed exponential arrivals, `W_max` abandonment |
+| H-06 event log + event-conditioned latency | **DONE (G2)** — `harness2/events.go`, `block_ratio = max_response / hold` |
+| H-07 publication-only driver | **DONE (G2)** — engine injection gate + pre-frozen memtables; zero writes in the window |
+| H-08 equal-work paced writer | **DONE (G2)** — token-free absolute QPC schedule at `W_paced` (235/210 writes/s) |
 | H-09 bulk fixture | OPEN (optional) |
 | H-10 lock-occupancy instrumentation | OPEN — blocks D2 |
-| H-11 counter-based key stream | OPEN |
+| H-11 counter-based key stream | **DONE (G2)** — `harness2/keystream.go`, SHA-256 over (seed, op index) |
 | H-12 affinity | **DONE (Windows form)** — `ProcessorAffinity` on the launcher, inherited; recorded per trial |
 | H-13 real environment manifest | **DONE** — `run_i7.ps1 -Check` probes CIM/drive/topology; no hardcoded values |
 | H-14 page-cache control | **WITHDRAWN** — no Windows equivalent; all trials warm-cache |
 | H-15 reproducible build + provenance | **DONE** — `-trimpath`, binary SHA-256, Go env, frozen-artifact hashes |
-| H-16 runlist permutation + commitment | **DONE** — deterministic SHA-256 ordering, committed hash, runner refuses a mismatch |
-| H-17 attempt/replacement bookkeeping | **DONE** — `results.jsonl` attempts, 18-retry cap, per-attempt archive |
+| H-16 runlist permutation + commitment | **DONE** — deterministic SHA-256 ordering, committed hash, runner refuses a mismatch; D3 anchored first/last |
+| H-17 attempt/replacement bookkeeping | **DONE (G2)** — STARTED/FINISHED ledger, per-attempt archive, budget persisted in the manifest |
 | H-18 trial-count ceiling | **DONE** — enforced before any launch |
-| H-19 drift monitor | PARTIAL — D3 rows exist in the runlist; execution not automated |
-| H-20 new per-trial metrics | OPEN |
+| H-19 drift monitor | **DONE (G2)** — D3 anchored first/last; the package computes start/end medians and flags >15 % |
+| H-20 new per-trial metrics | **DONE (G2)** — `k` proxies, events, response latency, accounting, data-dir removal |
 | H-21 analysis tooling | OPEN |
-| H-22 Pebble adapter | OPEN — Pebble itself is verified on Windows (§[12](12_WINDOWS_EXECUTION_AMENDMENT.md) §6) |
+| H-22 Pebble adapter | **DONE (G2)** — `pebble_runner` module, v1.1.5, CGO-free, QPC timing, verified |
 | H-23 schema versioning | PARTIAL — `i7.trial.v1` / `i7.ledger.v1` envelopes exist; the frozen v1 reader is unchanged |
-| H-24 runner CLI | **DONE** — `-Check`/`-Preflight`/`-Campaign`/`-Resume`/`-Package`/`-DryRun` |
-| **H-25** | **NEW** — `cmd/i7trial`: one trial per process, approval gate, QPC probes, affinity readback |
-| **H-26** | **NEW** — `run_i7.ps1`: platform validation, runlist generation, per-trial launch, resume, packaging |
+| H-24 runner CLI | **DONE** — `-Check`/`-Calibrate`/`-Preflight`/`-Campaign`/`-Resume`/`-Diagnostics`/`-Package`/`-DryRun` |
+| **H-25** | **DONE** — `cmd/i7trial`: one trial per process, bound approval, QPC probes, affinity readback |
+| **H-26** | **DONE** — `run_i7.ps1`: platform validation, runlist generation, per-trial launch, resume, packaging |
+| **H-27** | **NEW (G2)** — `cmd/i7stub` + `tests/orchestration_tests.ps1`: 25 synthetic orchestration scenarios |
+
+Status detail and raw logs: [I7_G2_REVIEW_PACKET.md](I7_G2_REVIEW_PACKET.md).
 
 ---
 
