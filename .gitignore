@@ -8,6 +8,10 @@ lsmengine/bench_data*
 wal*.log
 *.exe
 experiment_runner_linux
+# LaTeX build artifacts
+*.aux
+*.log
+
 # Phase I7 generated output (review artifacts are packaged into a ZIP, not committed)
 research/experiments/phase_i7/I7_WINDOWS_RESULTS/
 research/experiments/phase_i7/evidence/
@@ -15,3 +19,4 @@ research/experiments/phase_i7/**/bin/
 research/experiments/phase_i7/**/_storage_probe.bin
 research/experiments/phase_i7/*.zip
 research/experiments/phase_i7/*.zip.sha256
+research/experiments/data/**/*.zip

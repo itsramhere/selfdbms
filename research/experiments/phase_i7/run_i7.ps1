@@ -54,6 +54,7 @@ param(
     [string]$Affinity = '',
     [string]$ApprovalFile = '',
     [string]$Gate = '',
+    [string]$Scope = '',
     [string]$CalibrationFile = '',
     [string[]]$Blocks = @(),
     [switch]$AllowPartial,
@@ -920,20 +921,28 @@ function Get-ApprovalBinding($Layout, $Runlist, [string[]]$BlocksNeeded) {
     }
 }
 
-function Write-ApprovalTemplate($Layout, $Runlist, [string]$ForGate) {
+function Write-ApprovalTemplate($Layout, $Runlist, [string]$ForGate, [string]$ForScope = '') {
     $rows = $Runlist.Rows
-    $blocks = @($rows | ForEach-Object { $_.block } | Sort-Object -Unique)
+    $blocks = if ($ForScope -eq 'calibration') { @('PF') } else { @($rows | ForEach-Object { $_.block } | Sort-Object -Unique) }
     $tpl = Get-ApprovalBinding -Layout $Layout -Runlist $Runlist -BlocksNeeded $blocks
     $tpl.gate = $ForGate
-    $tpl.scope = ('gate ' + $ForGate)
-    $path = Join-Path $Root ('APPROVAL.template.' + $ForGate + '.json')
+    if ($ForScope -eq 'calibration') {
+        $tpl.scope = 'calibration'
+        $tpl.allowed_phases = @('calibration')
+        $tpl.allowed_blocks = @('PF')
+        $tpl.max_trials = 12
+    } else {
+        $tpl.scope = if ($ForScope) { $ForScope } else { ('gate ' + $ForGate) }
+    }
+    $suffix = if ($ForScope) { $ForGate + '.' + $ForScope } else { $ForGate }
+    $path = Join-Path $Root ('APPROVAL.template.' + $suffix + '.json')
     Write-JsonFile -Path $path -Object $tpl
     Write-Ok ('approval template written: ' + $path)
     Write-Info 'Set approved=true, approved_by, approved_at, then save as APPROVAL.json.'
     return $path
 }
 
-function Assert-Approval($Layout, $Runlist, [string]$RequiredGate, [string[]]$SelectedBlocks, [int]$SelectedCount) {
+function Assert-Approval($Layout, $Runlist, [string]$RequiredGate, [string[]]$SelectedBlocks, [int]$SelectedCount, [string]$RequiredScope = '') {
     if ([string]::IsNullOrWhiteSpace($RequiredGate)) { throw 'no gate specified for this mode' }
     if (-not (Test-Path -LiteralPath $Layout.Approval)) {
         throw ("approval file not found: {0}`n  Generate a template with -WriteApprovalTemplate -Gate {1}, then have the reviewer fill it in." -f $Layout.Approval, $RequiredGate)
@@ -956,6 +965,17 @@ function Assert-Approval($Layout, $Runlist, [string]$RequiredGate, [string[]]$Se
     if ($cap -gt 0 -and $SelectedCount -gt $cap) {
         throw ("selected {0} trials but the approval caps at {1}" -f $SelectedCount, $cap)
     }
+    $scope = [string](PropOr $a 'scope' '')
+    $allowedPhases = @(PropOr $a 'allowed_phases' @())
+    if ($RequiredScope -eq 'calibration') {
+        if ($scope -notmatch 'calibration' -and -not ($allowedPhases -contains 'calibration')) {
+            throw ("approval scope is '{0}', calibration requires scope containing 'calibration'" -f $scope)
+        }
+    } else {
+        if ($scope -match '^calibration$' -and -not ($allowedPhases -contains 'preflight' -or $allowedPhases -contains 'confirmatory')) {
+            throw ("approval is scoped exclusively for calibration ('{0}'); this mode requires {1}" -f $scope, (if ($RequiredScope) { $RequiredScope } else { 'preflight/confirmatory' }))
+        }
+    }
     if (-not [bool](PropOr $a 'allow_dirty' $false)) {
         $plat = Read-JsonFile $Layout.Platform
         if ([bool](PropOr $plat 'git_dirty' $true)) { throw 'working tree is dirty and the approval does not set allow_dirty=true' }
@@ -965,7 +985,7 @@ function Assert-Approval($Layout, $Runlist, [string]$RequiredGate, [string[]]$Se
         $ph = Get-Sha256 $Layout.PebbleRunner
         if ($pebbleApproved -ne $ph) { throw 'approval pebble_sha256 does not match the built pebble_runner.exe' }
     }
-    Write-Ok ("approval verified: gate {0}, blocks {1}, max {2}, by {3}" -f (PropOr $a 'gate' ''), ($allowed -join ','), $cap, (PropOr $a 'approved_by' ''))
+    Write-Ok ("approval verified: gate {0}, scope {1}, blocks {2}, max {3}, by {4}" -f (PropOr $a 'gate' ''), $scope, ($allowed -join ','), $cap, (PropOr $a 'approved_by' ''))
     return $a
 }
 
@@ -1467,29 +1487,102 @@ function Invoke-Check {
 # -Calibrate (G3)
 # ---------------------------------------------------------------------------
 function Invoke-Calibrate {
-    $Layout = Get-PathLayout
+    $Layout = Resolve-Runners (Get-PathLayout)
     Write-Section 'I7 calibration (gate G3): C_ref for E4'
+    Write-Info 'Workload plan: 366 inventory trials (12 preflight + 330 confirmatory + 24 diagnostic) + 9 calibration runs = 375 total planned executions.'
     $platform = Read-JsonFile $Layout.Platform
     if ($null -eq $platform) { throw 'run -Check first' }
 
     $run = Get-OrCreateRunlist -Layout $Layout
     $manifest = Initialize-CampaignManifest -Layout $Layout -Runlist $run -Platform $platform -RunnerInfo ([ordered]@{ sha256 = (Get-Sha256 $Layout.Runner) })
-    $null = Assert-Approval -Layout $Layout -Runlist $run -RequiredGate 'G3' -SelectedBlocks @('PF') -SelectedCount 9
+    $null = Assert-Approval -Layout $Layout -Runlist $run -RequiredGate 'G3' -SelectedBlocks @('PF') -SelectedCount 9 -RequiredScope 'calibration'
     Assert-ExecutionIntegrity -Layout $Layout -Manifest $manifest
 
-    $ledgerPath = Join-Path $Layout.Calibration 'ledger.jsonl'
-    $done = @(Read-JsonLines $ledgerPath | Where-Object { $_.event -eq 'FINISHED' -and $_.status -eq 'SUCCESS' })
-    if ($done.Count -ge 9 -and -not $DryRun) {
-        Write-Ok 'calibration already complete'
+    $ledgerPath = Join-Path $Layout.Calibration 'calibration_ledger.jsonl'
+    $existingEntries = if (Test-Path -LiteralPath $ledgerPath) { @(Read-JsonLines $ledgerPath) } else { @() }
+    $finishedSuccess = @($existingEntries | Where-Object { $_.event -eq 'FINISHED' -and $_.status -eq 'SUCCESS' })
+    $startedAttempts = @($existingEntries | Where-Object { $_.event -eq 'STARTED' })
+
+    # Check if all 9 calibration runs are already complete (idempotency)
+    $allSuccessful = $true
+    $completedMap = @{}
+    foreach ($arm in 'A', 'AMIN', 'B') {
+        for ($rep = 1; $rep -le 3; $rep++) {
+            $tid = ('cal_{0}_{1:D2}' -f $arm, $rep)
+            $outPath = Join-Path $Layout.Calibration ($tid + '.json')
+            $hasSuccessInLedger = @($finishedSuccess | Where-Object { $_.trial_id -eq $tid }).Count -gt 0
+            if ($hasSuccessInLedger -and (Test-Path -LiteralPath $outPath)) {
+                $j = Read-JsonFile $outPath
+                if ($j -and $j.status -eq 'SUCCESS' -and $j.result -and $j.result.throughput) {
+                    $completedMap[$tid] = $j
+                    continue
+                }
+            }
+            $allSuccessful = $false
+        }
     }
+
+    if ($allSuccessful) {
+        Write-Ok ('calibration already complete (9/9 runs); no trials executed')
+        $perArm = @{}
+        $runs = New-Object System.Collections.ArrayList
+        foreach ($arm in 'A', 'AMIN', 'B') {
+            $vals = New-Object System.Collections.ArrayList
+            for ($rep = 1; $rep -le 3; $rep++) {
+                $tid = ('cal_{0}_{1:D2}' -f $arm, $rep)
+                $j = $completedMap[$tid]
+                [void]$vals.Add([double]$j.result.throughput.read_ops_per_sec)
+                [void]$runs.Add([ordered]@{ trial_id = $tid; arm = $arm; read_ops_per_sec = [double]$j.result.throughput.read_ops_per_sec })
+            }
+            $sorted = @($vals | Sort-Object)
+            $perArm[$arm] = [double]$sorted[[int]($sorted.Count / 2)]
+        }
+        $cRef = ($perArm.Values | Measure-Object -Minimum).Minimum
+        $cal = [ordered]@{
+            schema = 'i7.calibration.v1'; created_utc = Get-UtcStamp; protocol_version = $script:I7.ProtocolVersion
+            per_arm_read_ops_per_sec = $perArm; c_ref = [double]$cRef; rule = 'min over arms of median read ops/s at r=16, 5 s, 3 reps'
+            runs = $runs
+        }
+        Write-JsonFile -Path $Layout.CalibrationOut -Object $cal
+        Write-Ok ('C_ref = {0:N1} read ops/s (min over arms: A={1:N1}, AMIN={2:N1}, B={3:N1})' -f $cRef, $perArm['A'], $perArm['AMIN'], $perArm['B'])
+        return
+    }
+
+    if ($DryRun) {
+        Write-Host 'DRY RUN: 9 calibration runs planned under gate G3 (PF block, r=16, 5s window, 3 reps x 3 arms).' -ForegroundColor Yellow
+        foreach ($arm in 'A', 'AMIN', 'B') {
+            for ($rep = 1; $rep -le 3; $rep++) {
+                $tid = ('cal_{0}_{1:D2}' -f $arm, $rep)
+                $status = if ($completedMap.ContainsKey($tid)) { 'ALREADY_COMPLETED' } else { 'PLANNED' }
+                Write-Host ('  {0,-15} arm={1,-5} rep={2} status={3}' -f $tid, $arm, $rep, $status)
+            }
+        }
+        exit 0
+    }
+
+    # Execute remaining runs, enforcing attempt ceiling (hard ceiling = 12 attempts: 9 planned + 3 replacements)
+    $maxCalibrationAttempts = 12
     $perArm = @{}
     $runs = New-Object System.Collections.ArrayList
 
     foreach ($arm in 'A', 'AMIN', 'B') {
         $vals = New-Object System.Collections.ArrayList
-        if ($DryRun) { continue }
         for ($rep = 1; $rep -le 3; $rep++) {
             $tid = ('cal_{0}_{1:D2}' -f $arm, $rep)
+            if ($completedMap.ContainsKey($tid)) {
+                $j = $completedMap[$tid]
+                [void]$vals.Add([double]$j.result.throughput.read_ops_per_sec)
+                [void]$runs.Add([ordered]@{ trial_id = $tid; arm = $arm; read_ops_per_sec = [double]$j.result.throughput.read_ops_per_sec })
+                Write-Info ('[cal] {0} already completed ({1:N1} ops/s); skipping' -f $tid, [double]$j.result.throughput.read_ops_per_sec)
+                continue
+            }
+
+            # Enforce execution budget
+            $startedCount = @($startedAttempts).Count
+            if ($startedCount -ge $maxCalibrationAttempts) {
+                throw ('stopping rule: calibration attempts ({0}) reached hard ceiling ({1})' -f $startedCount, $maxCalibrationAttempts)
+            }
+
             $spec = [ordered]@{
                 schema = 'i7.trial-spec.v1'; trial_id = $tid; block = 'PF'; cell = 'calibration'; triplet = $rep
                 arm = $arm; order_position = $rep; runlist_position = 0; seed = [int64]([Convert]::ToUInt64((Get-TextSha256 ('cal|' + $arm + '|' + $rep)).Substring(0, 15), 16))
@@ -1504,19 +1597,32 @@ function Invoke-Calibrate {
             $specPath = Join-Path $Layout.Specs ($tid + '.json')
             Write-JsonFile -Path $specPath -Object $spec
             $outPath = Join-Path $Layout.Calibration ($tid + '.json')
+
+            # Record STARTED
+            Add-JsonLine -Path $ledgerPath -Object ([ordered]@{ event = 'STARTED'; trial_id = $tid; arm = $arm; rep = $rep; ts = Get-UtcStamp })
+            $startedAttempts = @(Read-JsonLines $ledgerPath | Where-Object { $_.event -eq 'STARTED' })
+
             $argLine = @(
                 (Quote-Arg '-spec'), (Quote-Arg $specPath), (Quote-Arg '-out'), (Quote-Arg $outPath),
                 (Quote-Arg '-gate'), (Quote-Arg 'G3'), (Quote-Arg '-approval'), (Quote-Arg $Layout.Approval),
                 (Quote-Arg '-platform'), (Quote-Arg $Layout.Platform), (Quote-Arg '-git-rev'), (Quote-Arg $platform.git_revision)
             ) -join ' '
-            $null = Start-Process -FilePath $Layout.Runner -ArgumentList $argLine -Wait -PassThru -NoNewWindow
+            $p = Start-Process -FilePath $Layout.Runner -ArgumentList $argLine -Wait -PassThru -NoNewWindow
+            $exitCode = $p.ExitCode
+
             $j = Read-JsonFile $outPath
             $status = 'INVALID'
-            if ($j) { $status = [string]$j.status }
-            Add-JsonLine -Path $ledgerPath -Object ([ordered]@{ event = 'FINISHED'; trial_id = $tid; arm = $arm; status = $status; ts = Get-UtcStamp })
-            if ($status -eq 'SUCCESS') {
-                $null = $vals.Add([double]$j.result.throughput.read_ops_per_sec)
+            if ($j -and $j.status) { $status = [string]$j.status }
+            if ($exitCode -ne 0 -and $status -eq 'SUCCESS') { $status = 'FAILED' }
+
+            Add-JsonLine -Path $ledgerPath -Object ([ordered]@{ event = 'FINISHED'; trial_id = $tid; arm = $arm; rep = $rep; status = $status; exit_code = $exitCode; ts = Get-UtcStamp })
+
+            if ($status -eq 'SUCCESS' -and $j.result -and $j.result.throughput) {
+                [void]$vals.Add([double]$j.result.throughput.read_ops_per_sec)
                 [void]$runs.Add([ordered]@{ trial_id = $tid; arm = $arm; read_ops_per_sec = [double]$j.result.throughput.read_ops_per_sec })
+                Write-Ok ('[cal] {0} SUCCESS ({1:N1} ops/s)' -f $tid, [double]$j.result.throughput.read_ops_per_sec)
+            } else {
+                Write-Warn2 ('[cal] {0} {1} (exit={2})' -f $tid, $status, $exitCode)
             }
         }
         if ($vals.Count -gt 0) {
@@ -1525,11 +1631,7 @@ function Invoke-Calibrate {
         }
     }
 
-    if ($DryRun) {
-        Write-Host 'DRY RUN: calibration specs are not generated here; use -Preflight -DryRun to inspect the campaign.' -ForegroundColor Yellow
-        exit 0
-    }
-    if ($perArm.Count -lt 3) { throw 'calibration incomplete: fewer than three arms produced a result' }
+    if ($perArm.Count -lt 3) { throw 'calibration incomplete: fewer than three arms produced a valid result' }
     $cRef = ($perArm.Values | Measure-Object -Minimum).Minimum
     $cal = [ordered]@{
         schema = 'i7.calibration.v1'; created_utc = Get-UtcStamp; protocol_version = $script:I7.ProtocolVersion
@@ -1537,7 +1639,7 @@ function Invoke-Calibrate {
         runs = $runs
     }
     Write-JsonFile -Path $Layout.CalibrationOut -Object $cal
-    Write-Ok ('C_ref = {0:N1} read ops/s (min over arms)' -f $cRef)
+    Write-Ok ('C_ref = {0:N1} read ops/s (min over arms: A={1:N1}, AMIN={2:N1}, B={3:N1})' -f $cRef, $perArm['A'], $perArm['AMIN'], $perArm['B'])
     Write-Info ('calibration written: ' + $Layout.CalibrationOut)
     exit 0
 }
@@ -1722,6 +1824,14 @@ if ($Resume) { $modes += 'Resume' }
 if ($Diagnostics) { $modes += 'Diagnostics' }
 if ($Package) { $modes += 'Package' }
 
+if ($WriteApprovalTemplate -and $modes.Count -le 1) {
+    $Layout = Get-PathLayout
+    $run = Get-OrCreateRunlist -Layout $Layout
+    $scope = if ($Scope) { $Scope } elseif ($Calibrate) { 'calibration' } else { '' }
+    $null = Write-ApprovalTemplate -Layout $Layout -Runlist $run -ForGate ($(if ($Gate) { $Gate } else { 'G3' })) -ForScope $scope
+    exit 0
+}
+
 if ($modes.Count -eq 0) {
     Write-Host 'Phase I7 Windows campaign driver' -ForegroundColor Cyan
     Write-Host ''
@@ -1773,12 +1883,6 @@ try {
             exit 0
         }
         default {
-            $Layout = Get-PathLayout
-            if ($WriteApprovalTemplate) {
-                $run = Get-OrCreateRunlist -Layout $Layout
-                $null = Write-ApprovalTemplate -Layout $Layout -Runlist $run -ForGate ($(if ($Gate) { $Gate } else { 'G3' }))
-                exit 0
-            }
             Invoke-Run -Mode $mode
         }
     }

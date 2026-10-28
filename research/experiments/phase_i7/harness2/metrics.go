@@ -13,24 +13,31 @@ import (
 
 // Shard accumulates one worker's observations.
 type Shard struct {
-	Samples []int64 // service latency (completion - issue)
-	Resp    []int64 // response latency (completion - intended); open loop only
+	Samples     []int64 // service latency (completion - issue) inside measurement window
+	Resp        []int64 // response latency (completion - intended) inside measurement window; open loop only
+	Issues      []Issue // interval pairs for event conditioning inside measurement window
 
-	Issues      []Issue // interval pairs for event conditioning
+	SamplesLate []int64 // service latency for late completions (done > windowNs)
+	RespLate    []int64 // response latency for late completions (done > windowNs)
+	IssuesLate  []Issue // interval pairs for late completions
 
-	ReadsAttempted int64
-	ReadsCompleted int64
-	ReadsHit       int64
-	ReadsMiss      int64
-	ReadsError     int64
-	WritesAttempted int64
-	WritesCompleted int64
-	WritesError     int64
-	ValidationErrors int64
-	Issued          int64
-	Abandoned       int64
-	MaxLatenessNs   int64
-	Dropped         int64
+	ReadsAttempted          int64
+	ReadsCompleted          int64
+	ReadsCompletedInWindow  int64
+	ReadsCompletedLate      int64
+	ReadsHit                int64
+	ReadsMiss               int64
+	ReadsError              int64
+	WritesAttempted         int64
+	WritesCompleted         int64
+	WritesCompletedInWindow int64
+	WritesCompletedLate     int64
+	WritesError             int64
+	ValidationErrors        int64
+	Issued                  int64
+	Abandoned               int64
+	MaxLatenessNs           int64
+	Dropped                 int64
 }
 
 // Issue records one request interval for event-conditioned latency analysis.
@@ -91,6 +98,27 @@ func (s *Shard) RecordIssue(intended, issued, complete int64) {
 	}
 }
 
+// RecordServiceLate appends a service-latency sample for late completions.
+func (s *Shard) RecordServiceLate(ns int64) {
+	if ns < 0 {
+		ns = 0
+	}
+	s.SamplesLate = append(s.SamplesLate, ns)
+}
+
+// RecordResponseLate appends a response-latency sample for late completions.
+func (s *Shard) RecordResponseLate(ns int64) {
+	if ns < 0 {
+		ns = 0
+	}
+	s.RespLate = append(s.RespLate, ns)
+}
+
+// RecordIssueLate appends an interval triple for late completions.
+func (s *Shard) RecordIssueLate(intended, issued, complete int64) {
+	s.IssuesLate = append(s.IssuesLate, Issue{IntendedNs: intended, IssuedNs: issued, CompleteNs: complete})
+}
+
 // Merge concatenates the shards' samples without assuming equal lengths.
 func MergeSamples(shards []*Shard) []int64 {
 	n := 0
@@ -126,6 +154,45 @@ func MergeIssues(shards []*Shard) []Issue {
 	out := make([]Issue, 0, n)
 	for _, s := range shards {
 		out = append(out, s.Issues...)
+	}
+	return out
+}
+
+// MergeSamplesLate concatenates late service-latency samples.
+func MergeSamplesLate(shards []*Shard) []int64 {
+	n := 0
+	for _, s := range shards {
+		n += len(s.SamplesLate)
+	}
+	out := make([]int64, 0, n)
+	for _, s := range shards {
+		out = append(out, s.SamplesLate...)
+	}
+	return out
+}
+
+// MergeResponsesLate concatenates late response-latency samples.
+func MergeResponsesLate(shards []*Shard) []int64 {
+	n := 0
+	for _, s := range shards {
+		n += len(s.RespLate)
+	}
+	out := make([]int64, 0, n)
+	for _, s := range shards {
+		out = append(out, s.RespLate...)
+	}
+	return out
+}
+
+// MergeIssuesLate concatenates late issue intervals.
+func MergeIssuesLate(shards []*Shard) []Issue {
+	n := 0
+	for _, s := range shards {
+		n += len(s.IssuesLate)
+	}
+	out := make([]Issue, 0, n)
+	for _, s := range shards {
+		out = append(out, s.IssuesLate...)
 	}
 	return out
 }
@@ -179,19 +246,23 @@ func Stats(samples []int64) LatencyStats {
 
 // Totals aggregates the per-worker counters.
 type Totals struct {
-	ReadsAttempted  int64
-	ReadsCompleted  int64
-	ReadsHit        int64
-	ReadsMiss       int64
-	ReadsError      int64
-	WritesAttempted int64
-	WritesCompleted int64
-	WritesError     int64
-	ValidationErrors int64
-	Issued          int64
-	Abandoned       int64
-	MaxLatenessNs   int64
-	Dropped         int64
+	ReadsAttempted          int64
+	ReadsCompleted          int64
+	ReadsCompletedInWindow  int64
+	ReadsCompletedLate      int64
+	ReadsHit                int64
+	ReadsMiss               int64
+	ReadsError              int64
+	WritesAttempted         int64
+	WritesCompleted         int64
+	WritesCompletedInWindow int64
+	WritesCompletedLate     int64
+	WritesError             int64
+	ValidationErrors        int64
+	Issued                  int64
+	Abandoned               int64
+	MaxLatenessNs           int64
+	Dropped                 int64
 }
 
 // Sum folds the shard counters.
@@ -200,11 +271,15 @@ func Sum(shards []*Shard) Totals {
 	for _, s := range shards {
 		t.ReadsAttempted += s.ReadsAttempted
 		t.ReadsCompleted += s.ReadsCompleted
+		t.ReadsCompletedInWindow += s.ReadsCompletedInWindow
+		t.ReadsCompletedLate += s.ReadsCompletedLate
 		t.ReadsHit += s.ReadsHit
 		t.ReadsMiss += s.ReadsMiss
 		t.ReadsError += s.ReadsError
 		t.WritesAttempted += s.WritesAttempted
 		t.WritesCompleted += s.WritesCompleted
+		t.WritesCompletedInWindow += s.WritesCompletedInWindow
+		t.WritesCompletedLate += s.WritesCompletedLate
 		t.WritesError += s.WritesError
 		t.ValidationErrors += s.ValidationErrors
 		t.Issued += s.Issued

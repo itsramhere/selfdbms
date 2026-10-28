@@ -337,13 +337,17 @@ func TestRunOpenLoopAccounting(t *testing.T) {
 		t.Fatalf("status %s: %s", res.Status, res.Error)
 	}
 	o := res.Operations
-	sum := o.ReadOpsIssued + o.ReadOpsAbandoned + o.ReadOpsUnissued
+	sum := o.ReadOpsCompletedInWindow + o.ReadOpsCompletedLate + o.ReadOpsAbandoned + o.ReadOpsUnissued
 	if o.ReadOpsScheduled == 0 {
 		t.Fatal("no arrivals scheduled")
 	}
 	if sum != o.ReadOpsScheduled {
-		t.Fatalf("accounting does not close: issued(%d)+abandoned(%d)+unissued(%d)=%d, scheduled=%d",
-			o.ReadOpsIssued, o.ReadOpsAbandoned, o.ReadOpsUnissued, sum, o.ReadOpsScheduled)
+		t.Fatalf("accounting does not close: inWindow(%d)+late(%d)+abandoned(%d)+unissued(%d)=%d, scheduled=%d",
+			o.ReadOpsCompletedInWindow, o.ReadOpsCompletedLate, o.ReadOpsAbandoned, o.ReadOpsUnissued, sum, o.ReadOpsScheduled)
+	}
+	if o.ReadOpsCompletedInWindow+o.ReadOpsCompletedLate != o.ReadOpsCompleted {
+		t.Fatalf("completed mismatch: inWindow(%d)+late(%d) != completed(%d)",
+			o.ReadOpsCompletedInWindow, o.ReadOpsCompletedLate, o.ReadOpsCompleted)
 	}
 	if o.ReadOpsIssued == 0 {
 		t.Fatal("no requests issued")
@@ -353,6 +357,189 @@ func TestRunOpenLoopAccounting(t *testing.T) {
 	}
 	if res.LatencyResponse.P50Nanos < res.LatencyRead.P50Nanos {
 		t.Fatal("response latency should be >= service latency")
+	}
+}
+
+// TestE2_PhysicalVsNoneModeComparison verifies that:
+// 1. intended publication timestamps are strictly within [0, window);
+// 2. pub_physical realizes exactly the scheduled publications;
+// 3. pub_none has zero released/realized publications;
+// 4. both start with identical initial workloads (initial frozen memtables);
+// 5. topology differences are explicitly measured and reported in diagnostics.
+func TestE2_PhysicalVsNoneModeComparison(t *testing.T) {
+	// 1. Check the 10-second 20-event manifest schedule bounds.
+	window10s := 10 * time.Second
+	events20 := 20
+	windowNs := window10s.Nanoseconds()
+	for i := 0; i < events20; i++ {
+		intended := (int64(i)*2 + 1) * windowNs / (int64(events20) * 2)
+		if intended <= 0 {
+			t.Fatalf("event %d intended timestamp %d <= 0", i, intended)
+		}
+		if intended >= windowNs {
+			t.Fatalf("event %d intended timestamp %d >= window %d", i, intended, windowNs)
+		}
+	}
+	// First event at 250ms, last at 9750ms:
+	first := (int64(0)*2 + 1) * windowNs / (int64(events20) * 2)
+	last := (int64(19)*2 + 1) * windowNs / (int64(events20) * 2)
+	if first != 250*int64(time.Millisecond) {
+		t.Fatalf("first event expected 250ms, got %d ns", first)
+	}
+	if last != 9750*int64(time.Millisecond) {
+		t.Fatalf("last event expected 9750ms, got %d ns", last)
+	}
+
+	// 2. Mode execution comparison
+	// PHYSICAL MODE
+	specPhys := miniSpec(t, "E2", "pub_physical", "A")
+	specPhys.PublicationMode = "physical"
+	specPhys.PublicationEvents = 4
+	specPhys.MeasurementDurationMs = 400
+	specPhys.WriterConcurrency = 0
+	specPhys.ReaderConcurrency = 2
+
+	resPhys, err := Run(specPhys, testEnv(), "test-rev")
+	if err != nil {
+		t.Fatalf("run physical: %v", err)
+	}
+	if resPhys.Status != "SUCCESS" {
+		t.Fatalf("status physical %s: %s", resPhys.Status, resPhys.Error)
+	}
+	diagPhys := resPhys.LSMDiagnostics
+	if diagPhys.PublicationEventsTarget != 4 {
+		t.Fatalf("physical target events expected 4, got %d", diagPhys.PublicationEventsTarget)
+	}
+	if diagPhys.PublicationEventsReleased != 4 {
+		t.Fatalf("physical released events expected 4, got %d", diagPhys.PublicationEventsReleased)
+	}
+	if diagPhys.PublicationEventsRealized != 4 {
+		t.Fatalf("physical realized events expected 4, got %d", diagPhys.PublicationEventsRealized)
+	}
+	if diagPhys.InitialFrozenMemtables != 4 {
+		t.Fatalf("physical initial frozen memtables expected 4, got %d", diagPhys.InitialFrozenMemtables)
+	}
+	if diagPhys.FinalFrozenMemtables != 0 {
+		t.Fatalf("physical final frozen memtables expected 0, got %d", diagPhys.FinalFrozenMemtables)
+	}
+	if diagPhys.InitialSSTables != 2 {
+		t.Fatalf("physical initial sstables expected 2, got %d", diagPhys.InitialSSTables)
+	}
+	if diagPhys.FinalSSTables != 6 {
+		t.Fatalf("physical final sstables expected 6 (2 initial + 4 flushes), got %d", diagPhys.FinalSSTables)
+	}
+	if len(resPhys.Events) != 4 {
+		t.Fatalf("physical event log expected 4 records, got %d", len(resPhys.Events))
+	}
+	if resPhys.Operations.WriteOpsAttempted != 0 {
+		t.Fatalf("physical writes attempted expected 0, got %d", resPhys.Operations.WriteOpsAttempted)
+	}
+
+	// NONE MODE (control: identical initial workload, zero releases during window)
+	specNone := miniSpec(t, "E2", "pub_none", "A")
+	specNone.PublicationMode = "none"
+	specNone.PublicationEvents = 4 // runlist specifies 4 pre-frozen events
+	specNone.MeasurementDurationMs = 400
+	specNone.WriterConcurrency = 0
+	specNone.ReaderConcurrency = 2
+
+	resNone, err := Run(specNone, testEnv(), "test-rev")
+	if err != nil {
+		t.Fatalf("run none: %v", err)
+	}
+	if resNone.Status != "SUCCESS" {
+		t.Fatalf("status none %s: %s", resNone.Status, resNone.Error)
+	}
+	diagNone := resNone.LSMDiagnostics
+	if diagNone.PublicationEventsTarget != 0 {
+		t.Fatalf("none target events expected 0, got %d", diagNone.PublicationEventsTarget)
+	}
+	if diagNone.PublicationEventsReleased != 0 {
+		t.Fatalf("none released events expected 0, got %d", diagNone.PublicationEventsReleased)
+	}
+	if diagNone.PublicationEventsRealized != 0 {
+		t.Fatalf("none realized events expected 0, got %d", diagNone.PublicationEventsRealized)
+	}
+	if diagNone.InitialFrozenMemtables != 4 {
+		t.Fatalf("none initial frozen memtables expected 4 (matched workload), got %d", diagNone.InitialFrozenMemtables)
+	}
+	if diagNone.FinalFrozenMemtables != 4 {
+		t.Fatalf("none final frozen memtables expected 4 (unreleased), got %d", diagNone.FinalFrozenMemtables)
+	}
+	if diagNone.InitialSSTables != 2 {
+		t.Fatalf("none initial sstables expected 2, got %d", diagNone.InitialSSTables)
+	}
+	if diagNone.FinalSSTables != 2 {
+		t.Fatalf("none final sstables expected 2 (static), got %d", diagNone.FinalSSTables)
+	}
+	if len(resNone.Events) != 0 {
+		t.Fatalf("none event log expected 0 records, got %d", len(resNone.Events))
+	}
+	if resNone.Operations.WriteOpsAttempted != 0 {
+		t.Fatalf("none writes attempted expected 0, got %d", resNone.Operations.WriteOpsAttempted)
+	}
+	if diagNone.TopologyNote == "" || !strings.Contains(diagNone.TopologyNote, "none_control") {
+		t.Fatalf("none topology note missing: %q", diagNone.TopologyNote)
+	}
+}
+
+// TestE4_OpenLoopOverloadAndLateAccounting verifies:
+// 1. lateness recheck immediately after waking;
+// 2. exact conservation: scheduled == completed_in_window + completed_late + abandoned + unissued;
+// 3. throughput strictly uses completions inside the window;
+// 4. late completions are tracked separately and do not pollute within-window latency.
+func TestE4_OpenLoopOverloadAndLateAccounting(t *testing.T) {
+	spec := miniSpec(t, "E4", "overload", "A")
+	spec.OpenLoopRatePerSec = 2000 // high rate to induce queuing & abandonment
+	spec.ReaderConcurrency = 1
+	spec.WriterConcurrency = 0
+	spec.MaxLatenessMs = 5 // tight deadline: waking delay or backlog drops requests
+	spec.MeasurementDurationMs = 200
+
+	res, err := Run(spec, testEnv(), "test-rev")
+	if err != nil {
+		t.Fatalf("run overload: %v", err)
+	}
+	if res.Status != "SUCCESS" {
+		t.Fatalf("status %s: %s", res.Status, res.Error)
+	}
+	o := res.Operations
+	sum := o.ReadOpsCompletedInWindow + o.ReadOpsCompletedLate + o.ReadOpsAbandoned + o.ReadOpsUnissued
+	if sum != o.ReadOpsScheduled {
+		t.Fatalf("conservation identity failed: inWindow(%d) + late(%d) + abandoned(%d) + unissued(%d) = %d != scheduled(%d)",
+			o.ReadOpsCompletedInWindow, o.ReadOpsCompletedLate, o.ReadOpsAbandoned, o.ReadOpsUnissued, sum, o.ReadOpsScheduled)
+	}
+	if o.ReadOpsCompletedInWindow+o.ReadOpsCompletedLate != o.ReadOpsCompleted {
+		t.Fatalf("total completed mismatch: inWindow(%d) + late(%d) != completed(%d)",
+			o.ReadOpsCompletedInWindow, o.ReadOpsCompletedLate, o.ReadOpsCompleted)
+	}
+	if o.ReadOpsAbandoned == 0 {
+		t.Fatal("expected abandoned requests under overload with 5ms max lateness")
+	}
+
+	// Verify throughput calculation strictly uses ReadOpsCompletedInWindow:
+	secs := float64(res.Timestamps.MeasuredWindowNs) / 1e9
+	expectedTps := float64(o.ReadOpsCompletedInWindow) / secs
+	diff := res.Throughput.ReadOpsPerSec - expectedTps
+	if diff < -0.01 || diff > 0.01 {
+		t.Fatalf("throughput mismatch: got %.2f, expected %.2f (from %d in-window completions)",
+			res.Throughput.ReadOpsPerSec, expectedTps, o.ReadOpsCompletedInWindow)
+	}
+
+	// Verify sample count matches in-window completions:
+	if res.LatencyRead.Count != o.ReadOpsCompletedInWindow {
+		t.Fatalf("latency read sample count %d != inWindow completions %d",
+			res.LatencyRead.Count, o.ReadOpsCompletedInWindow)
+	}
+	if res.LatencyResponse.Count != o.ReadOpsCompletedInWindow {
+		t.Fatalf("latency response sample count %d != inWindow completions %d",
+			res.LatencyResponse.Count, o.ReadOpsCompletedInWindow)
+	}
+	if o.ReadOpsCompletedLate > 0 {
+		if res.LatencyReadLate.Count != o.ReadOpsCompletedLate {
+			t.Fatalf("late latency read sample count %d != late completions %d",
+				res.LatencyReadLate.Count, o.ReadOpsCompletedLate)
+		}
 	}
 }
 

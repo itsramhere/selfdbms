@@ -95,11 +95,15 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	res.FixtureManifest.InitializationDurationMs = time.Since(fixStart).Milliseconds()
 	man.SetMemtableThresholdBytes(memtable)
 	initialSSTables := man.ActiveSSTableCount()
+	initialFlushes := man.FlushesCompleted()
+	initialCompactions := man.CompactionsCompleted()
 
 	stream := NewKeyStream(spec.Seed, keyspace, spec.TargetReadHitRatio)
 	writeStream := NewKeyStream(spec.Seed^0x5f5f5f5f, keyspace, 1.0)
 
 	// Pre-freeze the publication pool BEFORE the measurement window.
+	// In E2, both pub_physical and pub_none pre-freeze spec.PublicationEvents memtables
+	// so their initial workloads at t=0 are identical (same SSTables, same frozen memtables).
 	events := spec.PublicationEvents
 	if events > 0 {
 		if err := preFreeze(man, spec, events); err != nil {
@@ -108,6 +112,13 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 			res.Error = err.Error()
 			return res, err
 		}
+	}
+
+	initialFrozen := man.PendingFlushes()
+	isPhysical := spec.PublicationMode == string(PubPhysical) || spec.PublicationMode == "physical"
+	targetEvents := 0
+	if isPhysical && events > 0 {
+		targetEvents = events
 	}
 
 	// Warmup (not measured).
@@ -144,7 +155,7 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	res.Timestamps.MeasurementDurationMs = spec.MeasurementDurationMs
 
 	var rec *EventRecorder
-	if events > 0 {
+	if targetEvents > 0 {
 		rec = NewEventRecorder(base)
 		man.SetFlushObserver(rec)
 	}
@@ -153,7 +164,8 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	if window <= 0 {
 		window = defaultWindow
 	}
-	trackIssues := events > 0
+	windowNs := window.Nanoseconds()
+	trackIssues := targetEvents > 0
 	trackResp := mode == ModeOpenLoop
 
 	shards := make([]*Shard, 0, spec.ReaderConcurrency+spec.WriterConcurrency)
@@ -196,9 +208,9 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 			defer wg.Done()
 			switch mode {
 			case ModeOpenLoop:
-				openLoopWorker(man, sh, sched, base, stop, &claim, wMaxNs, spec, stream)
+				openLoopWorker(man, sh, sched, base, stop, &claim, wMaxNs, windowNs, spec, stream)
 			default:
-				closedLoopReader(man, sh, base, stop, spec, stream, worker)
+				closedLoopReader(man, sh, base, stop, windowNs, spec, stream, worker)
 			}
 		}(sh, r)
 	}
@@ -211,7 +223,7 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 			sh := newShard(perShardCap)
 			go func(sh *Shard) {
 				defer wg.Done()
-				pacedWriter(man, sh, base, stop, spec, writeStream)
+				pacedWriter(man, sh, base, stop, windowNs, spec, writeStream)
 			}(sh)
 		}
 	case ModeClosedLoop, ModePublicationOnly:
@@ -220,7 +232,7 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 			sh := newShard(perShardCap)
 			go func(sh *Shard) {
 				defer wg.Done()
-				unpacedWriter(man, sh, stop, spec, writeStream)
+				unpacedWriter(man, sh, stop, base, windowNs, spec, writeStream)
 			}(sh)
 		}
 	}
@@ -244,15 +256,22 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	}
 
 	// Publication injector: one release per scheduled instant, never blocking.
-	// It is deliberately not cancellable: every release target lies inside the
-	// window, so the loop is bounded by `events` and finishes with the window.
-	if events > 0 {
+	// Midpoint schedule: intended event timestamps are strictly within [0, window).
+	// E.g. for N=20, W=10s: 250ms, 750ms, ..., 9750ms (< 10000ms).
+	var releasedEvents int64
+	if targetEvents > 0 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			interval := window.Nanoseconds() / int64(events)
-			for i := 1; i <= events; i++ {
-				SleepUntilElapsed(base, int64(i)*interval)
+			for i := 0; i < targetEvents; i++ {
+				intended := (int64(i)*2 + 1) * windowNs / (int64(targetEvents) * 2)
+				SleepUntilElapsed(base, intended)
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				atomic.AddInt64(&releasedEvents, 1)
 				rec.MarkReleased(keysPerEvent)
 				man.ReleaseOneFlush()
 			}
@@ -265,9 +284,8 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	res.Timestamps.MeasuredWindowNs = measured
 	res.Timestamps.FinishISO = time.Now().UTC().Format(time.RFC3339Nano)
 
-	// Let every released publication finish before reading the event log, so the
-	// log is complete and the last event is not lost to a scheduling race.
-	if events > 0 {
+	// In physical mode, drain the released publications so the event log is complete.
+	if targetEvents > 0 {
 		man.DisableFlushInjectionGate()
 		if err := man.WaitForFlushCompletion(); err != nil && res.Error == "" {
 			res.Status = "FAILED"
@@ -286,6 +304,15 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	res.LatencyRead = Stats(service)
 	res.LatencyResponse = Stats(resp)
 
+	serviceLate := MergeSamplesLate(shards)
+	respLate := MergeResponsesLate(shards)
+	if len(serviceLate) > 0 {
+		res.LatencyReadLate = Stats(serviceLate)
+	}
+	if len(respLate) > 0 {
+		res.LatencyResponseLate = Stats(respLate)
+	}
+
 	secs := float64(measured) / 1e9
 	if secs <= 0 {
 		secs = 1e-9
@@ -295,36 +322,62 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		res.Operations.ReadOpsScheduled = tot.ReadsAttempted
 		res.Operations.ReadOpsIssued = tot.ReadsAttempted
 	}
+	res.Operations.ReadOpsCompletedInWindow = tot.ReadsCompletedInWindow
+	res.Operations.ReadOpsCompletedLate = tot.ReadsCompletedLate
 	res.Operations.ReadOpsCompleted = tot.ReadsCompleted
 	res.Operations.ReadOpsAbandoned = tot.Abandoned
 	if mode == ModeOpenLoop {
-		res.Operations.ReadOpsUnissued = res.Operations.ReadOpsScheduled - res.Operations.ReadOpsIssued - res.Operations.ReadOpsAbandoned
+		res.Operations.ReadOpsUnissued = res.Operations.ReadOpsScheduled - tot.ReadsCompletedInWindow - tot.ReadsCompletedLate - tot.Abandoned
 	}
 	res.Operations.ActualHitCount = tot.ReadsHit
 	res.Operations.ActualMissCount = tot.ReadsMiss
 	res.Operations.WriteOpsAttempted = tot.WritesAttempted
+	res.Operations.WriteOpsCompletedInWindow = tot.WritesCompletedInWindow
+	res.Operations.WriteOpsCompletedLate = tot.WritesCompletedLate
 	res.Operations.WriteOpsCompleted = tot.WritesCompleted
 	res.Operations.ErrorOpsCount = tot.ReadsError + tot.WritesError
 	res.Operations.ValidationErrorCount = tot.ValidationErrors
 
+	// Throughput is calculated strictly using completions inside the measured window.
 	res.Throughput = ThroughputInfo{
-		ReadOpsPerSec:  float64(tot.ReadsCompleted) / secs,
-		WriteOpsPerSec: float64(tot.WritesCompleted) / secs,
-		TotalOpsPerSec: float64(tot.ReadsCompleted+tot.WritesCompleted) / secs,
+		ReadOpsPerSec:  float64(tot.ReadsCompletedInWindow) / secs,
+		WriteOpsPerSec: float64(tot.WritesCompletedInWindow) / secs,
+		TotalOpsPerSec: float64(tot.ReadsCompletedInWindow+tot.WritesCompletedInWindow) / secs,
+	}
+
+	finalFrozen := man.PendingFlushes()
+	finalSSTables := man.ActiveSSTableCount()
+	flushesCompleted := man.FlushesCompleted() - initialFlushes
+	compactionsCompleted := man.CompactionsCompleted() - initialCompactions
+
+	var topoNote string
+	if isPhysical {
+		topoNote = fmt.Sprintf("physical_pub: frozen %d->%d, sstables %d->%d, realized %d/%d",
+			initialFrozen, finalFrozen, initialSSTables, finalSSTables, flushesCompleted, targetEvents)
+	} else if spec.PublicationMode == string(PubNone) || spec.PublicationMode == "none" {
+		topoNote = fmt.Sprintf("none_control: frozen %d->%d (static), sstables %d->%d (static), realized 0/0",
+			initialFrozen, finalFrozen, initialSSTables, finalSSTables)
 	}
 
 	res.LSMDiagnostics = Diagnostics{
-		InitialSSTables:       initialSSTables,
-		MeasuredFlushes:       man.FlushesCompleted(),
-		MeasuredCompactions:   man.CompactionsCompleted(),
-		MeasuredSSTableReads:  man.SSTablePointReads(),
-		MeasuredMemtableReads: man.MemtablePointReads(),
-		SnapshotSeq:           man.SnapshotSeq(),
-		ActiveSnapshotPins:    man.ActiveSnapshotPins(),
-		RetiredSnapshots:      man.RetiredSnapshotCount(),
-		PendingCleanupCount:   man.PendingCleanupCount(),
-		LivePhysicalReaders:   man.LivePhysicalReaders(),
-		PendingFlushesAtEnd:   man.PendingFlushes(),
+		InitialSSTables:           initialSSTables,
+		FinalSSTables:             finalSSTables,
+		InitialFrozenMemtables:    initialFrozen,
+		FinalFrozenMemtables:      finalFrozen,
+		PublicationEventsTarget:   targetEvents,
+		PublicationEventsReleased: int(atomic.LoadInt64(&releasedEvents)),
+		PublicationEventsRealized: flushesCompleted,
+		TopologyNote:              topoNote,
+		MeasuredFlushes:           flushesCompleted,
+		MeasuredCompactions:       compactionsCompleted,
+		MeasuredSSTableReads:      man.SSTablePointReads(),
+		MeasuredMemtableReads:     man.MemtablePointReads(),
+		SnapshotSeq:               man.SnapshotSeq(),
+		ActiveSnapshotPins:        man.ActiveSnapshotPins(),
+		RetiredSnapshots:          man.RetiredSnapshotCount(),
+		PendingCleanupCount:       man.PendingCleanupCount(),
+		LivePhysicalReaders:       man.LivePhysicalReaders(),
+		PendingFlushesAtEnd:       man.PendingFlushes(),
 	}
 
 	if rec != nil {
@@ -461,9 +514,14 @@ func preFreeze(man *lsmengine.Manager, spec Spec, events int) error {
 	return nil
 }
 
-func recordRead(sh *Shard, v string, err error, expectHit bool) {
+func recordRead(sh *Shard, v string, err error, expectHit bool, inWindow bool) {
 	sh.ReadsAttempted++
 	sh.Issued++
+	if inWindow {
+		sh.ReadsCompletedInWindow++
+	} else {
+		sh.ReadsCompletedLate++
+	}
 	switch {
 	case err == nil:
 		sh.ReadsCompleted++
@@ -486,7 +544,7 @@ func recordRead(sh *Shard, v string, err error, expectHit bool) {
 	}
 }
 
-func closedLoopReader(man *lsmengine.Manager, sh *Shard, base harness.PrecisionTime, stop <-chan struct{}, spec Spec, stream *KeyStream, worker int) {
+func closedLoopReader(man *lsmengine.Manager, sh *Shard, base harness.PrecisionTime, stop <-chan struct{}, windowNs int64, spec Spec, stream *KeyStream, worker int) {
 	_ = worker
 	i := int64(0)
 	for {
@@ -498,15 +556,22 @@ func closedLoopReader(man *lsmengine.Manager, sh *Shard, base harness.PrecisionT
 		key, expect := stream.At(i)
 		t0 := ElapsedNs(base)
 		v, err := man.Get(key, math.MaxUint64)
-		d := ElapsedNs(base) - t0
-		sh.RecordService(d)
-		sh.RecordIssue(t0, t0, t0+d)
-		recordRead(sh, v, err, expect)
+		done := ElapsedNs(base)
+		d := done - t0
+		inWindow := done <= windowNs
+		if inWindow {
+			sh.RecordService(d)
+			sh.RecordIssue(t0, t0, done)
+		} else {
+			sh.RecordServiceLate(d)
+			sh.RecordIssueLate(t0, t0, done)
+		}
+		recordRead(sh, v, err, expect, inWindow)
 		i++
 	}
 }
 
-func unpacedWriter(man *lsmengine.Manager, sh *Shard, stop <-chan struct{}, spec Spec, stream *KeyStream) {
+func unpacedWriter(man *lsmengine.Manager, sh *Shard, stop <-chan struct{}, base harness.PrecisionTime, windowNs int64, spec Spec, stream *KeyStream) {
 	i := int64(0)
 	for {
 		select {
@@ -527,15 +592,20 @@ func unpacedWriter(man *lsmengine.Manager, sh *Shard, stop <-chan struct{}, spec
 			sh.WritesError++
 		} else {
 			sh.WritesCompleted++
+			done := ElapsedNs(base)
+			if done <= windowNs {
+				sh.WritesCompletedInWindow++
+			} else {
+				sh.WritesCompletedLate++
+			}
 		}
 		i++
 	}
 }
 
 // pacedWriter issues writes on an absolute QPC schedule at W_paced.
-func pacedWriter(man *lsmengine.Manager, sh *Shard, base harness.PrecisionTime, stop <-chan struct{}, spec Spec, stream *KeyStream) {
+func pacedWriter(man *lsmengine.Manager, sh *Shard, base harness.PrecisionTime, stop <-chan struct{}, windowNs int64, spec Spec, stream *KeyStream) {
 	periodNs := int64(float64(time.Second) / spec.PacedWriteRatePerSec)
-	windowNs := int64(spec.MeasurementDurationMs) * int64(time.Millisecond)
 	i := int64(0)
 	for {
 		target := i * periodNs
@@ -560,6 +630,12 @@ func pacedWriter(man *lsmengine.Manager, sh *Shard, base harness.PrecisionTime, 
 				sh.WritesError++
 			} else {
 				sh.WritesCompleted++
+				done := ElapsedNs(base)
+				if done <= windowNs {
+					sh.WritesCompletedInWindow++
+				} else {
+					sh.WritesCompletedLate++
+				}
 			}
 		}
 		i++
@@ -569,7 +645,7 @@ func pacedWriter(man *lsmengine.Manager, sh *Shard, base harness.PrecisionTime, 
 // openLoopWorker claims arrivals from the shared schedule and records
 // scheduled/issued/abandoned accounting. The one atomic on this path is the
 // claim counter (one per request, ~500/s), not a per-sample lock.
-func openLoopWorker(man *lsmengine.Manager, sh *Shard, sched []Arrival, base harness.PrecisionTime, stop <-chan struct{}, claim *int64, wMaxNs int64, spec Spec, stream *KeyStream) {
+func openLoopWorker(man *lsmengine.Manager, sh *Shard, sched []Arrival, base harness.PrecisionTime, stop <-chan struct{}, claim *int64, wMaxNs int64, windowNs int64, spec Spec, stream *KeyStream) {
 	for {
 		select {
 		case <-stop:
@@ -588,14 +664,26 @@ func openLoopWorker(man *lsmengine.Manager, sh *Shard, sched []Arrival, base har
 		}
 		SleepUntilElapsed(base, a.IntendedNs)
 		issued := ElapsedNs(base)
+		// Recheck lateness immediately after waking, before starting the request.
+		if issued > a.IntendedNs+wMaxNs {
+			sh.Abandoned++
+			continue
+		}
 		if late := issued - a.IntendedNs; late > sh.MaxLatenessNs {
 			sh.MaxLatenessNs = late
 		}
 		v, err := man.Get(a.Key, math.MaxUint64)
 		done := ElapsedNs(base)
-		sh.RecordService(done - issued)
-		sh.RecordResponse(done - a.IntendedNs)
-		sh.RecordIssue(a.IntendedNs, issued, done)
-		recordRead(sh, v, err, a.ExpectHit)
+		inWindow := done <= windowNs
+		if inWindow {
+			sh.RecordService(done - issued)
+			sh.RecordResponse(done - a.IntendedNs)
+			sh.RecordIssue(a.IntendedNs, issued, done)
+		} else {
+			sh.RecordServiceLate(done - issued)
+			sh.RecordResponseLate(done - a.IntendedNs)
+			sh.RecordIssueLate(a.IntendedNs, issued, done)
+		}
+		recordRead(sh, v, err, a.ExpectHit, inWindow)
 	}
 }

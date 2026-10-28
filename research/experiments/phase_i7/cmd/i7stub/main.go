@@ -45,6 +45,11 @@ type envelope struct {
 			WriteOpsCompleted int64 `json:"write_ops_completed"`
 			ValidationErrorCount int64 `json:"validation_error_count"`
 		} `json:"operations"`
+		Throughput struct {
+			ReadOpsPerSec  float64 `json:"read_ops_per_sec"`
+			WriteOpsPerSec float64 `json:"write_ops_per_sec"`
+			TotalOpsPerSec float64 `json:"total_ops_per_sec"`
+		} `json:"throughput"`
 	} `json:"result"`
 	DataDirRemoved bool `json:"data_dir_removed"`
 }
@@ -131,6 +136,9 @@ func main() {
 		env.Result.Timestamps.MeasuredWindowNs = 1000000
 		env.Result.Operations.ReadOpsCompleted = 10
 		env.Result.Operations.WriteOpsCompleted = 1
+		env.Result.Throughput.ReadOpsPerSec = 1000.0
+		env.Result.Throughput.WriteOpsPerSec = 100.0
+		env.Result.Throughput.TotalOpsPerSec = 1100.0
 	}
 	env.DataDirRemoved = true
 	if s.DataDir != "" {

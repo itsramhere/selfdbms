@@ -93,7 +93,8 @@ function New-Approval {
         [string]$RunlistHash,
         [string]$RunnerHash,
         [int]$MaxTrials = 20,
-        [bool]$AllowDirty = $true
+        [bool]$AllowDirty = $true,
+        [string]$Scope = ''
     )
     $obj = [ordered]@{
         campaign_id      = 'I7_STRENGTHENING_V1'
@@ -102,11 +103,11 @@ function New-Approval {
         approved         = $true
         approved_by      = 'orchestration-test'
         approved_at      = (Get-Date).ToUniversalTime().ToString('o')
-        scope            = 'SYNTHETIC - orchestration test only, no engine trials'
+        scope            = if ($Scope) { $Scope } else { 'SYNTHETIC - orchestration test only, no engine trials' }
         runlist_sha256   = $RunlistHash
         runner_sha256    = $RunnerHash
         allowed_blocks   = $AllowedBlocks
-        allowed_phases   = @('preflight', 'confirmatory')
+        allowed_phases   = if ($Scope -eq 'calibration') { @('calibration') } else { @('preflight', 'confirmatory') }
         max_trials       = $MaxTrials
         allow_dirty      = $AllowDirty
     }
@@ -314,6 +315,63 @@ Record 'S9-gate-mode' (($r.ExitCode -ne 0) -and ($r.Out -match 'requires G3')) '
 
 $r = Invoke-Driver -Root $root3 -ArgList @('-Campaign', '-RunnerOverride', $script:Stub)
 Record 'S9-override-guard' (($r.ExitCode -ne 0) -and ($r.Out -match 'TestMode')) 'runner override without -TestMode refused'
+
+# ---------------------------------------------------------------------------
+# S10: calibration idempotency, restart-safety, scope binding, and budget
+# ---------------------------------------------------------------------------
+Write-Host ''
+Write-Host 'S10: calibration correctness' -ForegroundColor Cyan
+$rootCal = New-Root 's10_cal'
+$prepCal = Prepare-Root $rootCal
+
+# S10-scope-refusal: Preflight approval (scope not matching calibration) must be refused by -Calibrate
+$null = New-Approval -Root $rootCal -Gate 'G3' -AllowedBlocks @('PF') -RunlistHash $prepCal.Hash -RunnerHash $stubHash -Scope 'preflight'
+$r = Invoke-Driver -Root $rootCal -ArgList @('-Calibrate', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
+Record 'S10-cal-scope-refusal' (($r.ExitCode -ne 0) -and ($r.Out -match 'calibration requires scope')) 'calibration rejects non-calibration approval scope'
+
+# Generate calibration approval template with -Scope calibration
+$r = Invoke-Driver -Root $rootCal -ArgList @('-WriteApprovalTemplate', '-Gate', 'G3', '-Scope', 'calibration')
+$calTpl = Join-Path $rootCal 'APPROVAL.template.G3.calibration.json'
+Record 'S10-cal-template' (($r.ExitCode -eq 0) -and (Test-Path -LiteralPath $calTpl)) 'calibration approval template generated'
+
+# Approve for calibration
+$null = New-Approval -Root $rootCal -Gate 'G3' -AllowedBlocks @('PF') -RunlistHash $prepCal.Hash -RunnerHash $stubHash -Scope 'calibration'
+
+# Run calibration (all 9 runs with stub runner)
+$env:I7_STUB_MODE = 'ok'
+$r = Invoke-Driver -Root $rootCal -ArgList @('-Calibrate', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
+$calLedger = Join-Path $rootCal 'calibration\calibration_ledger.jsonl'
+$calStarted = @(Read-Lines $calLedger | Where-Object { $_.event -eq 'STARTED' })
+$calFinished = @(Read-Lines $calLedger | Where-Object { $_.event -eq 'FINISHED' -and $_.status -eq 'SUCCESS' })
+$calJson = Join-Path $rootCal 'calibration.json'
+Record 'S10-cal-run' (($r.ExitCode -eq 0) -and ($calFinished.Count -eq 9) -and (Test-Path -LiteralPath $calJson)) ('calibration completed: finished=' + $calFinished.Count)
+
+# Idempotency: Invoking -Calibrate again must execute 0 new processes and return immediately
+$beforeLines = @(Read-Lines $calLedger).Count
+$r = Invoke-Driver -Root $rootCal -ArgList @('-Calibrate', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
+$afterLines = @(Read-Lines $calLedger).Count
+Record 'S10-cal-idempotent' (($r.ExitCode -eq 0) -and ($afterLines -eq $beforeLines) -and ($r.Out -match 'already complete')) 'second -Calibrate is idempotent (0 new runs)'
+
+# Restart-safety: Simulate crash after 4 runs in a fresh root
+$rootCalCrash = New-Root 's10_cal_crash'
+$prepCalCrash = Prepare-Root $rootCalCrash
+$null = New-Approval -Root $rootCalCrash -Gate 'G3' -AllowedBlocks @('PF') -RunlistHash $prepCalCrash.Hash -RunnerHash $stubHash -Scope 'calibration'
+$calDirCrash = Join-Path $rootCalCrash 'calibration'
+New-Item -ItemType Directory -Force -Path $calDirCrash | Out-Null
+$crashLedger = Join-Path $calDirCrash 'calibration_ledger.jsonl'
+$preArms = @('A', 'A', 'A', 'AMIN')
+$preReps = @(1, 2, 3, 1)
+for ($idx = 0; $idx -lt 4; $idx++) {
+    $a = $preArms[$idx]; $rep = $preReps[$idx]
+    $tid = ('cal_{0}_{1:D2}' -f $a, $rep)
+    [System.IO.File]::AppendAllText($crashLedger, ((@{ event = 'STARTED'; trial_id = $tid; arm = $a; rep = $rep } | ConvertTo-Json -Compress) + "`n"))
+    [System.IO.File]::AppendAllText($crashLedger, ((@{ event = 'FINISHED'; trial_id = $tid; arm = $a; rep = $rep; status = 'SUCCESS' } | ConvertTo-Json -Compress) + "`n"))
+    $fakeResult = @{ status = 'SUCCESS'; result = @{ throughput = @{ read_ops_per_sec = 1000.0 } } }
+    [System.IO.File]::WriteAllText((Join-Path $calDirCrash ($tid + '.json')), ($fakeResult | ConvertTo-Json -Compress))
+}
+$r = Invoke-Driver -Root $rootCalCrash -ArgList @('-Calibrate', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
+$crashFinished = @(Read-Lines $crashLedger | Where-Object { $_.event -eq 'FINISHED' -and $_.status -eq 'SUCCESS' })
+Record 'S10-cal-restart-safe' (($r.ExitCode -eq 0) -and ($crashFinished.Count -eq 9)) ('resumed partial calibration: total success = ' + $crashFinished.Count)
 
 # ---------------------------------------------------------------------------
 # Summary

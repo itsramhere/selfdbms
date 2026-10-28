@@ -136,24 +136,29 @@ type TimestampInfo struct {
 }
 
 // OperationCounts extends the frozen counters with the scheduled/issued/
-// abandoned/unissued accounting required for open-loop measurement.
+// abandoned/unissued accounting required for open-loop measurement, and
+// distinguishes completions in-window from late completions during drain.
 type OperationCounts struct {
-	ReadOpsScheduled       int64 `json:"read_ops_scheduled"`
-	ReadOpsIssued          int64 `json:"read_ops_issued"`
-	ReadOpsCompleted       int64 `json:"read_ops_completed"`
-	ReadOpsAbandoned       int64 `json:"read_ops_abandoned"`
-	ReadOpsUnissued        int64 `json:"read_ops_unissued"`
-	ExpectedHitCount       int64 `json:"expected_hit_count"`
-	ExpectedMissCount      int64 `json:"expected_miss_count"`
-	ActualHitCount         int64 `json:"actual_hit_count"`
-	ActualMissCount        int64 `json:"actual_miss_count"`
-	ActualMemtableHitCount int64 `json:"actual_memtable_hit_count"`
-	ActualSSTableHitCount  int64 `json:"actual_sstable_hit_count"`
-	WriteOpsAttempted      int64 `json:"write_ops_attempted"`
-	WriteOpsCompleted      int64 `json:"write_ops_completed"`
-	ErrorOpsCount          int64 `json:"error_ops_count"`
-	ValidationErrorCount   int64 `json:"validation_error_count"`
-	WorkerSeeds            map[string]int64 `json:"worker_seeds,omitempty"`
+	ReadOpsScheduled         int64 `json:"read_ops_scheduled"`
+	ReadOpsIssued            int64 `json:"read_ops_issued"`
+	ReadOpsCompletedInWindow int64 `json:"read_ops_completed_in_window"`
+	ReadOpsCompletedLate     int64 `json:"read_ops_completed_late"`
+	ReadOpsCompleted         int64 `json:"read_ops_completed"`
+	ReadOpsAbandoned         int64 `json:"read_ops_abandoned"`
+	ReadOpsUnissued          int64 `json:"read_ops_unissued"`
+	ExpectedHitCount         int64 `json:"expected_hit_count"`
+	ExpectedMissCount        int64 `json:"expected_miss_count"`
+	ActualHitCount           int64 `json:"actual_hit_count"`
+	ActualMissCount          int64 `json:"actual_miss_count"`
+	ActualMemtableHitCount   int64 `json:"actual_memtable_hit_count"`
+	ActualSSTableHitCount    int64 `json:"actual_sstable_hit_count"`
+	WriteOpsAttempted        int64 `json:"write_ops_attempted"`
+	WriteOpsCompletedInWindow int64 `json:"write_ops_completed_in_window"`
+	WriteOpsCompletedLate    int64 `json:"write_ops_completed_late"`
+	WriteOpsCompleted        int64 `json:"write_ops_completed"`
+	ErrorOpsCount            int64 `json:"error_ops_count"`
+	ValidationErrorCount     int64 `json:"validation_error_count"`
+	WorkerSeeds              map[string]int64 `json:"worker_seeds,omitempty"`
 }
 
 // ThroughputInfo mirrors the frozen schema.
@@ -166,21 +171,27 @@ type ThroughputInfo struct {
 // Diagnostics carries engine activity plus the accounting needed to keep
 // per-trial work visible (audit AF-4: composition shifts must not be hidden).
 type Diagnostics struct {
-	InitialSSTables       int    `json:"initial_sstables"`
-	FinalSSTables         int    `json:"final_sstables"`
-	MeasuredFlushes       uint64 `json:"measured_flushes"`
-	MeasuredCompactions   uint64 `json:"measured_compactions"`
-	MeasuredSSTableReads  uint64 `json:"measured_sstable_point_reads"`
-	MeasuredMemtableReads uint64 `json:"measured_memtable_point_reads"`
-	SnapshotSeq           uint64 `json:"snapshot_seq"`
-	ActiveSnapshotPins    int64  `json:"active_snapshot_pins"`
-	RetiredSnapshots      int    `json:"retired_snapshots_count"`
-	PendingCleanupCount   int    `json:"pending_cleanup_count"`
-	LivePhysicalReaders   int    `json:"live_physical_readers"`
+	InitialSSTables           int    `json:"initial_sstables"`
+	FinalSSTables             int    `json:"final_sstables"`
+	InitialFrozenMemtables    int    `json:"initial_frozen_memtables"`
+	FinalFrozenMemtables      int    `json:"final_frozen_memtables"`
+	PublicationEventsTarget   int    `json:"publication_events_target"`
+	PublicationEventsReleased int    `json:"publication_events_released"`
+	PublicationEventsRealized uint64 `json:"publication_events_realized"`
+	TopologyNote              string `json:"topology_note,omitempty"`
+	MeasuredFlushes           uint64 `json:"measured_flushes"`
+	MeasuredCompactions       uint64 `json:"measured_compactions"`
+	MeasuredSSTableReads      uint64 `json:"measured_sstable_point_reads"`
+	MeasuredMemtableReads     uint64 `json:"measured_memtable_point_reads"`
+	SnapshotSeq               uint64 `json:"snapshot_seq"`
+	ActiveSnapshotPins        int64  `json:"active_snapshot_pins"`
+	RetiredSnapshots          int    `json:"retired_snapshots_count"`
+	PendingCleanupCount       int    `json:"pending_cleanup_count"`
+	LivePhysicalReaders       int    `json:"live_physical_readers"`
 	// New in I7.
-	PendingFlushesAtEnd   int   `json:"pending_flushes_at_end"`
-	MaxOutstandingLeases  int32 `json:"max_outstanding_leases"`
-	DataDirRemoved        bool  `json:"data_dir_removed"`
+	PendingFlushesAtEnd       int   `json:"pending_flushes_at_end"`
+	MaxOutstandingLeases      int32 `json:"max_outstanding_leases"`
+	DataDirRemoved            bool  `json:"data_dir_removed"`
 }
 
 // EventRecord is one scheduled or observed publication.
@@ -233,9 +244,11 @@ type TrialResult struct {
 	Timestamps      TimestampInfo         `json:"timestamps"`
 	Operations      OperationCounts       `json:"operations"`
 	Throughput      ThroughputInfo        `json:"throughput"`
-	LatencyRead     LatencyStats          `json:"latency_read_nanos"`
-	LatencyResponse LatencyStats          `json:"latency_response_nanos"`
-	LSMDiagnostics  Diagnostics           `json:"lsm_diagnostics"`
+	LatencyRead         LatencyStats          `json:"latency_read_nanos"`
+	LatencyResponse     LatencyStats          `json:"latency_response_nanos"`
+	LatencyReadLate     LatencyStats          `json:"latency_read_late_nanos,omitempty"`
+	LatencyResponseLate LatencyStats          `json:"latency_response_late_nanos,omitempty"`
+	LSMDiagnostics      Diagnostics           `json:"lsm_diagnostics"`
 	Events          []EventRecord         `json:"publication_events,omitempty"`
 	EventCond       []EventConditioned    `json:"event_conditioned,omitempty"`
 	FixtureManifest harness.FixtureManifest `json:"fixture_manifest"`
