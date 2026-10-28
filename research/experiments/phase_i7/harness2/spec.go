@@ -171,38 +171,41 @@ type ThroughputInfo struct {
 // Diagnostics carries engine activity plus the accounting needed to keep
 // per-trial work visible (audit AF-4: composition shifts must not be hidden).
 type Diagnostics struct {
-	InitialSSTables           int    `json:"initial_sstables"`
-	FinalSSTables             int    `json:"final_sstables"`
-	InitialFrozenMemtables    int    `json:"initial_frozen_memtables"`
-	FinalFrozenMemtables      int    `json:"final_frozen_memtables"`
-	PublicationEventsTarget   int    `json:"publication_events_target"`
-	PublicationEventsReleased int    `json:"publication_events_released"`
-	PublicationEventsRealized uint64 `json:"publication_events_realized"`
-	TopologyNote              string `json:"topology_note,omitempty"`
-	MeasuredFlushes           uint64 `json:"measured_flushes"`
-	MeasuredCompactions       uint64 `json:"measured_compactions"`
-	MeasuredSSTableReads      uint64 `json:"measured_sstable_point_reads"`
-	MeasuredMemtableReads     uint64 `json:"measured_memtable_point_reads"`
-	SnapshotSeq               uint64 `json:"snapshot_seq"`
-	ActiveSnapshotPins        int64  `json:"active_snapshot_pins"`
-	RetiredSnapshots          int    `json:"retired_snapshots_count"`
-	PendingCleanupCount       int    `json:"pending_cleanup_count"`
-	LivePhysicalReaders       int    `json:"live_physical_readers"`
+	InitialSSTables                   int    `json:"initial_sstables"`
+	FinalSSTables                     int    `json:"final_sstables"`
+	InitialFrozenMemtables            int    `json:"initial_frozen_memtables"`
+	FinalFrozenMemtables              int    `json:"final_frozen_memtables"`
+	PublicationEventsTarget           int    `json:"publication_events_target"`
+	PublicationEventsReleased         int    `json:"publication_events_released"`
+	PublicationEventsRealizedInWindow int    `json:"publication_events_realized_in_window"`
+	PublicationEventsRealizedLate     int    `json:"publication_events_realized_late"`
+	PublicationEventsRealized         uint64 `json:"publication_events_realized"`
+	TopologyNote                      string `json:"topology_note,omitempty"`
+	MeasuredFlushes                   uint64 `json:"measured_flushes"`
+	MeasuredCompactions               uint64 `json:"measured_compactions"`
+	MeasuredSSTableReads              uint64 `json:"measured_sstable_point_reads"`
+	MeasuredMemtableReads             uint64 `json:"measured_memtable_point_reads"`
+	SnapshotSeq                       uint64 `json:"snapshot_seq"`
+	ActiveSnapshotPins                int64  `json:"active_snapshot_pins"`
+	RetiredSnapshots                  int    `json:"retired_snapshots_count"`
+	PendingCleanupCount               int    `json:"pending_cleanup_count"`
+	LivePhysicalReaders               int    `json:"live_physical_readers"`
 	// New in I7.
-	PendingFlushesAtEnd       int   `json:"pending_flushes_at_end"`
-	MaxOutstandingLeases      int32 `json:"max_outstanding_leases"`
-	DataDirRemoved            bool  `json:"data_dir_removed"`
+	PendingFlushesAtEnd               int   `json:"pending_flushes_at_end"`
+	MaxOutstandingLeases              int32 `json:"max_outstanding_leases"`
+	DataDirRemoved                    bool  `json:"data_dir_removed"`
 }
 
 // EventRecord is one scheduled or observed publication.
 type EventRecord struct {
-	Index        int    `json:"index"`
-	ReleasedNs   int64  `json:"released_ns"`
-	BeginNs      int64  `json:"begin_ns"`
-	EndNs        int64  `json:"end_ns"`
-	HoldNs       int64  `json:"hold_ns"`
-	BuildNs      int64  `json:"build_ns"`
-	MemtableKeys int    `json:"memtable_keys"`
+	Index        int   `json:"index"`
+	ReleasedNs   int64 `json:"released_ns"`
+	BeginNs      int64 `json:"begin_ns"`
+	EndNs        int64 `json:"end_ns"`
+	HoldNs       int64 `json:"hold_ns"`
+	BuildNs      int64 `json:"build_ns"`
+	MemtableKeys int   `json:"memtable_keys"`
+	InWindow     bool  `json:"in_window"`
 }
 
 // EventConditioned summarises reads whose execution overlapped an event window.
@@ -250,6 +253,7 @@ type TrialResult struct {
 	LatencyResponseLate LatencyStats          `json:"latency_response_late_nanos,omitempty"`
 	LSMDiagnostics      Diagnostics           `json:"lsm_diagnostics"`
 	Events          []EventRecord         `json:"publication_events,omitempty"`
+	EventsLate      []EventRecord         `json:"publication_events_late,omitempty"`
 	EventCond       []EventConditioned    `json:"event_conditioned,omitempty"`
 	FixtureManifest harness.FixtureManifest `json:"fixture_manifest"`
 	Status          string                `json:"status"`

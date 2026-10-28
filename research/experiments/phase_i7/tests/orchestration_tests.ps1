@@ -346,11 +346,41 @@ $calFinished = @(Read-Lines $calLedger | Where-Object { $_.event -eq 'FINISHED' 
 $calJson = Join-Path $rootCal 'calibration.json'
 Record 'S10-cal-run' (($r.ExitCode -eq 0) -and ($calFinished.Count -eq 9) -and (Test-Path -LiteralPath $calJson)) ('calibration completed: finished=' + $calFinished.Count)
 
+# Verify balanced Latin-square seeds and execution order across arms
+$specA1 = Get-Content -Raw (Join-Path $rootCal 'work\specs\cal_A_01.json') | ConvertFrom-Json
+$specAmin1 = Get-Content -Raw (Join-Path $rootCal 'work\specs\cal_AMIN_01.json') | ConvertFrom-Json
+$specB1 = Get-Content -Raw (Join-Path $rootCal 'work\specs\cal_B_01.json') | ConvertFrom-Json
+$seedsMatchTriplet1 = ($specA1.seed -eq $specAmin1.seed) -and ($specAmin1.seed -eq $specB1.seed)
+$orderCorrect = ($specA1.order_position -eq 1) -and ($specAmin1.order_position -eq 2) -and ($specB1.order_position -eq 3)
+Record 'S10-cal-seeds-and-order' ($seedsMatchTriplet1 -and $orderCorrect) ('triplet 1 shared seed=' + $specA1.seed + ' balanced orders=(1,2,3)')
+
 # Idempotency: Invoking -Calibrate again must execute 0 new processes and return immediately
 $beforeLines = @(Read-Lines $calLedger).Count
 $r = Invoke-Driver -Root $rootCal -ArgList @('-Calibrate', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
 $afterLines = @(Read-Lines $calLedger).Count
 Record 'S10-cal-idempotent' (($r.ExitCode -eq 0) -and ($afterLines -eq $beforeLines) -and ($r.Out -match 'already complete')) 'second -Calibrate is idempotent (0 new runs)'
+
+# Incomplete calibration refusal: if any cell is missing, -Calibrate must fail closed and refuse to produce calibration.json
+$rootCalPartial = New-Root 's10_cal_partial'
+$prepCalPartial = Prepare-Root $rootCalPartial
+$null = New-Approval -Root $rootCalPartial -Gate 'G3' -AllowedBlocks @('PF') -RunlistHash $prepCalPartial.Hash -RunnerHash $stubHash -Scope 'calibration'
+$calDirPartial = Join-Path $rootCalPartial 'calibration'
+New-Item -ItemType Directory -Force -Path $calDirPartial | Out-Null
+$partialLedger = Join-Path $calDirPartial 'calibration_ledger.jsonl'
+# Populate only 8 of 9 cells (omit cal_AMIN_03)
+$allPlanCells = @('cal_A_01','cal_AMIN_01','cal_B_01','cal_AMIN_02','cal_B_02','cal_A_02','cal_B_03','cal_A_03')
+foreach ($cellTid in $allPlanCells) {
+    [System.IO.File]::AppendAllText($partialLedger, ((@{ event = 'STARTED'; trial_id = $cellTid } | ConvertTo-Json -Compress) + "`n"))
+    [System.IO.File]::AppendAllText($partialLedger, ((@{ event = 'FINISHED'; trial_id = $cellTid; status = 'SUCCESS' } | ConvertTo-Json -Compress) + "`n"))
+    $fake = @{ status = 'SUCCESS'; result = @{ throughput = @{ read_ops_per_sec = 1200.0 } } }
+    [System.IO.File]::WriteAllText((Join-Path $calDirPartial ($cellTid + '.json')), ($fake | ConvertTo-Json -Compress))
+}
+# With stub mode set to fail, the missing 9th run will fail
+$env:I7_STUB_MODE = 'fail'
+$r = Invoke-Driver -Root $rootCalPartial -ArgList @('-Calibrate', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
+$calJsonPartial = Join-Path $rootCalPartial 'calibration.json'
+Record 'S10-cal-incomplete-refusal' (($r.ExitCode -ne 0) -and (-not (Test-Path -LiteralPath $calJsonPartial)) -and ($r.Out -match 'calibration incomplete')) 'calibration refuses partial completion (no calibration.json produced)'
+$env:I7_STUB_MODE = 'ok'
 
 # Restart-safety: Simulate crash after 4 runs in a fresh root
 $rootCalCrash = New-Root 's10_cal_crash'

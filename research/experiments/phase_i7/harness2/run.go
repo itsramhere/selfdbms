@@ -381,8 +381,16 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	}
 
 	if rec != nil {
-		res.Events = rec.Events()
+		inWin, lateEvents := rec.Events(windowNs)
+		res.Events = inWin
+		res.EventsLate = lateEvents
 		res.EventCond = ConditionEvents(res.Events, MergeIssues(shards), eventDeltaNs)
+		res.LSMDiagnostics.PublicationEventsRealizedInWindow = len(inWin)
+		res.LSMDiagnostics.PublicationEventsRealizedLate = len(lateEvents)
+		if isPhysical && len(inWin) != targetEvents && res.Error == "" {
+			res.Status = "FAILED"
+			res.Error = fmt.Sprintf("E2 publication timing: expected %d in-window realized events, got %d (%d late)", targetEvents, len(inWin), len(lateEvents))
+		}
 	}
 
 	// Shutdown. A non-nil error is a failed trial: for A-min a lease drain

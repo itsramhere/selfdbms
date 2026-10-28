@@ -101,13 +101,20 @@ func (r *EventRecorder) OnFlushPublishEnd(err error) {
 // OnFlushComplete implements lsmengine.FlushObserver.
 func (r *EventRecorder) OnFlushComplete(err error) {}
 
-// Events returns a copy of the recorded events.
-func (r *EventRecorder) Events() []EventRecord {
+// Events partitions recorded events into in-window (EndNs <= windowNs) and late (EndNs > windowNs).
+func (r *EventRecorder) Events(windowNs int64) (inWindow []EventRecord, late []EventRecord) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := make([]EventRecord, len(r.events))
-	copy(out, r.events)
-	return out
+	for _, e := range r.events {
+		if windowNs <= 0 || e.EndNs <= windowNs {
+			e.InWindow = true
+			inWindow = append(inWindow, e)
+		} else {
+			e.InWindow = false
+			late = append(late, e)
+		}
+	}
+	return inWindow, late
 }
 
 // ConditionEvents selects reads that overlap each publication window (± delta)

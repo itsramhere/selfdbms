@@ -431,6 +431,15 @@ func TestE2_PhysicalVsNoneModeComparison(t *testing.T) {
 	if len(resPhys.Events) != 4 {
 		t.Fatalf("physical event log expected 4 records, got %d", len(resPhys.Events))
 	}
+	if diagPhys.PublicationEventsRealizedInWindow != 4 {
+		t.Fatalf("physical realized in-window expected 4, got %d", diagPhys.PublicationEventsRealizedInWindow)
+	}
+	if diagPhys.PublicationEventsRealizedLate != 0 {
+		t.Fatalf("physical realized late expected 0, got %d", diagPhys.PublicationEventsRealizedLate)
+	}
+	if len(resPhys.EventsLate) != 0 {
+		t.Fatalf("physical late events expected 0, got %d", len(resPhys.EventsLate))
+	}
 	if resPhys.Operations.WriteOpsAttempted != 0 {
 		t.Fatalf("physical writes attempted expected 0, got %d", resPhys.Operations.WriteOpsAttempted)
 	}
@@ -460,6 +469,15 @@ func TestE2_PhysicalVsNoneModeComparison(t *testing.T) {
 	if diagNone.PublicationEventsRealized != 0 {
 		t.Fatalf("none realized events expected 0, got %d", diagNone.PublicationEventsRealized)
 	}
+	if diagNone.PublicationEventsRealizedInWindow != 0 {
+		t.Fatalf("none realized in-window expected 0, got %d", diagNone.PublicationEventsRealizedInWindow)
+	}
+	if diagNone.PublicationEventsRealizedLate != 0 {
+		t.Fatalf("none realized late expected 0, got %d", diagNone.PublicationEventsRealizedLate)
+	}
+	if len(resNone.EventsLate) != 0 {
+		t.Fatalf("none late events expected 0, got %d", len(resNone.EventsLate))
+	}
 	if diagNone.InitialFrozenMemtables != 4 {
 		t.Fatalf("none initial frozen memtables expected 4 (matched workload), got %d", diagNone.InitialFrozenMemtables)
 	}
@@ -480,6 +498,32 @@ func TestE2_PhysicalVsNoneModeComparison(t *testing.T) {
 	}
 	if diagNone.TopologyNote == "" || !strings.Contains(diagNone.TopologyNote, "none_control") {
 		t.Fatalf("none topology note missing: %q", diagNone.TopologyNote)
+	}
+}
+
+func TestE2_EventRecorderWindowPartitioning(t *testing.T) {
+	base := Now()
+	rec := NewEventRecorder(base)
+	rec.events = []EventRecord{
+		{Index: 0, BeginNs: 100, EndNs: 500},
+		{Index: 1, BeginNs: 600, EndNs: 1000},
+		{Index: 2, BeginNs: 900, EndNs: 1200},
+	}
+	inWin, late := rec.Events(1000)
+	if len(inWin) != 2 {
+		t.Fatalf("expected 2 in-window events, got %d", len(inWin))
+	}
+	if !inWin[0].InWindow || !inWin[1].InWindow {
+		t.Fatalf("expected InWindow=true for in-window events")
+	}
+	if len(late) != 1 {
+		t.Fatalf("expected 1 late event, got %d", len(late))
+	}
+	if late[0].InWindow {
+		t.Fatalf("expected InWindow=false for late event")
+	}
+	if late[0].Index != 2 {
+		t.Fatalf("expected late event index 2, got %d", late[0].Index)
 	}
 }
 

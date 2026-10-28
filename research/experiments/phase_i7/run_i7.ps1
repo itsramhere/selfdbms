@@ -1503,76 +1503,60 @@ function Invoke-Calibrate {
     $finishedSuccess = @($existingEntries | Where-Object { $_.event -eq 'FINISHED' -and $_.status -eq 'SUCCESS' })
     $startedAttempts = @($existingEntries | Where-Object { $_.event -eq 'STARTED' })
 
+    # Balanced Latin-square rotation across 3 triplets:
+    # Triplet 1: A, AMIN, B
+    # Triplet 2: AMIN, B, A
+    # Triplet 3: B, A, AMIN
+    # All arms in Triplet r share the same logical request-stream seed.
+    $plan = @(
+        [ordered]@{ Arm = 'A';    Rep = 1; Triplet = 1; Order = 1 },
+        [ordered]@{ Arm = 'AMIN'; Rep = 1; Triplet = 1; Order = 2 },
+        [ordered]@{ Arm = 'B';    Rep = 1; Triplet = 1; Order = 3 },
+        [ordered]@{ Arm = 'AMIN'; Rep = 2; Triplet = 2; Order = 4 },
+        [ordered]@{ Arm = 'B';    Rep = 2; Triplet = 2; Order = 5 },
+        [ordered]@{ Arm = 'A';    Rep = 2; Triplet = 2; Order = 6 },
+        [ordered]@{ Arm = 'B';    Rep = 3; Triplet = 3; Order = 7 },
+        [ordered]@{ Arm = 'A';    Rep = 3; Triplet = 3; Order = 8 },
+        [ordered]@{ Arm = 'AMIN'; Rep = 3; Triplet = 3; Order = 9 }
+    )
+
     # Check if all 9 calibration runs are already complete (idempotency)
-    $allSuccessful = $true
     $completedMap = @{}
-    foreach ($arm in 'A', 'AMIN', 'B') {
-        for ($rep = 1; $rep -le 3; $rep++) {
-            $tid = ('cal_{0}_{1:D2}' -f $arm, $rep)
-            $outPath = Join-Path $Layout.Calibration ($tid + '.json')
-            $hasSuccessInLedger = @($finishedSuccess | Where-Object { $_.trial_id -eq $tid }).Count -gt 0
-            if ($hasSuccessInLedger -and (Test-Path -LiteralPath $outPath)) {
-                $j = Read-JsonFile $outPath
-                if ($j -and $j.status -eq 'SUCCESS' -and $j.result -and $j.result.throughput) {
-                    $completedMap[$tid] = $j
-                    continue
-                }
+    foreach ($item in $plan) {
+        $tid = ('cal_{0}_{1:D2}' -f $item.Arm, $item.Rep)
+        $outPath = Join-Path $Layout.Calibration ($tid + '.json')
+        $hasSuccessInLedger = @($finishedSuccess | Where-Object { $_.trial_id -eq $tid }).Count -gt 0
+        if ($hasSuccessInLedger -and (Test-Path -LiteralPath $outPath)) {
+            $j = Read-JsonFile $outPath
+            if ($j -and $j.status -eq 'SUCCESS' -and $j.result -and $j.result.throughput) {
+                $completedMap[$tid] = $j
             }
-            $allSuccessful = $false
         }
     }
+    $allSuccessful = ($completedMap.Count -eq $plan.Count)
 
     if ($allSuccessful) {
         Write-Ok ('calibration already complete (9/9 runs); no trials executed')
-        $perArm = @{}
-        $runs = New-Object System.Collections.ArrayList
-        foreach ($arm in 'A', 'AMIN', 'B') {
-            $vals = New-Object System.Collections.ArrayList
-            for ($rep = 1; $rep -le 3; $rep++) {
-                $tid = ('cal_{0}_{1:D2}' -f $arm, $rep)
-                $j = $completedMap[$tid]
-                [void]$vals.Add([double]$j.result.throughput.read_ops_per_sec)
-                [void]$runs.Add([ordered]@{ trial_id = $tid; arm = $arm; read_ops_per_sec = [double]$j.result.throughput.read_ops_per_sec })
-            }
-            $sorted = @($vals | Sort-Object)
-            $perArm[$arm] = [double]$sorted[[int]($sorted.Count / 2)]
-        }
-        $cRef = ($perArm.Values | Measure-Object -Minimum).Minimum
-        $cal = [ordered]@{
-            schema = 'i7.calibration.v1'; created_utc = Get-UtcStamp; protocol_version = $script:I7.ProtocolVersion
-            per_arm_read_ops_per_sec = $perArm; c_ref = [double]$cRef; rule = 'min over arms of median read ops/s at r=16, 5 s, 3 reps'
-            runs = $runs
-        }
-        Write-JsonFile -Path $Layout.CalibrationOut -Object $cal
-        Write-Ok ('C_ref = {0:N1} read ops/s (min over arms: A={1:N1}, AMIN={2:N1}, B={3:N1})' -f $cRef, $perArm['A'], $perArm['AMIN'], $perArm['B'])
-        return
-    }
-
-    if ($DryRun) {
-        Write-Host 'DRY RUN: 9 calibration runs planned under gate G3 (PF block, r=16, 5s window, 3 reps x 3 arms).' -ForegroundColor Yellow
-        foreach ($arm in 'A', 'AMIN', 'B') {
-            for ($rep = 1; $rep -le 3; $rep++) {
-                $tid = ('cal_{0}_{1:D2}' -f $arm, $rep)
+    } else {
+        if ($DryRun) {
+            Write-Host 'DRY RUN: 9 calibration runs planned under gate G3 (PF block, balanced Latin-square order, r=16, 5s window, 3 reps x 3 arms).' -ForegroundColor Yellow
+            foreach ($item in $plan) {
+                $tid = ('cal_{0}_{1:D2}' -f $item.Arm, $item.Rep)
                 $status = if ($completedMap.ContainsKey($tid)) { 'ALREADY_COMPLETED' } else { 'PLANNED' }
-                Write-Host ('  {0,-15} arm={1,-5} rep={2} status={3}' -f $tid, $arm, $rep, $status)
+                Write-Host ('  order={0} {1,-15} arm={2,-5} rep={3} triplet={4} status={5}' -f $item.Order, $tid, $item.Arm, $item.Rep, $item.Triplet, $status)
             }
+            exit 0
         }
-        exit 0
-    }
 
-    # Execute remaining runs, enforcing attempt ceiling (hard ceiling = 12 attempts: 9 planned + 3 replacements)
-    $maxCalibrationAttempts = 12
-    $perArm = @{}
-    $runs = New-Object System.Collections.ArrayList
+        # Execute remaining runs, enforcing attempt ceiling (hard ceiling = 12 attempts: 9 planned + 3 replacements)
+        $maxCalibrationAttempts = 12
 
-    foreach ($arm in 'A', 'AMIN', 'B') {
-        $vals = New-Object System.Collections.ArrayList
-        for ($rep = 1; $rep -le 3; $rep++) {
+        foreach ($item in $plan) {
+            $arm = $item.Arm
+            $rep = $item.Rep
             $tid = ('cal_{0}_{1:D2}' -f $arm, $rep)
             if ($completedMap.ContainsKey($tid)) {
                 $j = $completedMap[$tid]
-                [void]$vals.Add([double]$j.result.throughput.read_ops_per_sec)
-                [void]$runs.Add([ordered]@{ trial_id = $tid; arm = $arm; read_ops_per_sec = [double]$j.result.throughput.read_ops_per_sec })
                 Write-Info ('[cal] {0} already completed ({1:N1} ops/s); skipping' -f $tid, [double]$j.result.throughput.read_ops_per_sec)
                 continue
             }
@@ -1583,9 +1567,10 @@ function Invoke-Calibrate {
                 throw ('stopping rule: calibration attempts ({0}) reached hard ceiling ({1})' -f $startedCount, $maxCalibrationAttempts)
             }
 
+            $seed = [int64]([Convert]::ToUInt64((Get-TextSha256 ('cal|triplet|' + $item.Triplet)).Substring(0, 15), 16))
             $spec = [ordered]@{
-                schema = 'i7.trial-spec.v1'; trial_id = $tid; block = 'PF'; cell = 'calibration'; triplet = $rep
-                arm = $arm; order_position = $rep; runlist_position = 0; seed = [int64]([Convert]::ToUInt64((Get-TextSha256 ('cal|' + $arm + '|' + $rep)).Substring(0, 15), 16))
+                schema = 'i7.trial-spec.v1'; trial_id = $tid; block = 'PF'; cell = 'calibration'; triplet = $item.Triplet
+                arm = $arm; order_position = $item.Order; runlist_position = 0; seed = $seed
                 workload_id = 'WORKLOAD_A_READ_ONLY'; reader_concurrency = 16; writer_concurrency = 0
                 measurement_duration_ms = 5000; warmup_duration_ms = 1000; cooldown_duration_ms = 100
                 keyspace_cardinality = 10000; initial_sstable_count = 4; initial_keys_per_sstable = 2500
@@ -1599,7 +1584,7 @@ function Invoke-Calibrate {
             $outPath = Join-Path $Layout.Calibration ($tid + '.json')
 
             # Record STARTED
-            Add-JsonLine -Path $ledgerPath -Object ([ordered]@{ event = 'STARTED'; trial_id = $tid; arm = $arm; rep = $rep; ts = Get-UtcStamp })
+            Add-JsonLine -Path $ledgerPath -Object ([ordered]@{ event = 'STARTED'; trial_id = $tid; arm = $arm; rep = $rep; triplet = $item.Triplet; order = $item.Order; ts = Get-UtcStamp })
             $startedAttempts = @(Read-JsonLines $ledgerPath | Where-Object { $_.event -eq 'STARTED' })
 
             $argLine = @(
@@ -1615,27 +1600,46 @@ function Invoke-Calibrate {
             if ($j -and $j.status) { $status = [string]$j.status }
             if ($exitCode -ne 0 -and $status -eq 'SUCCESS') { $status = 'FAILED' }
 
-            Add-JsonLine -Path $ledgerPath -Object ([ordered]@{ event = 'FINISHED'; trial_id = $tid; arm = $arm; rep = $rep; status = $status; exit_code = $exitCode; ts = Get-UtcStamp })
+            Add-JsonLine -Path $ledgerPath -Object ([ordered]@{ event = 'FINISHED'; trial_id = $tid; arm = $arm; rep = $rep; triplet = $item.Triplet; order = $item.Order; status = $status; exit_code = $exitCode; ts = Get-UtcStamp })
 
             if ($status -eq 'SUCCESS' -and $j.result -and $j.result.throughput) {
-                [void]$vals.Add([double]$j.result.throughput.read_ops_per_sec)
-                [void]$runs.Add([ordered]@{ trial_id = $tid; arm = $arm; read_ops_per_sec = [double]$j.result.throughput.read_ops_per_sec })
+                $completedMap[$tid] = $j
                 Write-Ok ('[cal] {0} SUCCESS ({1:N1} ops/s)' -f $tid, [double]$j.result.throughput.read_ops_per_sec)
             } else {
                 Write-Warn2 ('[cal] {0} {1} (exit={2})' -f $tid, $status, $exitCode)
             }
         }
-        if ($vals.Count -gt 0) {
-            $sorted = @($vals | Sort-Object)
-            $perArm[$arm] = [double]$sorted[[int]($sorted.Count / 2)]
-        }
     }
 
-    if ($perArm.Count -lt 3) { throw 'calibration incomplete: fewer than three arms produced a valid result' }
+    # Strict completeness: all 9 planned calibration cells must have valid successful records.
+    $missingCells = New-Object System.Collections.ArrayList
+    foreach ($item in $plan) {
+        $tid = ('cal_{0}_{1:D2}' -f $item.Arm, $item.Rep)
+        if (-not $completedMap.ContainsKey($tid)) {
+            [void]$missingCells.Add($tid)
+        }
+    }
+    if ($missingCells.Count -gt 0) {
+        throw ('calibration incomplete: {0}/9 cells succeeded. Missing cells: {1}' -f ($plan.Count - $missingCells.Count), ($missingCells -join ', '))
+    }
+
+    $perArm = @{}
+    $runs = New-Object System.Collections.ArrayList
+    foreach ($arm in 'A', 'AMIN', 'B') {
+        $vals = New-Object System.Collections.ArrayList
+        for ($rep = 1; $rep -le 3; $rep++) {
+            $tid = ('cal_{0}_{1:D2}' -f $arm, $rep)
+            $j = $completedMap[$tid]
+            [void]$vals.Add([double]$j.result.throughput.read_ops_per_sec)
+            [void]$runs.Add([ordered]@{ trial_id = $tid; arm = $arm; rep = $rep; read_ops_per_sec = [double]$j.result.throughput.read_ops_per_sec })
+        }
+        $sorted = @($vals | Sort-Object)
+        $perArm[$arm] = [double]$sorted[1]
+    }
     $cRef = ($perArm.Values | Measure-Object -Minimum).Minimum
     $cal = [ordered]@{
         schema = 'i7.calibration.v1'; created_utc = Get-UtcStamp; protocol_version = $script:I7.ProtocolVersion
-        per_arm_read_ops_per_sec = $perArm; c_ref = [double]$cRef; rule = 'min over arms of median read ops/s at r=16, 5 s, 3 reps'
+        per_arm_read_ops_per_sec = $perArm; c_ref = [double]$cRef; rule = 'min over arms of median read ops/s at r=16, 5 s, 3 reps (balanced Latin-square order)'
         runs = $runs
     }
     Write-JsonFile -Path $Layout.CalibrationOut -Object $cal
