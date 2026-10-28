@@ -101,15 +101,20 @@ Three levels are the minimum that identifies a knee. With only two points the "k
 
 If `C_ref` is dominated by the read path's 10 ms scans, note that these levels are **absolute request rates**, identical across arms; they are not "fractions of each arm's capacity". That is deliberate: it makes the comparison "same offered load, different response" rather than "each arm at 90 % of itself".
 
-### 3.3 Expected sample sizes (E4)
+### 3.3 Expected sample sizes & sample sufficiency (E4)
 
-| Level | R (if `C_ref ≈ 500/s`) | Requests | Abandoned (expected) |
+| Level | R (nominal scale) | Completed per 10 s trial | Abandoned (expected) |
 | :--- | ---: | ---: | :--- |
-| L1 | 150 /s | 1,500 | ~0 |
-| L2 | 300 /s | 3,000 | ~0 |
-| L3 | 450 /s | 4,500 | 0 in B; possibly > 0 in A |
+| L1 | `0.30 · C_ref` | `3 · C_ref` | ~0 |
+| L2 | `0.60 · C_ref` | `6 · C_ref` | ~0 |
+| L3 | `0.90 · C_ref` | `9 · C_ref` | 0 in B; possibly > 0 in A |
 
-p99.9 requires ≥ 1,000 samples (the harness's existing rule) and is available at all three levels. At L1 it rests on ≈ 1.5 exceedances (`0.001 × 1,500`), so it is reported with an explicit `p999_exceedances` count and flagged as unstable rather than treated as an estimate.
+**Sample Sufficiency & Percentile Reporting Rule:**
+At measured capacity rates where a 10 s window produces fewer than 1,000 completions per trial:
+- Per-trial `p99.9` has insufficient sample support under the harness sufficiency rule (`p99.9 >= 1,000` samples) and evaluates to `nil` (`unsupported`).
+- Even if pooled across repetitions, an extreme tail percentile with $\le 1\text{--}2$ exceedances is statistically unstable.
+- **Reporting Boundary:** The primary confirmatory response latency metrics for E4 are strictly preregistered as `y_p50` and `y_p95` (with `y_p99` reported confirmatively only when $N \ge 100$). Extreme tail percentile `p99.9` is strictly exploratory/descriptive and is never promoted to a confirmatory finding.
+- **Preservation of Inventory & Load Levels:** The three preregistered offered-load levels (L1, L2, L3) and the complete 54-trial E4 inventory remain intact without alteration.
 
 ### 3.4 Publication driver in E4
 

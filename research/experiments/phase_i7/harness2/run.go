@@ -126,22 +126,25 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		warmStop := make(chan struct{})
 		var wg sync.WaitGroup
 		warmStream := NewKeyStream(spec.Seed^0x1111, keyspace, spec.TargetReadHitRatio)
+		stride := int64(maxInt(1, spec.ReaderConcurrency))
 		for r := 0; r < spec.ReaderConcurrency; r++ {
 			wg.Add(1)
-			go func() {
+			go func(worker int) {
 				defer wg.Done()
-				i := int64(0)
+				wID := int64(worker)
+				iter := int64(0)
 				for {
 					select {
 					case <-warmStop:
 						return
 					default:
-						k, _ := warmStream.At(i)
+						idx := wID + iter*stride
+						k, _ := warmStream.At(idx)
 						_, _ = man.Get(k, math.MaxUint64)
-						i++
+						iter++
 					}
 				}
-			}()
+			}(r)
 		}
 		time.Sleep(time.Duration(spec.WarmupDurationMs) * time.Millisecond)
 		close(warmStop)
@@ -183,9 +186,9 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	// Per-worker sample capacity. Generous enough that a legitimate trial never
 	// overflows; overflow is counted and fails the trial rather than silently
 	// biasing the percentiles toward the first N samples.
-	perShardCap := spec.MeasurementDurationMs * 4
-	if perShardCap < 32768 {
-		perShardCap = 32768
+	perShardCap := spec.MeasurementDurationMs * 100
+	if perShardCap < 131072 {
+		perShardCap = 131072
 	}
 
 	var sched []Arrival
@@ -230,10 +233,10 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		for w := 0; w < spec.WriterConcurrency; w++ {
 			wg.Add(1)
 			sh := newShard(perShardCap)
-			go func(sh *Shard) {
+			go func(sh *Shard, worker int) {
 				defer wg.Done()
-				unpacedWriter(man, sh, stop, base, windowNs, spec, writeStream)
-			}(sh)
+				unpacedWriter(man, sh, stop, base, windowNs, spec, writeStream, worker)
+			}(sh, w)
 		}
 	}
 
@@ -553,15 +556,17 @@ func recordRead(sh *Shard, v string, err error, expectHit bool, inWindow bool) {
 }
 
 func closedLoopReader(man *lsmengine.Manager, sh *Shard, base harness.PrecisionTime, stop <-chan struct{}, windowNs int64, spec Spec, stream *KeyStream, worker int) {
-	_ = worker
-	i := int64(0)
+	stride := int64(maxInt(1, spec.ReaderConcurrency))
+	wID := int64(worker)
+	iter := int64(0)
 	for {
 		select {
 		case <-stop:
 			return
 		default:
 		}
-		key, expect := stream.At(i)
+		idx := wID + iter*stride
+		key, expect := stream.At(idx)
 		t0 := ElapsedNs(base)
 		v, err := man.Get(key, math.MaxUint64)
 		done := ElapsedNs(base)
@@ -575,24 +580,28 @@ func closedLoopReader(man *lsmengine.Manager, sh *Shard, base harness.PrecisionT
 			sh.RecordIssueLate(t0, t0, done)
 		}
 		recordRead(sh, v, err, expect, inWindow)
-		i++
+		iter++
 	}
 }
 
-func unpacedWriter(man *lsmengine.Manager, sh *Shard, stop <-chan struct{}, base harness.PrecisionTime, windowNs int64, spec Spec, stream *KeyStream) {
-	i := int64(0)
+func unpacedWriter(man *lsmengine.Manager, sh *Shard, stop <-chan struct{}, base harness.PrecisionTime, windowNs int64, spec Spec, stream *KeyStream, worker int) {
+	stride := int64(maxInt(1, spec.WriterConcurrency))
+	wID := int64(worker)
+	iter := int64(0)
 	for {
 		select {
 		case <-stop:
 			return
 		default:
 		}
-		key, _ := stream.At(i)
-		val := harness.FormatVal(int(i), 128)
+		idx := wID + iter*stride
+		key, _ := stream.At(idx)
+		val := harness.FormatVal(int(idx), 128)
 		sh.WritesAttempted++
 		tx := man.Begin()
 		if tx == nil {
 			sh.WritesError++
+			iter++
 			continue
 		}
 		tx.Put(key, val)
@@ -607,7 +616,7 @@ func unpacedWriter(man *lsmengine.Manager, sh *Shard, stop <-chan struct{}, base
 				sh.WritesCompletedLate++
 			}
 		}
-		i++
+		iter++
 	}
 }
 

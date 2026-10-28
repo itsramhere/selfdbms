@@ -31,6 +31,9 @@ const (
 	BlockE4    Block = "E4"
 	BlockE5    Block = "E5"
 	BlockE7    Block = "E7"
+	BlockD1    Block = "D1"
+	BlockD2    Block = "D2"
+	BlockD3    Block = "D3"
 	BlockPF    Block = "PF"
 	BlockSMOKE Block = "SMOKE"
 )
@@ -115,7 +118,7 @@ func (s Spec) ResolveMode() (Mode, error) {
 			return ModePacedWrites, nil
 		}
 		return ModeClosedLoop, nil
-	case BlockE1, BlockE5, BlockPF, BlockSMOKE:
+	case BlockE1, BlockE5, BlockD1, BlockD2, BlockD3, BlockPF, BlockSMOKE:
 		return ModeClosedLoop, nil
 	case BlockE7:
 		return 0, errf("E7 is executed by the separate pebble_runner binary")

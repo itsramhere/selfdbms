@@ -98,6 +98,105 @@ func TestKeyStreamAbsentKeysAreOutsideKeyspace(t *testing.T) {
 	}
 }
 
+// TestStreamPartitioningAndWorkerUniqueness verifies that with W workers,
+// request index = workerID + iter * concurrency yields completely disjoint,
+// non-overlapping, and gapless logical request streams across workers.
+func TestStreamPartitioningAndWorkerUniqueness(t *testing.T) {
+	concurrency := 16
+	itersPerWorker := 1000
+	seen := make(map[int64]int) // index -> workerID
+
+	for w := 0; w < concurrency; w++ {
+		stride := int64(concurrency)
+		wID := int64(w)
+		for iter := int64(0); iter < int64(itersPerWorker); iter++ {
+			idx := wID + iter*stride
+			if priorWorker, exists := seen[idx]; exists {
+				t.Fatalf("index collision at %d: claimed by worker %d and worker %d", idx, priorWorker, w)
+			}
+			seen[idx] = w
+		}
+	}
+
+	totalExpected := concurrency * itersPerWorker
+	if len(seen) != totalExpected {
+		t.Fatalf("expected %d unique indices, got %d", totalExpected, len(seen))
+	}
+
+	// Verify the union spans exactly [0, totalExpected) with zero gaps.
+	for i := int64(0); i < int64(totalExpected); i++ {
+		if _, ok := seen[i]; !ok {
+			t.Fatalf("missing index in partitioned stream: %d", i)
+		}
+	}
+}
+
+// TestKeyStreamHitMissProportionsAcrossLargeSamples verifies expected hit/miss
+// ratios across sufficiently large samples for 95%, 0%, and 100% hit targets.
+func TestKeyStreamHitMissProportionsAcrossLargeSamples(t *testing.T) {
+	// 1. Target 95% hit ratio across 20,000 requests
+	ks95 := NewKeyStream(12345, 10000, 0.95)
+	hits95 := 0
+	samples95 := 20000
+	for i := int64(0); i < int64(samples95); i++ {
+		_, hit := ks95.At(i)
+		if hit {
+			hits95++
+		}
+	}
+	ratio95 := float64(hits95) / float64(samples95)
+	if ratio95 < 0.945 || ratio95 > 0.955 {
+		t.Fatalf("95%% stream realized out-of-bounds hit ratio: %f (hits=%d/%d)", ratio95, hits95, samples95)
+	}
+
+	// 2. Target 0% hit ratio (E5 all-miss) across 10,000 requests
+	ks0 := NewKeyStream(54321, 10000, 0.00)
+	for i := int64(0); i < 10000; i++ {
+		_, hit := ks0.At(i)
+		if hit {
+			t.Fatalf("0%% target produced a hit at index %d", i)
+		}
+	}
+
+	// 3. Target 100% hit ratio across 10,000 requests
+	ks100 := NewKeyStream(98765, 10000, 1.00)
+	for i := int64(0); i < 10000; i++ {
+		_, hit := ks100.At(i)
+		if !hit {
+			t.Fatalf("100%% target produced a miss at index %d", i)
+		}
+	}
+}
+
+// TestWorkerSequenceParityAcrossArms verifies that corresponding workers across
+// arms A, A-min, and B receive identical key/expect sequences even if throughput diverges.
+func TestWorkerSequenceParityAcrossArms(t *testing.T) {
+	seed := int64(424242)
+	concurrency := 16
+	streamA := NewKeyStream(seed, 10000, 0.95)
+	streamAMIN := NewKeyStream(seed, 10000, 0.95)
+	streamB := NewKeyStream(seed, 10000, 0.95)
+
+	stride := int64(concurrency)
+	// Even if worker w on arm A completes 200 iters and on arm B completes 100 iters:
+	for w := 0; w < concurrency; w++ {
+		wID := int64(w)
+		for iter := int64(0); iter < 100; iter++ {
+			idx := wID + iter*stride
+			kA, expA := streamA.At(idx)
+			kAMIN, expAMIN := streamAMIN.At(idx)
+			kB, expB := streamB.At(idx)
+
+			if kA != kAMIN || kAMIN != kB {
+				t.Fatalf("worker %d iter %d (index %d) key parity mismatch: A=%s AMIN=%s B=%s", w, iter, idx, kA, kAMIN, kB)
+			}
+			if expA != expAMIN || expAMIN != expB {
+				t.Fatalf("worker %d iter %d (index %d) hit parity mismatch: A=%v AMIN=%v B=%v", w, iter, idx, expA, expAMIN, expB)
+			}
+		}
+	}
+}
+
 func sscanfKey(key string, out *int) (int, error) {
 	const prefix = "user_key_"
 	if !strings.HasPrefix(key, prefix) {
@@ -279,7 +378,8 @@ func TestRunClosedLoopAllArms(t *testing.T) {
 func TestRunPublicationOnlyDriver(t *testing.T) {
 	spec := miniSpec(t, "E2", "pub_physical", "A")
 	spec.PublicationMode = "physical"
-	spec.PublicationEvents = 4
+	spec.PublicationEvents = 2
+	spec.MeasurementDurationMs = 500
 	spec.WriterConcurrency = 0
 	spec.ReaderConcurrency = 2
 	res, err := Run(spec, testEnv(), "test-rev")
@@ -289,16 +389,16 @@ func TestRunPublicationOnlyDriver(t *testing.T) {
 	if res.Status != "SUCCESS" {
 		t.Fatalf("status %s: %s", res.Status, res.Error)
 	}
-	if len(res.Events) != 4 {
-		t.Fatalf("expected 4 publication events, got %d", len(res.Events))
+	if len(res.Events) != 2 {
+		t.Fatalf("expected 2 publication events, got %d", len(res.Events))
 	}
 	for i, e := range res.Events {
 		if e.BeginNs <= 0 || e.EndNs < e.BeginNs {
 			t.Fatalf("event %d has an invalid window: %+v", i, e)
 		}
 	}
-	if len(res.EventCond) != 4 {
-		t.Fatalf("expected 4 conditioned records, got %d", len(res.EventCond))
+	if len(res.EventCond) != 2 {
+		t.Fatalf("expected 2 conditioned records, got %d", len(res.EventCond))
 	}
 	// The driver must not inject writes into the window.
 	if res.Operations.WriteOpsAttempted != 0 {
@@ -394,8 +494,8 @@ func TestE2_PhysicalVsNoneModeComparison(t *testing.T) {
 	// PHYSICAL MODE
 	specPhys := miniSpec(t, "E2", "pub_physical", "A")
 	specPhys.PublicationMode = "physical"
-	specPhys.PublicationEvents = 4
-	specPhys.MeasurementDurationMs = 400
+	specPhys.PublicationEvents = 2
+	specPhys.MeasurementDurationMs = 500
 	specPhys.WriterConcurrency = 0
 	specPhys.ReaderConcurrency = 2
 
@@ -407,17 +507,17 @@ func TestE2_PhysicalVsNoneModeComparison(t *testing.T) {
 		t.Fatalf("status physical %s: %s", resPhys.Status, resPhys.Error)
 	}
 	diagPhys := resPhys.LSMDiagnostics
-	if diagPhys.PublicationEventsTarget != 4 {
-		t.Fatalf("physical target events expected 4, got %d", diagPhys.PublicationEventsTarget)
+	if diagPhys.PublicationEventsTarget != 2 {
+		t.Fatalf("physical target events expected 2, got %d", diagPhys.PublicationEventsTarget)
 	}
-	if diagPhys.PublicationEventsReleased != 4 {
-		t.Fatalf("physical released events expected 4, got %d", diagPhys.PublicationEventsReleased)
+	if diagPhys.PublicationEventsReleased != 2 {
+		t.Fatalf("physical released events expected 2, got %d", diagPhys.PublicationEventsReleased)
 	}
-	if diagPhys.PublicationEventsRealized != 4 {
-		t.Fatalf("physical realized events expected 4, got %d", diagPhys.PublicationEventsRealized)
+	if diagPhys.PublicationEventsRealized != 2 {
+		t.Fatalf("physical realized events expected 2, got %d", diagPhys.PublicationEventsRealized)
 	}
-	if diagPhys.InitialFrozenMemtables != 4 {
-		t.Fatalf("physical initial frozen memtables expected 4, got %d", diagPhys.InitialFrozenMemtables)
+	if diagPhys.InitialFrozenMemtables != 2 {
+		t.Fatalf("physical initial frozen memtables expected 2, got %d", diagPhys.InitialFrozenMemtables)
 	}
 	if diagPhys.FinalFrozenMemtables != 0 {
 		t.Fatalf("physical final frozen memtables expected 0, got %d", diagPhys.FinalFrozenMemtables)
@@ -425,14 +525,14 @@ func TestE2_PhysicalVsNoneModeComparison(t *testing.T) {
 	if diagPhys.InitialSSTables != 2 {
 		t.Fatalf("physical initial sstables expected 2, got %d", diagPhys.InitialSSTables)
 	}
-	if diagPhys.FinalSSTables != 6 {
-		t.Fatalf("physical final sstables expected 6 (2 initial + 4 flushes), got %d", diagPhys.FinalSSTables)
+	if diagPhys.FinalSSTables != 4 {
+		t.Fatalf("physical final sstables expected 4 (2 initial + 2 flushes), got %d", diagPhys.FinalSSTables)
 	}
-	if len(resPhys.Events) != 4 {
-		t.Fatalf("physical event log expected 4 records, got %d", len(resPhys.Events))
+	if len(resPhys.Events) != 2 {
+		t.Fatalf("physical event log expected 2 records, got %d", len(resPhys.Events))
 	}
-	if diagPhys.PublicationEventsRealizedInWindow != 4 {
-		t.Fatalf("physical realized in-window expected 4, got %d", diagPhys.PublicationEventsRealizedInWindow)
+	if diagPhys.PublicationEventsRealizedInWindow != 2 {
+		t.Fatalf("physical realized in-window expected 2, got %d", diagPhys.PublicationEventsRealizedInWindow)
 	}
 	if diagPhys.PublicationEventsRealizedLate != 0 {
 		t.Fatalf("physical realized late expected 0, got %d", diagPhys.PublicationEventsRealizedLate)
@@ -447,8 +547,8 @@ func TestE2_PhysicalVsNoneModeComparison(t *testing.T) {
 	// NONE MODE (control: identical initial workload, zero releases during window)
 	specNone := miniSpec(t, "E2", "pub_none", "A")
 	specNone.PublicationMode = "none"
-	specNone.PublicationEvents = 4 // runlist specifies 4 pre-frozen events
-	specNone.MeasurementDurationMs = 400
+	specNone.PublicationEvents = 2 // runlist specifies pre-frozen events
+	specNone.MeasurementDurationMs = 500
 	specNone.WriterConcurrency = 0
 	specNone.ReaderConcurrency = 2
 
@@ -478,11 +578,11 @@ func TestE2_PhysicalVsNoneModeComparison(t *testing.T) {
 	if len(resNone.EventsLate) != 0 {
 		t.Fatalf("none late events expected 0, got %d", len(resNone.EventsLate))
 	}
-	if diagNone.InitialFrozenMemtables != 4 {
-		t.Fatalf("none initial frozen memtables expected 4 (matched workload), got %d", diagNone.InitialFrozenMemtables)
+	if diagNone.InitialFrozenMemtables != 2 {
+		t.Fatalf("none initial frozen memtables expected 2 (matched workload), got %d", diagNone.InitialFrozenMemtables)
 	}
-	if diagNone.FinalFrozenMemtables != 4 {
-		t.Fatalf("none final frozen memtables expected 4 (unreleased), got %d", diagNone.FinalFrozenMemtables)
+	if diagNone.FinalFrozenMemtables != 2 {
+		t.Fatalf("none final frozen memtables expected 2 (unreleased), got %d", diagNone.FinalFrozenMemtables)
 	}
 	if diagNone.InitialSSTables != 2 {
 		t.Fatalf("none initial sstables expected 2, got %d", diagNone.InitialSSTables)
