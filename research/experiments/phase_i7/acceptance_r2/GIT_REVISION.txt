@@ -1,8 +1,11 @@
 branch: research/i7-engineering-preflight
-HEAD:   232e48ad15ade50e0e096cd8de990b8c32127ebb
+HEAD:   1bbf51d4194df73bfcca727db7b90b27117b29bc
 engineering diff base: 27a041e (preservation commit)
 frozen engine revision: f4cce4b5faa80924c7ef945139ef1a65ccb2b32a
 
+1bbf51d build(i7-r2-acceptance): package I7_R2_ACCEPTANCE_REVIEW.zip
+e3948f7 chore(i7-r2-acceptance): drop scratch _work intermediates from the evidence set
+8abe9a7 docs(i7-r2-acceptance): assemble the acceptance evidence set and refresh the provenance manifest
 232e48a test(i7-r2-acceptance): guard real-time-window scenario tests with -short
 2fdcc19 fix(i7-r2-acceptance): force full-miss reads in the open-loop overload tests so the backlog is platform-independent
 1932d25 fix(i7-r2-acceptance): deduplicate S10 fixture roots and make the E4 overload test platform-independent
