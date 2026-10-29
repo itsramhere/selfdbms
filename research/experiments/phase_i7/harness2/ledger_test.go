@@ -181,6 +181,9 @@ func TestRunSyncInstrumentationAttachAndAggregate(t *testing.T) {
 // and queued arrivals (window closes before claiming). The conservation
 // identities must hold for whatever outcome mix materializes.
 func TestRunLedgerConservationUnderOpenLoopOverload(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing-sensitive open-loop scenario; -short skips real-time-window tests (see acceptance race evidence)")
+	}
 	spec := miniSpec(t, "E4", "ol_overload", "A")
 	// Platform-independent cancellation: 1 us arrival period against
 	// full-miss reads (cost >> period) guarantees the reader falls behind
@@ -216,6 +219,9 @@ func TestRunLedgerConservationUnderOpenLoopOverload(t *testing.T) {
 // requests outstanding at close, which must appear as completed_late and
 // satisfy the outstanding identity exactly.
 func TestRunLedgerConservationUnderLateCompletion(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing-sensitive late-completion scenario; -short skips real-time-window tests (see acceptance race evidence)")
+	}
 	spec := miniSpec(t, "E1", "r01_late", "A")
 	spec.MeasurementDurationMs = 25
 	spec.WriterConcurrency = 1

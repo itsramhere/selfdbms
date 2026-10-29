@@ -633,6 +633,9 @@ func TestE2_EventRecorderWindowPartitioning(t *testing.T) {
 // 3. throughput strictly uses completions inside the window;
 // 4. late completions are tracked separately and do not pollute within-window latency.
 func TestE4_OpenLoopOverloadAndLateAccounting(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing-sensitive open-loop scenario; -short skips real-time-window tests (see acceptance race evidence)")
+	}
 	spec := miniSpec(t, "E4", "overload", "A")
 	// Platform-independent overload: a 1 us arrival period can never be
 	// sustained when every read is a full miss (hit ratio 0 -> memtable probe
