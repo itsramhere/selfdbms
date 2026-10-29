@@ -81,10 +81,15 @@ $script:I7 = [ordered]@{
     CampaignId      = 'I7_STRENGTHENING_V1'
     ProtocolVersion = '1.2.0-windows'
     Seed            = '20261101'
-    PlannedTrials   = 366
-    HardCeiling     = 384
-    ReplacementCap  = 18
+    # R1.2e budget model: 12 cells x N in [8,10] triplets x 3 arms (300..372
+    # planned, drift anchors included) + replacement budget 16 -> worst case
+    # 388 <= 400 strict global ceiling.
+    PlannedTrials   = 366   # legacy 366-row inventory; execution authority REVOKED (see Assert-ExecutionRevoked)
+    HardCeiling     = 400
+    ReplacementCap  = 16
     Platform        = 'windows-native-ntfs'
+    # Model-authority record written into the campaign manifest.
+    ModelAuthority  = 'legacy_inventory_366_REVOKED_by_R1_2e_execution_fails_closed'
 }
 
 $script:ArmPerms = @(
@@ -851,6 +856,7 @@ function Initialize-CampaignManifest($Layout, $Runlist, $Platform, $RunnerInfo) 
             planned_trials        = $script:I7.PlannedTrials
             hard_ceiling          = $script:I7.HardCeiling
             replacement_cap       = $script:I7.ReplacementCap
+            model_authority       = $script:I7.ModelAuthority
             created_utc           = Get-UtcStamp
             runlist_sha256        = $Runlist.Sha256
             runlist_rows          = $Runlist.Rows.Count
@@ -1836,6 +1842,33 @@ if ($WriteApprovalTemplate -and $modes.Count -le 1) {
     exit 0
 }
 
+# Assert-ExecutionRevoked refuses every mode that can launch a trial process.
+#
+# R1.2e re-registered the campaign model (12 cells, confirmatory N in [8,10]
+# per cell, D3-01..04 milestone anchors, a strict 400-run global ceiling, and
+# a Rule S-1 replacement budget of 16). The G2-era execution authority
+# embedded in this driver (a 366-row inventory, ceiling 384, replacement 18)
+# conflicts with that model. Per the R2 engineering acceptance directive
+# ("remove conflicting legacy execution authority or make the old execution
+# path fail closed") the legacy path fails closed: it cannot be re-enabled by
+# any flag, approval file, or -TestMode. The authoritative run-list model is
+# the runlist package (runlistctl generate|validate|ceiling); rebuilding the
+# execution path around it is the pilot gate's work.
+function Assert-ExecutionRevoked([string]$Mode) {
+    Write-Host ''
+    Write-Host 'EXECUTION REFUSED (exit 5): the G2-era execution authority was revoked by the R1.2e protocol.' -ForegroundColor Red
+    Write-Host ('  refused mode : ' + $Mode)
+    Write-Host '  reason       : the embedded 366-row inventory (ceiling 384, replacement 18) conflicts with'
+    Write-Host '                 the R1.2e campaign model (12 cells, N in [8,10], D3 milestones, ceiling 400,'
+    Write-Host '                 replacement budget 16) and can no longer authorize an execution.'
+    Write-Host '  authority    : research/experiments/phase_i7/runlist  (runlistctl generate|validate|ceiling)'
+    Write-Host '  still usable : -Check, -DryRun (spec and run-list inspection only; launches nothing),'
+    Write-Host '                 -WriteApprovalTemplate, -Package'
+    Write-Host '  next step    : the pilot-authorization gate must rebuild the execution path around the'
+    Write-Host '                 validated runlistctl generator before any trial is launched.'
+    exit 5
+}
+
 if ($modes.Count -eq 0) {
     Write-Host 'Phase I7 Windows campaign driver' -ForegroundColor Cyan
     Write-Host ''
@@ -1849,6 +1882,10 @@ if ($modes.Count -eq 0) {
     Write-Host '  .\run_i7.ps1 -Resume                                 G4: continue after interruption'
     Write-Host '  .\run_i7.ps1 -Diagnostics                            G5: profiling (not implemented)'
     Write-Host '  .\run_i7.ps1 -Package                                summary + checksums + ZIP'
+    Write-Host ''
+    Write-Host 'EXECUTION NOTICE: -Calibrate/-Preflight/-Campaign/-Resume/-Diagnostics are REVOKED (exit 5)' -ForegroundColor Yellow
+    Write-Host 'by the R1.2e protocol; only -DryRun inspection, -Check, -WriteApprovalTemplate and -Package run.' -ForegroundColor Yellow
+    Write-Host 'The authoritative run-list model is research/experiments/phase_i7/runlist (runlistctl).' -ForegroundColor Yellow
     Write-Host ''
     Write-Host 'Options: -Root <dir> -Affinity 0x3f -Blocks E1,E3 -MaxTrials N -AllowPartial'
     Write-Host '         -MaxCampaignMinutes N -MinFreeGB N -TestMode -RunnerOverride <exe>'
@@ -1875,7 +1912,10 @@ if (Test-UnderFrozenRoot $Root) {
 try {
     switch ($mode) {
         'Check' { Invoke-Check }
-        'Calibrate' { Invoke-Calibrate }
+        'Calibrate' {
+            if (-not $DryRun) { Assert-ExecutionRevoked $mode }
+            Invoke-Calibrate
+        }
         'Package' {
             $Layout = Get-PathLayout
             $platform = Read-JsonFile $Layout.Platform
@@ -1887,6 +1927,9 @@ try {
             exit 0
         }
         default {
+            # Preflight / Campaign / Resume / Diagnostics can launch trial
+            # processes; only their -DryRun (no launch) inspection path remains.
+            if (-not $DryRun) { Assert-ExecutionRevoked $mode }
             Invoke-Run -Mode $mode
         }
     }

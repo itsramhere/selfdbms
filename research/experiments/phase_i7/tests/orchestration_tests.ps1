@@ -169,6 +169,8 @@ Record 'S2-runlist' ($rows.Count -eq 366) ('runlist rows = ' + $rows.Count)
 Record 'S2-anchor-start' ($rows[0].block -eq 'D3' -and $rows[0].cell -eq 'start' -and $rows[2].cell -eq 'start') ('first rows: ' + $rows[0].block + '/' + $rows[0].cell)
 Record 'S2-anchor-end' ($rows[-1].block -eq 'D3' -and $rows[-3].cell -eq 'end') ('last rows: ' + $rows[-1].block + '/' + $rows[-1].cell)
 Record 'S2-hash-recorded' ($manifest1.runlist_sha256 -eq $prep.Hash) 'manifest binds the runlist hash'
+Record 'S2-authority-revoked' ($manifest1.model_authority -match 'REVOKED') ('model_authority = ' + $manifest1.model_authority)
+Record 'S2-r12e-budget' (([int]$manifest1.hard_ceiling -eq 400) -and ([int]$manifest1.replacement_cap -eq 16)) ('ceiling=' + $manifest1.hard_ceiling + ' replacement_cap=' + $manifest1.replacement_cap)
 
 # ---------------------------------------------------------------------------
 # S3: approval template is unapproved
@@ -185,117 +187,59 @@ if ($tplOk) {
 Record 'S3-template' ($tplRun.ExitCode -eq 0 -and $tplOk) 'template written with approved=false and the current runlist hash'
 
 # ---------------------------------------------------------------------------
-# S4: approval binding refusals
+# S4: execution authority revocation (R2 engineering acceptance, blocker 1).
+# The G2-era execution path fails closed unconditionally: no approval state,
+# override, or test mode can resurrect it. The approval-binding refusals the
+# old S4 exercised are now covered by Go unit tests on i7trial (see
+# cmd/i7trial/main_test.go, TestCheckApprovalBindings).
 # ---------------------------------------------------------------------------
 Write-Host ''
-Write-Host 'S4: approval binding' -ForegroundColor Cyan
+Write-Host 'S4: legacy execution authority revoked' -ForegroundColor Cyan
 $null = New-Approval -Root $root1 -Gate 'G4' -AllowedBlocks @('D3') -RunlistHash $prep.Hash -RunnerHash $stubHash
+
+$r = Invoke-Driver -Root $root1 -ArgList @('-Campaign', '-Blocks', 'D3', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
+Record 'S4-campaign-revoked' (($r.ExitCode -eq 5) -and ($r.Out -match 'revoked')) ('exit=' + $r.ExitCode + ' campaign refused with a valid approval present')
 
 $badHashApproval = New-Approval -Root $root1 -Gate 'G4' -AllowedBlocks @('D3') -RunlistHash ('0' * 64) -RunnerHash $stubHash
 $r = Invoke-Driver -Root $root1 -ArgList @('-Campaign', '-Blocks', 'D3', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
-Record 'S4-runlist-binding' ($r.ExitCode -ne 0 -and ($r.Out -match 'runlist_sha256')) 'wrong runlist hash refused'
+Record 'S4-campaign-revoked-invalid-approval' (($r.ExitCode -eq 5) -and ($r.Out -match 'revoked')) 'revocation fires before any approval evaluation'
 
-$null = New-Approval -Root $root1 -Gate 'G4' -AllowedBlocks @('D3') -RunlistHash $prep.Hash -RunnerHash ('0' * 64)
-$r = Invoke-Driver -Root $root1 -ArgList @('-Campaign', '-Blocks', 'D3', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
-Record 'S4-runner-binding' ($r.ExitCode -ne 0 -and ($r.Out -match 'runner_sha256')) 'wrong runner hash refused'
+$r = Invoke-Driver -Root $root1 -ArgList @('-Preflight', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
+Record 'S4-preflight-revoked' (($r.ExitCode -eq 5) -and ($r.Out -match 'revoked')) 'exit=5 preflight refused'
 
-$null = New-Approval -Root $root1 -Gate 'G4' -AllowedBlocks @('E1') -RunlistHash $prep.Hash -RunnerHash $stubHash
-$r = Invoke-Driver -Root $root1 -ArgList @('-Campaign', '-Blocks', 'D3', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
-Record 'S4-block-binding' ($r.ExitCode -ne 0 -and ($r.Out -match 'not in the approved set')) 'unapproved block refused'
+$r = Invoke-Driver -Root $root1 -ArgList @('-Resume', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
+Record 'S4-resume-revoked' (($r.ExitCode -eq 5) -and ($r.Out -match 'revoked')) 'exit=5 resume refused'
 
-$null = New-Approval -Root $root1 -Gate 'G4' -AllowedBlocks @('D3') -RunlistHash $prep.Hash -RunnerHash $stubHash -AllowDirty $false
-$r = Invoke-Driver -Root $root1 -ArgList @('-Campaign', '-Blocks', 'D3', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
-Record 'S4-dirty-binding' ($r.ExitCode -ne 0 -and ($r.Out -match 'allow_dirty')) 'dirty tree refused without allow_dirty'
-
-$null = New-Approval -Root $root1 -Gate 'G3' -AllowedBlocks @('D3') -RunlistHash $prep.Hash -RunnerHash $stubHash
-$r = Invoke-Driver -Root $root1 -ArgList @('-Campaign', '-Blocks', 'D3', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
-Record 'S4-gate-binding' ($r.ExitCode -ne 0 -and ($r.Out -match 'requires G4')) 'wrong gate refused'
+# -DryRun must remain available (inspection only, launches nothing).
+$r = Invoke-Driver -Root $root1 -ArgList @('-DryRun', '-Campaign', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
+Record 'S4-dryrun-still-allowed' ($r.ExitCode -eq 0) 'dry-run inspection remains available (exit 0)'
 
 # ---------------------------------------------------------------------------
-# S5: a clean 6-trial run (stub), then packaging
-# ---------------------------------------------------------------------------
-Write-Host ''
-Write-Host 'S5: clean run + package' -ForegroundColor Cyan
-$null = New-Approval -Root $root1 -Gate 'G4' -AllowedBlocks @('D3') -RunlistHash $prep.Hash -RunnerHash $stubHash
-$env:I7_STUB_MODE = 'ok'
-$r = Invoke-Driver -Root $root1 -ArgList @('-Campaign', '-Blocks', 'D3', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
-$ledger = Read-Lines (Join-Path $root1 'results.jsonl')
-$finished = @($ledger | Where-Object { $_.event -eq 'FINISHED' })
-$success = @($finished | Where-Object { $_.status -eq 'SUCCESS' })
-Record 'S5-run' (($r.ExitCode -eq 0) -and ($success.Count -eq 6)) ('finished=' + $finished.Count + ' success=' + $success.Count)
-
-$zip = Join-Path $root1 'I7_WINDOWS_RESULTS.zip'
-Record 'S5-package' ((Test-Path $zip) -and (Test-Path (Join-Path $root1 'checksums.sha256')) -and (Test-Path (Join-Path $root1 'summary.json'))) 'zip + checksums + summary present'
-
-# ---------------------------------------------------------------------------
-# S6: crash recovery and resume
+# S5-S8: all trial-executing flows are revoked (R1.2e). The stub-runner
+# scenarios they previously exercised (clean run, crash/resume/replacement,
+# budget ceilings, timeout, invalid envelope) become unreachable until the
+# pilot gate rebuilds the execution path around runlistctl; the underlying
+# runner semantics remain covered by Go unit tests (cmd/i7trial,
+# harness2) and will be re-covered at the driver level post-rebuild.
 # ---------------------------------------------------------------------------
 Write-Host ''
-Write-Host 'S6: crash then resume' -ForegroundColor Cyan
-$root2 = New-Root 's6_crash'
+Write-Host 'S5-S8: executing flows revoked' -ForegroundColor Cyan
+$root2 = New-Root 's5_revoked'
 $prep2 = Prepare-Root $root2
 $null = New-Approval -Root $root2 -Gate 'G4' -AllowedBlocks @('D3') -RunlistHash $prep2.Hash -RunnerHash $stubHash
-$env:I7_STUB_MODE = 'crash'
+$env:I7_STUB_MODE = 'ok'
 $r = Invoke-Driver -Root $root2 -ArgList @('-Campaign', '-Blocks', 'D3', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
-$ledger = Read-Lines (Join-Path $root2 'results.jsonl')
-$started = @($ledger | Where-Object { $_.event -eq 'STARTED' })
-$finished = @($ledger | Where-Object { $_.event -eq 'FINISHED' })
-$bad = @($finished | Where-Object { $_.status -ne 'SUCCESS' })
-Record 'S6-crash-recorded' (($started.Count -eq 6) -and ($bad.Count -eq 6)) ('started=' + $started.Count + ' failed=' + $bad.Count)
+Record 'S5-campaign-revoked' (($r.ExitCode -eq 5) -and ($r.Out -match 'revoked')) ('exit=' + $r.ExitCode + ' no trial process launched')
 
-$env:I7_STUB_MODE = 'ok'
 $r = Invoke-Driver -Root $root2 -ArgList @('-Resume', '-Blocks', 'D3', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
-$ledger = Read-Lines (Join-Path $root2 'results.jsonl')
-$finished = @($ledger | Where-Object { $_.event -eq 'FINISHED' })
-$success = @($finished | Where-Object { $_.status -eq 'SUCCESS' })
-$m2 = Get-Content (Join-Path $root2 'campaign_manifest.json') -Raw | ConvertFrom-Json
-Record 'S6-resume' (($r.ExitCode -eq 0) -and ($success.Count -eq 6)) ('success after resume = ' + $success.Count)
-Record 'S6-replacements' ([int]$m2.replacements_used -eq 6) ('replacements_used = ' + $m2.replacements_used)
+Record 'S6-resume-revoked' (($r.ExitCode -eq 5) -and ($r.Out -match 'revoked')) 'exit=5 resume refused'
 
-# A second resume must be a no-op (nothing left to run).
-$before = @(Read-Lines (Join-Path $root2 'results.jsonl')).Count
-$r = Invoke-Driver -Root $root2 -ArgList @('-Resume', '-Blocks', 'D3', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
-$after = @(Read-Lines (Join-Path $root2 'results.jsonl')).Count
-Record 'S6-idempotent-resume' ($after -eq $before) ('ledger lines unchanged: ' + $before)
+$r = Invoke-Driver -Root $root2 -ArgList @('-Campaign', '-Blocks', 'D3', '-MaxTrials', '3', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
+Record 'S7-budget-revoked' (($r.ExitCode -eq 5) -and ($r.Out -match 'revoked')) 'exit=5 even under -MaxTrials (no partial authority)'
 
-# ---------------------------------------------------------------------------
-# S7: budget enforcement
-# ---------------------------------------------------------------------------
-Write-Host ''
-Write-Host 'S7: trial budget' -ForegroundColor Cyan
-$root3 = New-Root 's7_budget'
-$prep3 = Prepare-Root $root3
-$null = New-Approval -Root $root3 -Gate 'G4' -AllowedBlocks @('D3') -RunlistHash $prep3.Hash -RunnerHash $stubHash
-$env:I7_STUB_MODE = 'ok'
-$r = Invoke-Driver -Root $root3 -ArgList @('-Campaign', '-Blocks', 'D3', '-MaxTrials', '3', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
-$s3 = @(Read-Lines (Join-Path $root3 'results.jsonl') | Where-Object { $_.event -eq 'STARTED' })
-Record 'S7-max-trials' (($r.ExitCode -eq 0) -and ($s3.Count -eq 3)) ('started = ' + $s3.Count + ' with -MaxTrials 3')
-
-$r = Invoke-Driver -Root $root3 -ArgList @('-Campaign', '-Blocks', 'D3', '-MaxTrials', '3', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
-$s3b = @(Read-Lines (Join-Path $root3 'results.jsonl') | Where-Object { $_.event -eq 'STARTED' })
-Record 'S7-ceiling-blocks' (($r.ExitCode -ne 0) -and ($s3b.Count -eq 3) -and ($r.Out -match 'ceiling')) 'second run refused: attempts already at the -MaxTrials ceiling'
-
-$env:I7_STUB_MODE = 'hang'
-$root4 = New-Root 's7_timeout'
-$prep4 = Prepare-Root $root4
-$null = New-Approval -Root $root4 -Gate 'G4' -AllowedBlocks @('D3') -RunlistHash $prep4.Hash -RunnerHash $stubHash
-$r = Invoke-Driver -Root $root4 -ArgList @('-Campaign', '-Blocks', 'D3', '-MaxTrials', '1', '-TrialTimeoutSec', '2', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
-$fin4 = @(Read-Lines (Join-Path $root4 'results.jsonl') | Where-Object { $_.event -eq 'FINISHED' })
-Record 'S7-timeout' (($fin4.Count -eq 1) -and ($fin4[0].status -eq 'TIMEOUT')) ('status = ' + $(if ($fin4.Count -gt 0) { $fin4[0].status } else { 'none' }))
-$env:I7_STUB_MODE = 'ok'
-
-# ---------------------------------------------------------------------------
-# S8: an invalid envelope is rejected, never recorded as success
-# ---------------------------------------------------------------------------
-Write-Host ''
-Write-Host 'S8: envelope validation' -ForegroundColor Cyan
-$root5 = New-Root 's8_invalid'
-$prep5 = Prepare-Root $root5
-$null = New-Approval -Root $root5 -Gate 'G4' -AllowedBlocks @('D3') -RunlistHash $prep5.Hash -RunnerHash $stubHash
 $env:I7_STUB_MODE = 'invalid'
-$r = Invoke-Driver -Root $root5 -ArgList @('-Campaign', '-Blocks', 'D3', '-MaxTrials', '1', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
-$fin5 = @(Read-Lines (Join-Path $root5 'results.jsonl') | Where-Object { $_.event -eq 'FINISHED' })
-Record 'S8-invalid-envelope' (($fin5.Count -eq 1) -and ($fin5[0].status -eq 'INVALID')) ('status = ' + $(if ($fin5.Count -gt 0) { $fin5[0].status } else { 'none' }))
+$r = Invoke-Driver -Root $root2 -ArgList @('-Campaign', '-Blocks', 'D3', '-MaxTrials', '1', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
+Record 'S8-invalid-envelope-path-revoked' (($r.ExitCode -eq 5) -and ($r.Out -match 'revoked')) 'exit=5 (envelope validation itself is covered by Go unit tests)'
 $env:I7_STUB_MODE = 'ok'
 
 # ---------------------------------------------------------------------------
@@ -307,14 +251,53 @@ $frozenRoot = Join-Path $RepoRoot 'research\experiments\data\targeted_validation
 $r = Invoke-Driver -Root $frozenRoot -ArgList @('-Check')
 Record 'S9-frozen-root' (($r.ExitCode -ne 0) -or ($r.Out -match 'frozen')) 'results root inside a frozen campaign directory refused'
 
-$r = Invoke-Driver -Root $root3 -ArgList @('-Diagnostics')
-Record 'S9-diagnostics-gate' (($r.ExitCode -ne 0) -and ($r.Out -match 'G5')) 'diagnostics requires the G5 gate'
+$r = Invoke-Driver -Root $root2 -ArgList @('-Diagnostics')
+Record 'S9-diagnostics-revoked' (($r.ExitCode -eq 5) -and ($r.Out -match 'revoked')) 'diagnostics execution refused (R1.2e revocation precedes gate checks)'
 
-$r = Invoke-Driver -Root $root3 -ArgList @('-Preflight', '-Gate', 'G4')
-Record 'S9-gate-mode' (($r.ExitCode -ne 0) -and ($r.Out -match 'requires G3')) 'preflight rejects a G4 gate'
+$r = Invoke-Driver -Root $root2 -ArgList @('-Preflight', '-Gate', 'G4')
+Record 'S9-preflight-revoked' (($r.ExitCode -eq 5) -and ($r.Out -match 'revoked')) 'preflight execution refused regardless of gate'
 
-$r = Invoke-Driver -Root $root3 -ArgList @('-Campaign', '-RunnerOverride', $script:Stub)
-Record 'S9-override-guard' (($r.ExitCode -ne 0) -and ($r.Out -match 'TestMode')) 'runner override without -TestMode refused'
+$r = Invoke-Driver -Root $root2 -ArgList @('-Campaign', '-RunnerOverride', $script:Stub)
+Record 'S9-override-guard' (($r.ExitCode -ne 0) -and ($r.Out -match 'TestMode')) 'runner override without -TestMode refused (pre-dispatch guard still first)'
+
+# ---------------------------------------------------------------------------
+# S10: calibration authority revoked; template generation still available
+# ---------------------------------------------------------------------------
+Write-Host ''
+Write-Host 'S10: calibration authority' -ForegroundColor Cyan
+$rootCal = New-Root 's10_cal'
+$prepCal = Prepare-Root $rootCal
+
+$r = Invoke-Driver -Root $rootCal -ArgList @('-Calibrate', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
+Record 'S10-cal-revoked' (($r.ExitCode -eq 5) -and ($r.Out -match 'revoked')) 'exit=5 -Calibrate refused (the 9-run G3 calibration is legacy authority)'
+
+# Generate calibration approval template (non-executing, still available)
+$r = Invoke-Driver -Root $rootCal -ArgList @('-WriteApprovalTemplate', '-Gate', 'G3', '-Scope', 'calibration')
+$calTpl = Join-Path $rootCal 'APPROVAL.template.G3.calibration.json'
+Record 'S10-cal-template' (($r.ExitCode -eq 0) -and (Test-Path -LiteralPath $calTpl)) 'calibration approval template generated'
+
+# ---------------------------------------------------------------------------
+# S11: the authoritative R1.2e run-list model (runlistctl) validates end to end
+# ---------------------------------------------------------------------------
+Write-Host ''
+Write-Host 'S11: runlistctl authority' -ForegroundColor Cyan
+$rlDir = Join-Path $base 's11_runlistctl'
+New-Item -ItemType Directory -Force -Path $rlDir | Out-Null
+$rlCsv = Join-Path $rlDir 'runlist.csv'
+$rlReport = Join-Path $rlDir 'validation.json'
+$env:CGO_ENABLED = '0'
+Push-Location -LiteralPath $RepoRoot
+try {
+    $null = & go run .\research\experiments\phase_i7\cmd\runlistctl generate -out $rlCsv -seed 20261101 2>&1
+    $genOk = ($LASTEXITCODE -eq 0)
+    $null = & go run .\research\experiments\phase_i7\cmd\runlistctl validate -runlist $rlCsv -report $rlReport 2>&1
+    $valOk = ($LASTEXITCODE -eq 0)
+}
+finally { Pop-Location }
+$valRep = $null
+if (Test-Path -LiteralPath $rlReport) { $valRep = Get-Content $rlReport -Raw | ConvertFrom-Json }
+Record 'S11-generate-validate' ($genOk -and $valOk) ('runlistctl generate+validate exit 0')
+Record 'S11-ceiling-model' (($null -ne $valRep) -and ($valRep.ok) -and ([int]$valRep.worst_case_total -le 400) -and ([int]$valRep.guaranteed_buffer -ge 12)) ('worst case=' + $valRep.worst_case_total + ' buffer=' + $valRep.guaranteed_buffer + ' ceiling=400')
 
 # ---------------------------------------------------------------------------
 # S10: calibration idempotency, restart-safety, scope binding, and budget
@@ -337,71 +320,15 @@ Record 'S10-cal-template' (($r.ExitCode -eq 0) -and (Test-Path -LiteralPath $cal
 # Approve for calibration
 $null = New-Approval -Root $rootCal -Gate 'G3' -AllowedBlocks @('PF') -RunlistHash $prepCal.Hash -RunnerHash $stubHash -Scope 'calibration'
 
-# Run calibration (all 9 runs with stub runner)
-$env:I7_STUB_MODE = 'ok'
-$r = Invoke-Driver -Root $rootCal -ArgList @('-Calibrate', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
-$calLedger = Join-Path $rootCal 'calibration\calibration_ledger.jsonl'
-$calStarted = @(Read-Lines $calLedger | Where-Object { $_.event -eq 'STARTED' })
-$calFinished = @(Read-Lines $calLedger | Where-Object { $_.event -eq 'FINISHED' -and $_.status -eq 'SUCCESS' })
-$calJson = Join-Path $rootCal 'calibration.json'
-Record 'S10-cal-run' (($r.ExitCode -eq 0) -and ($calFinished.Count -eq 9) -and (Test-Path -LiteralPath $calJson)) ('calibration completed: finished=' + $calFinished.Count)
+# S10 (continued): every legacy calibration execution path is revoked. The
+# idempotency/restart-safety/partial-completion machinery of the G3
+# calibration is unreachable until the pilot gate rebuilds it; its semantics
+# remain specified by I7_G3_CALIBRATION_CORRECTIVE_PACKET.md.
+$r = Invoke-Driver -Root $rootCal -ArgList @('-Calibrate', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg, '-Scope', 'calibration')
+Record 'S10-cal-revoked-with-scope' (($r.ExitCode -eq 5) -and ($r.Out -match 'revoked')) 'exit=5 even with a calibration-scope approval (no bypass exists)'
 
-# Verify balanced Latin-square seeds and execution order across arms
-$specA1 = Get-Content -Raw (Join-Path $rootCal 'work\specs\cal_A_01.json') | ConvertFrom-Json
-$specAmin1 = Get-Content -Raw (Join-Path $rootCal 'work\specs\cal_AMIN_01.json') | ConvertFrom-Json
-$specB1 = Get-Content -Raw (Join-Path $rootCal 'work\specs\cal_B_01.json') | ConvertFrom-Json
-$seedsMatchTriplet1 = ($specA1.seed -eq $specAmin1.seed) -and ($specAmin1.seed -eq $specB1.seed)
-$orderCorrect = ($specA1.order_position -eq 1) -and ($specAmin1.order_position -eq 2) -and ($specB1.order_position -eq 3)
-Record 'S10-cal-seeds-and-order' ($seedsMatchTriplet1 -and $orderCorrect) ('triplet 1 shared seed=' + $specA1.seed + ' balanced orders=(1,2,3)')
-
-# Idempotency: Invoking -Calibrate again must execute 0 new processes and return immediately
-$beforeLines = @(Read-Lines $calLedger).Count
-$r = Invoke-Driver -Root $rootCal -ArgList @('-Calibrate', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
-$afterLines = @(Read-Lines $calLedger).Count
-Record 'S10-cal-idempotent' (($r.ExitCode -eq 0) -and ($afterLines -eq $beforeLines) -and ($r.Out -match 'already complete')) 'second -Calibrate is idempotent (0 new runs)'
-
-# Incomplete calibration refusal: if any cell is missing, -Calibrate must fail closed and refuse to produce calibration.json
-$rootCalPartial = New-Root 's10_cal_partial'
-$prepCalPartial = Prepare-Root $rootCalPartial
-$null = New-Approval -Root $rootCalPartial -Gate 'G3' -AllowedBlocks @('PF') -RunlistHash $prepCalPartial.Hash -RunnerHash $stubHash -Scope 'calibration'
-$calDirPartial = Join-Path $rootCalPartial 'calibration'
-New-Item -ItemType Directory -Force -Path $calDirPartial | Out-Null
-$partialLedger = Join-Path $calDirPartial 'calibration_ledger.jsonl'
-# Populate only 8 of 9 cells (omit cal_AMIN_03)
-$allPlanCells = @('cal_A_01','cal_AMIN_01','cal_B_01','cal_AMIN_02','cal_B_02','cal_A_02','cal_B_03','cal_A_03')
-foreach ($cellTid in $allPlanCells) {
-    [System.IO.File]::AppendAllText($partialLedger, ((@{ event = 'STARTED'; trial_id = $cellTid } | ConvertTo-Json -Compress) + "`n"))
-    [System.IO.File]::AppendAllText($partialLedger, ((@{ event = 'FINISHED'; trial_id = $cellTid; status = 'SUCCESS' } | ConvertTo-Json -Compress) + "`n"))
-    $fake = @{ status = 'SUCCESS'; result = @{ throughput = @{ read_ops_per_sec = 1200.0 } } }
-    [System.IO.File]::WriteAllText((Join-Path $calDirPartial ($cellTid + '.json')), ($fake | ConvertTo-Json -Compress))
-}
-# With stub mode set to fail, the missing 9th run will fail
-$env:I7_STUB_MODE = 'fail'
-$r = Invoke-Driver -Root $rootCalPartial -ArgList @('-Calibrate', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
-$calJsonPartial = Join-Path $rootCalPartial 'calibration.json'
-Record 'S10-cal-incomplete-refusal' (($r.ExitCode -ne 0) -and (-not (Test-Path -LiteralPath $calJsonPartial)) -and ($r.Out -match 'calibration incomplete')) 'calibration refuses partial completion (no calibration.json produced)'
-$env:I7_STUB_MODE = 'ok'
-
-# Restart-safety: Simulate crash after 4 runs in a fresh root
-$rootCalCrash = New-Root 's10_cal_crash'
-$prepCalCrash = Prepare-Root $rootCalCrash
-$null = New-Approval -Root $rootCalCrash -Gate 'G3' -AllowedBlocks @('PF') -RunlistHash $prepCalCrash.Hash -RunnerHash $stubHash -Scope 'calibration'
-$calDirCrash = Join-Path $rootCalCrash 'calibration'
-New-Item -ItemType Directory -Force -Path $calDirCrash | Out-Null
-$crashLedger = Join-Path $calDirCrash 'calibration_ledger.jsonl'
-$preArms = @('A', 'A', 'A', 'AMIN')
-$preReps = @(1, 2, 3, 1)
-for ($idx = 0; $idx -lt 4; $idx++) {
-    $a = $preArms[$idx]; $rep = $preReps[$idx]
-    $tid = ('cal_{0}_{1:D2}' -f $a, $rep)
-    [System.IO.File]::AppendAllText($crashLedger, ((@{ event = 'STARTED'; trial_id = $tid; arm = $a; rep = $rep } | ConvertTo-Json -Compress) + "`n"))
-    [System.IO.File]::AppendAllText($crashLedger, ((@{ event = 'FINISHED'; trial_id = $tid; arm = $a; rep = $rep; status = 'SUCCESS' } | ConvertTo-Json -Compress) + "`n"))
-    $fakeResult = @{ status = 'SUCCESS'; result = @{ throughput = @{ read_ops_per_sec = 1000.0 } } }
-    [System.IO.File]::WriteAllText((Join-Path $calDirCrash ($tid + '.json')), ($fakeResult | ConvertTo-Json -Compress))
-}
-$r = Invoke-Driver -Root $rootCalCrash -ArgList @('-Calibrate', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
-$crashFinished = @(Read-Lines $crashLedger | Where-Object { $_.event -eq 'FINISHED' -and $_.status -eq 'SUCCESS' })
-Record 'S10-cal-restart-safe' (($r.ExitCode -eq 0) -and ($crashFinished.Count -eq 9)) ('resumed partial calibration: total success = ' + $crashFinished.Count)
+$calLedgerExists = Test-Path -LiteralPath (Join-Path $rootCal 'calibration\calibration_ledger.jsonl')
+Record 'S10-cal-no-ledger-created' (-not $calLedgerExists) 'refused calibration created no execution ledger'
 
 # ---------------------------------------------------------------------------
 # Summary

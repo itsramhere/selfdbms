@@ -29,13 +29,15 @@ func main() {
 		generate(os.Args[2:])
 	case "validate":
 		validate(os.Args[2:])
+	case "ceiling":
+		ceiling(os.Args[2:])
 	default:
 		usage()
 	}
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: runlistctl generate|validate [flags] (see -h)")
+	fmt.Fprintln(os.Stderr, "usage: runlistctl generate|validate|ceiling [flags] (see -h)")
 	os.Exit(2)
 }
 
@@ -136,14 +138,49 @@ func validate(args []string) {
 		fmt.Fprintf(os.Stderr, "ERROR: %s\n", e)
 	}
 	fmt.Printf("validated %d rows: planned %d (anchors %d), replacements %d, worst case %d, buffer %d, ceiling %d -> %s\n",
-		rep.Total, rep.Planned, rep.D3, rep.Repl, rep.Worst, rep.Buffer, runlist.GlobalCeiling, verdict(rep))
+		rep.Total, rep.Planned, rep.D3, rep.Repl, rep.Worst, rep.Buffer, runlist.GlobalCeiling, verdict(rep.OK))
 	if !rep.OK {
 		os.Exit(1)
 	}
 }
 
-func verdict(rep *runlist.Findings) string {
-	if rep.OK {
+// ceiling verifies the campaign execution ledger against the strict global
+// ceiling: every physical execution (pilot, drift anchor, retry, replacement,
+// interrupted, aborted, or successful) counts.
+func ceiling(args []string) {
+	f := fs("ceiling")
+	ledgerPath := f.String("ledger", "results.jsonl", "execution ledger JSONL (STARTED/FINISHED events)")
+	reportPath := f.String("report", "", "optional JSON report path")
+	_ = f.Parse(args)
+
+	file, err := os.Open(*ledgerPath)
+	if err != nil {
+		fatal("open ledger: %v", err)
+	}
+	defer file.Close()
+	records, err := runlist.ParseExecutionLedgerJSONL(file)
+	if err != nil {
+		fatal("parse ledger: %v", err)
+	}
+	rep := runlist.ValidateExecutionLedger(records)
+	if *reportPath != "" {
+		b, _ := json.MarshalIndent(rep, "", "  ")
+		if err := os.WriteFile(*reportPath, append(b, '\n'), 0o644); err != nil {
+			fatal("write report: %v", err)
+		}
+	}
+	for _, e := range rep.Errors {
+		fmt.Fprintf(os.Stderr, "ERROR: %s\n", e)
+	}
+	fmt.Printf("execution ledger: %d physical executions started (%d finished, %d unfinished), replacements/retries %d/%d, remaining under ceiling %d/%d -> %s\n",
+		rep.Started, rep.Finished, rep.Unfinished, rep.ReplRetry, runlist.ReplacementBudget, rep.Remaining, rep.Ceiling, verdict(rep.OK))
+	if !rep.OK {
+		os.Exit(1)
+	}
+}
+
+func verdict(ok bool) string {
+	if ok {
 		return "PASS"
 	}
 	return "FAIL"

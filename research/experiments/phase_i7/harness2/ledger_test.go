@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"owndbms/lsmengine"
+	runlistpkg "owndbms/research/experiments/phase_i7/runlist"
 )
 
 func validScheduledLedger() RequestAccounting {
@@ -171,6 +172,99 @@ func TestRunSyncInstrumentationAttachAndAggregate(t *testing.T) {
 	p, ok := res.Sync.PublicationNanos[lsmengine.LockSiteFlushPublish.String()]
 	if !ok || p.Count == 0 {
 		t.Fatalf("no publications recorded: %+v", res.Sync.PublicationNanos)
+	}
+}
+
+// TestRunLedgerConservationUnderOpenLoopOverload forces the cancellation
+// paths of the open-loop driver: an offered rate far above service capacity
+// with a tight lateness bound W_max produces abandoned claims (cancellation)
+// and queued arrivals (window closes before claiming). The conservation
+// identities must hold for whatever outcome mix materializes.
+func TestRunLedgerConservationUnderOpenLoopOverload(t *testing.T) {
+	spec := miniSpec(t, "E4", "ol_overload", "A")
+	spec.OpenLoopRatePerSec = 100_000
+	spec.MaxLatenessMs = 2
+	res, err := Run(spec, testEnv(), "test")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if res.Status != "SUCCESS" {
+		t.Fatalf("trial failed: %s", res.Error)
+	}
+	l := res.Ledger.Reads
+	if err := res.Ledger.Validate(true, false); err != nil {
+		t.Fatalf("conservation violated under cancellation: %v", err)
+	}
+	if l.Offered != l.Attempted+l.Abandoned+l.Queued {
+		t.Fatalf("arrival partition broken: %+v", l)
+	}
+	if l.Abandoned == 0 {
+		t.Fatalf("overload scenario produced no cancellations; the abandonment path was not exercised: %+v", l)
+	}
+	// The offered set is exactly the schedule.
+	if l.Offered != res.Operations.ReadOpsScheduled {
+		t.Fatalf("offered %d != scheduled %d", l.Offered, res.Operations.ReadOpsScheduled)
+	}
+}
+
+// TestRunLedgerConservationUnderLateCompletion forces completions after the
+// measured window: a short window with continuous closed-loop readers leaves
+// requests outstanding at close, which must appear as completed_late and
+// satisfy the outstanding identity exactly.
+func TestRunLedgerConservationUnderLateCompletion(t *testing.T) {
+	spec := miniSpec(t, "E1", "r01_late", "A")
+	spec.MeasurementDurationMs = 25
+	spec.WriterConcurrency = 1
+	res, err := Run(spec, testEnv(), "test")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if res.Status != "SUCCESS" {
+		t.Fatalf("trial failed: %s", res.Error)
+	}
+	l := res.Ledger.Reads
+	if err := res.Ledger.Validate(false, false); err != nil {
+		t.Fatalf("conservation violated under late completion: %v", err)
+	}
+	if l.CompletedInWindow == 0 {
+		t.Fatalf("scenario produced no in-window completions: %+v", l)
+	}
+	if l.OutstandingAtClose != l.CompletedLate {
+		t.Fatalf("outstanding at close %d != late completions %d", l.OutstandingAtClose, l.CompletedLate)
+	}
+	// The throughput denominator counts only in-window completions.
+	if res.Operations.ReadOpsCompletedInWindow != l.CompletedInWindow {
+		t.Fatalf("OperationCounts in-window %d != ledger %d", res.Operations.ReadOpsCompletedInWindow, l.CompletedInWindow)
+	}
+}
+
+// TestExecutionLedgerCountsInterruptedProcess ties process interruption into
+// the ceiling: a driver that dies after launching trials leaves STARTED
+// records without FINISHED; those executions consumed budget.
+func TestExecutionLedgerCountsInterruptedProcess(t *testing.T) {
+	var records []runlistpkg.ExecutionRecord
+	var ids []string
+	for i := 0; i < 5; i++ {
+		id := string(rune('A'+i)) + "_trial"
+		ids = append(ids, id)
+		records = append(records, runlistpkg.ExecutionRecord{
+			Event: "STARTED", TrialID: id, Kind: runlistpkg.KindConfirmatory,
+		})
+	}
+	for i := 0; i < 3; i++ {
+		records = append(records, runlistpkg.ExecutionRecord{
+			Event: "FINISHED", TrialID: ids[i], Outcome: runlistpkg.OutcomeSuccess,
+		})
+	}
+	rep := runlistpkg.ValidateExecutionLedger(records)
+	if !rep.OK {
+		t.Fatalf("interrupted ledger rejected: %v", rep.Errors)
+	}
+	if rep.Started != 5 || rep.Finished != 3 || rep.Unfinished != 2 {
+		t.Fatalf("started=%d finished=%d unfinished=%d, want 5/3/2", rep.Started, rep.Finished, rep.Unfinished)
+	}
+	if rep.Remaining != runlistpkg.GlobalCeiling-5 {
+		t.Fatalf("remaining %d, want %d", rep.Remaining, runlistpkg.GlobalCeiling-5)
 	}
 }
 

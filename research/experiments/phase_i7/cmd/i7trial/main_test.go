@@ -5,6 +5,9 @@ package main
 // execute a trial.
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -73,6 +76,78 @@ func validEnvelope() *Envelope {
 	}
 	e.Result.Timestamps.MeasuredWindowNs = 1
 	return e
+}
+
+// TestCheckApprovalBindings covers the approval-binding refusals at the
+// runner level (the driver-level scenarios of the G2 orchestration suite
+// became revocation assertions when the legacy execution authority was
+// removed): campaign, protocol, gate, runner hash, and block-set bindings
+// must all match or execution is refused.
+func TestCheckApprovalBindings(t *testing.T) {
+	selfHash := runtimeInfo().ExeSHA256
+	if selfHash == "" {
+		t.Skip("runner self-hash unavailable in this environment")
+	}
+
+	write := func(t *testing.T, mutate func(a *Approval)) string {
+		t.Helper()
+		a := Approval{
+			CampaignID:      campaignID,
+			ProtocolVersion: protocolVersion,
+			Gate:            "G4",
+			Approved:        true,
+			ApprovedBy:      "unit-test",
+			ApprovedAt:      "2026-10-29T00:00:00Z",
+			Scope:           "SYNTHETIC - unit test only",
+			RunlistSHA256:   "0f6076500a56a05b4a1c1b5b8b1c9b5f4f3e2d1c0b9a8a7b6c5d4e3f2a1b0c9d",
+			RunnerSHA256:    selfHash,
+			AllowedBlocks:   []string{"D3", "E1"},
+			AllowedPhases:   []string{"confirmatory", "drift_anchor"},
+			MaxTrials:       400,
+			AllowDirty:      true,
+		}
+		if mutate != nil {
+			mutate(&a)
+		}
+		path := filepath.Join(t.TempDir(), "APPROVAL.json")
+		b, err := json.Marshal(a)
+		if err != nil {
+			t.Fatalf("marshal approval: %v", err)
+		}
+		if err := os.WriteFile(path, b, 0o644); err != nil {
+			t.Fatalf("write approval: %v", err)
+		}
+		return path
+	}
+
+	// The fully valid approval must pass for an approved block.
+	if _, err := checkApproval(write(t, nil), "G4", "D3"); err != nil {
+		t.Fatalf("valid approval rejected: %v", err)
+	}
+
+	cases := map[string]func(a *Approval){
+		"not approved":       func(a *Approval) { a.Approved = false },
+		"wrong campaign":     func(a *Approval) { a.CampaignID = "OTHER" },
+		"wrong protocol":     func(a *Approval) { a.ProtocolVersion = "0.0.1" },
+		"wrong gate":         func(a *Approval) { a.Gate = "G3" },
+		"wrong runner hash":  func(a *Approval) { a.RunnerSHA256 = strings.Repeat("0", 64) },
+		"empty runner hash":  func(a *Approval) { a.RunnerSHA256 = "" },
+		"empty block set":    func(a *Approval) { a.AllowedBlocks = nil },
+		"block not approved": func(a *Approval) { a.AllowedBlocks = []string{"E1"} },
+	}
+	for name, mutate := range cases {
+		if _, err := checkApproval(write(t, mutate), "G4", "D3"); err == nil {
+			t.Fatalf("%s: expected checkApproval to refuse", name)
+		}
+	}
+
+	// Missing gate or approval file refuse outright.
+	if _, err := checkApproval("", "G4", "D3"); err == nil {
+		t.Fatal("missing gate accepted")
+	}
+	if _, err := checkApproval(filepath.Join(t.TempDir(), "missing.json"), "G4", "D3"); err == nil {
+		t.Fatal("missing approval file accepted")
+	}
 }
 
 // TestValidateEnvelopeErrorPaths covers the fail-closed envelope checks that
