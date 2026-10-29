@@ -20,3 +20,4 @@ research/experiments/phase_i7/**/_storage_probe.bin
 research/experiments/phase_i7/*.zip
 research/experiments/phase_i7/*.zip.sha256
 research/experiments/data/**/*.zip
+_work/ (scratch intermediates: probe roots, work CSVs, stub builds)

@@ -1,9 +1,0 @@
-{
-  "ok": true,
-  "total_rows": 372,
-  "planned_runs": 372,
-  "drift_anchor_runs": 12,
-  "replacement_runs": 0,
-  "worst_case_total": 388,
-  "guaranteed_buffer": 12
-}
