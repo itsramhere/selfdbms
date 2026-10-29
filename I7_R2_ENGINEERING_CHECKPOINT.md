@@ -63,10 +63,10 @@ branch: research/i7-engineering-preflight (from f4cce4b5faa80924c7ef945139ef1a65
 a0d0a2e docs(i7-r1): addendum — R1.1 reviewer-response paper artifacts ...
 3427642 feat(i7-preflight): non-invasive sync instrumentation, conserved transaction ledger, and D3 dispatch
 067af86 feat(i7-preflight): R1.2e run-list model and EXP-3 metadata microbenchmark suite
-<final> docs(i7-r2): deliver R2 engineering checkpoint, estimand mismatch notice, provenance manifest
+f34b3a1 docs(i7-r2): deliver R2 engineering checkpoint, estimand mismatch notice, run-list validation artifacts
 ```
 
-(The final commit hash is recorded in `I7_R2_PROVENANCE_MANIFEST.sha256`, which is committed last and therefore covers the checkpoint itself.)
+The checkpoint text itself and `I7_R2_PROVENANCE_MANIFEST.sha256` land in the terminal commit(s) of this branch; the manifest hashes every delivered artifact and is committed last by construction, so its own digest lives in the git history. The git chain is the authoritative record.
 
 ## 5. Implemented infrastructure
 

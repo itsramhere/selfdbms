@@ -1,7 +1,7 @@
 # I7 R2 Engineering Checkpoint — Provenance Manifest
 # branch: research/i7-engineering-preflight (from frozen revision f4cce4b5faa80924c7ef945139ef1a65ccb2b32a)
-# engineering commits: 3427642, 067af86, f34b3a1
-# generated: 2026-10-29T17:07:07Z
+# engineering commits: 3427642, 067af86, f34b3a1 (see git log for the terminal doc commits)
+# generated: 2026-10-29T17:08:15Z
 #
 # --- engineering sources (new/modified vs 27a041e) ---
 889b8fcd1938031ea827b1aecbeb0707a99823c727b3d156198bf8124c3b8dab  lsmengine/compaction.go
@@ -34,7 +34,7 @@ d37b276d7ffde34b8edcadab1827d15237c205cd32a941cc9fe5e62174a37a49  research/exper
 99ac90cf82b291f901c4f47ab94ff4b2948982faf8968a3eba898d15edb8bd4f  research/experiments/phase_i7/runlist_validation/validation_N8.json
 #
 # --- checkpoint documents ---
-ce68b46fd6cc04b19f1db3f0e3bfee3c2f526d0b68358d8b75ebec6a185056a7  I7_R2_ENGINEERING_CHECKPOINT.md
+11b0759170b832e68a9be87406edbe822262f75043ec47944b44969292b1f0f5  I7_R2_ENGINEERING_CHECKPOINT.md
 dea72a726433fbb31b54abd2ed9023d9b9e2f71ed33bd61ba354e2f9edb35465  R1_2E_ESTIMAND_SCALE_MISMATCH_NOTICE.md
 #
 # --- run-list validation artifacts (synthetic) ---
@@ -48,6 +48,6 @@ dbcd469e9b6860e573f039716faf2edc92329b86d5d2351379534c49a4d387e3  research/exper
 4dce74545f427752232fd1360bd2eb3e1f8f212d78b2058f7646afc1902e37d1  research/experiments/analysis/r1_2e_power_simulation_results.json
 37725ba47ae712ccdbdf8cc6dc7497fa780d5c419a8831cf54876f5bc2e27584  R1_2E_CONSOLIDATED_PROTOCOL_CORRECTIONS.md
 #
-# --- historical G4 provenance (verified untouched) ---
+# --- historical G4/G3 review packets (verified untouched) ---
 c94b88e428643228f22a8f52f6292c30bfae493a4b22eb0816f328fcb09618d6  research/experiments/phase_i7/I7_G2_REVIEW_PACKET.md
 af6b2746356983711dfd6de6523470ed3b97015ab60e2558b06885c4010bd436  research/experiments/phase_i7/I7_G3_CALIBRATION_CORRECTIVE_PACKET.md
