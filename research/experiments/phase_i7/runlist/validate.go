@@ -174,6 +174,9 @@ func Validate(rows []Row, catalog Catalog) *Findings {
 	// the last EXP-1 row; D3-03 immediately after the C2-03 cell; D3-04 as
 	// the final 3 rows.
 	for _, r := range rows {
+		if r.Phase == PhaseReplacement {
+			continue // replacements are budget-checked, not milestone-checked
+		}
 		switch r.TripletKey {
 		case "D3|C2-01|01":
 			if r.Position < 1 || r.Position > 3 {
