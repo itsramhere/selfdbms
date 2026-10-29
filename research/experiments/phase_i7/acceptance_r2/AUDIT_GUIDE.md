@@ -17,7 +17,7 @@ GIT_REVISION.txt                 branch, HEAD, engineering diff base, commit cha
 SOURCE_TREE.sha256               SHA-256 of every tracked source file at HEAD (via git show)
 diff/r2_engineering.diff         full engineering diff vs. the preservation commit 27a041e
 diff/r2_engineering.diffstat.txt diffstat of the same
-sources/                         the instrumentation, ledger, run-list, and runner files
+_sources/                        the instrumentation, ledger, run-list, and runner files
 test_evidence/TEST_COMMANDS_AND_OUTPUTS.txt   commands + raw outputs + exit codes (Windows)
 test_evidence/race_verification_wsl2.log      verbatim race-enabled run (WSL2) + notes
 test_evidence/capture_windows_evidence.sh     the script that generated the evidence file
