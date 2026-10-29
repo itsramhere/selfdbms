@@ -1,0 +1,48 @@
+ I7_R2_ACCEPTANCE_ADDENDUM.md                       |  44 ++
+ I7_R2_ENGINEERING_CHECKPOINT.md                    | 164 ++++++++
+ I7_R2_PROVENANCE_MANIFEST.sha256                   |  53 +++
+ R1_2E_ESTIMAND_SCALE_MISMATCH_NOTICE.md            |  62 +++
+ R2_STATISTICAL_DECISION_PREPARATION.md             |  75 ++++
+ lsmengine/compaction.go                            |   6 +
+ lsmengine/flush_observer.go                        |   7 +-
+ lsmengine/flush_publication_overlap_test.go        |   2 +-
+ lsmengine/manager.go                               |  80 ++--
+ lsmengine/metadata_bench_test.go                   | 253 ++++++++++++
+ lsmengine/snapshot.go                              |  23 +-
+ lsmengine/sync_instrumentation.go                  | 234 +++++++++++
+ lsmengine/sync_instrumentation_test.go             | 440 ++++++++++++++++++++
+ lsmengine/sync_observer_audit_test.go              | 215 ++++++++++
+ lsmengine/transaction.go                           |   4 +
+ paper/REPRODUCIBILITY_APPENDIX.md                  |  76 ++++
+ paper/REVIEWER_RESPONSE.md                         |  58 +++
+ paper/figures/fig_i7_amin_vs_b_paired.png          | Bin 0 -> 155593 bytes
+ paper/figures/fig_i7_e3_write_disparity.png        | Bin 0 -> 118050 bytes
+ paper/figures/fig_i7_e4_open_loop_p50.png          | Bin 0 -> 111238 bytes
+ paper/paper_revised.pdf                            | Bin 0 -> 635460 bytes
+ .../t1_deterministic_sync_test.go                  |   2 +-
+ research/experiments/harness/flush_tracker.go      |   8 +-
+ .../test_evidence/orchestration_results.json       | 137 +++++++
+ .../test_evidence/orchestration_tests_run3.log     |  50 +++
+ research/experiments/phase_i7/cmd/i7trial/main.go  |   7 +-
+ .../experiments/phase_i7/cmd/i7trial/main_test.go  | 185 +++++++++
+ .../experiments/phase_i7/cmd/runlistctl/main.go    | 192 +++++++++
+ research/experiments/phase_i7/harness2/clock.go    |   8 +
+ research/experiments/phase_i7/harness2/events.go   |   4 +-
+ research/experiments/phase_i7/harness2/ledger.go   | 132 ++++++
+ .../experiments/phase_i7/harness2/ledger_test.go   | 291 ++++++++++++++
+ research/experiments/phase_i7/harness2/run.go      |  42 ++
+ research/experiments/phase_i7/harness2/run_test.go |  11 +-
+ research/experiments/phase_i7/harness2/spec.go     |  28 ++
+ .../experiments/phase_i7/harness2/syncinstr.go     | 198 +++++++++
+ research/experiments/phase_i7/run_i7.ps1           |  51 ++-
+ .../phase_i7/runlist/execution_ledger.go           | 184 +++++++++
+ .../phase_i7/runlist/execution_ledger_test.go      | 186 +++++++++
+ research/experiments/phase_i7/runlist/runlist.go   | 443 +++++++++++++++++++++
+ .../experiments/phase_i7/runlist/runlist_test.go   | 262 ++++++++++++
+ research/experiments/phase_i7/runlist/validate.go  | 359 +++++++++++++++++
+ .../phase_i7/runlist_validation/runlist_N10.csv    | 373 +++++++++++++++++
+ .../phase_i7/runlist_validation/runlist_N8.csv     | 301 ++++++++++++++
+ .../runlist_validation/validation_N10.json         |   9 +
+ .../phase_i7/runlist_validation/validation_N8.json |   9 +
+ .../phase_i7/tests/orchestration_tests.ps1         | 245 ++++--------
+ 47 files changed, 5295 insertions(+), 218 deletions(-)

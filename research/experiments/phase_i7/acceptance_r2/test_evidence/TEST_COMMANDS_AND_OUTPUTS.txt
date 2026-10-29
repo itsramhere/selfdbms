@@ -1,0 +1,200 @@
+# R2 acceptance evidence — Windows host
+# generated: 2026-10-29T18:36:42Z
+# host: MINGW64_NT-10.0-26200 x86_64 / PowerShell 5.1.26100.9711
+# git HEAD: 232e48ad15ade50e0e096cd8de990b8c32127ebb
+# branch:   research/i7-engineering-preflight
+# engineering diff base: 27a041e (R1.x preservation commit)
+#
+# NOTE: the race-enabled run is captured separately in
+#       race_verification_wsl2.log (Windows has no CGO toolchain;
+#       WSL2 Ubuntu is the supported race-verification environment).
+
+==============================================================
+$ go version
+--------------------------------------------------------------
+go version go1.26.3 windows/amd64
+--------------------------------------------------------------
+exit code: 0
+
+==============================================================
+$ go env GOOS GOARCH CGO_ENABLED
+--------------------------------------------------------------
+windows
+amd64
+0
+--------------------------------------------------------------
+exit code: 0
+
+==============================================================
+$ go build ./...
+--------------------------------------------------------------
+--------------------------------------------------------------
+exit code: 0
+
+==============================================================
+$ go vet ./...
+--------------------------------------------------------------
+--------------------------------------------------------------
+exit code: 0
+
+==============================================================
+$ go test ./lsmengine/ ./research/experiments/phase_i7/harness2/ ./research/experiments/phase_i7/runlist/ ./research/experiments/phase_i7/cmd/i7trial/ ./research/experiments/harness/ ./research/experiments/corrective_validation/ -count=1 -timeout 1800s
+--------------------------------------------------------------
+ok  	owndbms/lsmengine	16.115s
+ok  	owndbms/research/experiments/phase_i7/harness2	8.217s
+ok  	owndbms/research/experiments/phase_i7/runlist	0.857s
+ok  	owndbms/research/experiments/phase_i7/cmd/i7trial	1.021s
+ok  	owndbms/research/experiments/harness	63.019s
+ok  	owndbms/research/experiments/corrective_validation	7.577s
+--------------------------------------------------------------
+exit code: 0
+
+==============================================================
+$ go test ./lsmengine/ -run '^$' -bench '^$'   # EXP-3 benchmarks: compile-verified, NOT executed
+--------------------------------------------------------------
+PASS
+ok  	owndbms/lsmengine	2.387s
+--------------------------------------------------------------
+exit code: 0
+
+==============================================================
+# runlistctl: authoritative run-list generation and validation
+
+==============================================================
+$ go run ./research/experiments/phase_i7/cmd/runlistctl generate -out "/c/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/runlist_N8.csv" -seed 20261101
+--------------------------------------------------------------
+generated 300 rows (planned model 300 runs, worst case 316, ceiling 400) -> C:/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/runlist_N8.csv
+--------------------------------------------------------------
+exit code: 0
+
+==============================================================
+$ go run ./research/experiments/phase_i7/cmd/runlistctl validate -runlist "/c/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/runlist_N8.csv" -report "/c/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/validation_N8.json"
+--------------------------------------------------------------
+validated 300 rows: planned 300 (anchors 12), replacements 0, worst case 316, buffer 84, ceiling 400 -> PASS
+--------------------------------------------------------------
+exit code: 0
+
+==============================================================
+$ go run ./research/experiments/phase_i7/cmd/runlistctl generate -out "/c/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/runlist_N10.csv" -seed 20261101 -sizing "/c/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/sizing10.json"
+--------------------------------------------------------------
+generated 372 rows (planned model 372 runs, worst case 388, ceiling 400) -> C:/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/runlist_N10.csv
+--------------------------------------------------------------
+exit code: 0
+
+==============================================================
+$ go run ./research/experiments/phase_i7/cmd/runlistctl validate -runlist "/c/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/runlist_N10.csv" -report "/c/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/validation_N10.json"
+--------------------------------------------------------------
+validated 372 rows: planned 372 (anchors 12), replacements 0, worst case 388, buffer 12, ceiling 400 -> PASS
+--------------------------------------------------------------
+exit code: 0
+
+==============================================================
+# runlistctl ceiling: every physical execution counts (pilot, drift
+# anchors, retries, replacements, interrupted, aborted)
+
+==============================================================
+$ go run ./research/experiments/phase_i7/cmd/runlistctl ceiling -ledger "/c/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/ledger_ok.jsonl" -report "/c/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/ceiling_ok.json"
+--------------------------------------------------------------
+execution ledger: 7 physical executions started (6 finished, 1 unfinished), replacements/retries 2/16, remaining under ceiling 393/400 -> PASS
+--------------------------------------------------------------
+exit code: 0
+appended 400 more STARTED records: 413 total executions, ceiling is 400
+
+==============================================================
+$ go run ./research/experiments/phase_i7/cmd/runlistctl ceiling -ledger "/c/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/ledger_ok.jsonl"; echo "(ceiling breach: the observed exit 1 above is the correct fail-closed verdict)" || true
+--------------------------------------------------------------
+ERROR: ceiling violated: 407 physical executions exceed the strict global ceiling of 400
+execution ledger: 407 physical executions started (6 finished, 401 unfinished), replacements/retries 2/16, remaining under ceiling -7/400 -> FAIL
+exit status 1
+(ceiling breach: the observed exit 1 above is the correct fail-closed verdict)
+--------------------------------------------------------------
+exit code: 0
+
+==============================================================
+# driver: legacy execution authority revoked (fail closed, exit 5)
+
+==============================================================
+$ powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'research/experiments/phase_i7/run_i7.ps1' -Root '/c/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/probe_root' -Check -TestMode -RunnerOverride '/c/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/i7stub.exe' -PebbleRunnerOverride '/c/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/i7stub.exe'
+--------------------------------------------------------------
+
+==============================================================================
+I7 platform validation (-Check)
+==============================================================================
+  [ OK ] host: LAPTOP-6O160KFN / Microsoft Windows 11 Home Single Language (build 26200)
+  [ OK ] cpu: AMD Ryzen 7 7445HS w/ Radeon 740M Graphics | 6 physical / 12 logical
+  [ OK ] ram: 15.2 GiB
+  [ OK ] filesystem: NTFS on SAMSUNG MZVL8512HFLU-00BH1 (NVMe)
+  [ OK ] filesystem is NTFS
+  [ OK ] results root resides on an NVMe device
+  [ OK ] free space: 92.6 GiB
+  [ OK ] RAM >= 8 GiB
+  [ OK ] go: go version go1.26.3 windows/amd64
+  [ OK ] GOOS=windows
+  [ OK ] GOARCH=amd64
+  [WARN] race detector NOT available (requires cgo + a C compiler)
+  [ OK ] frozen artifact hashes recorded
+  [ OK ] storage probe: 129.5 MB/s buffered write, flush(true) in 247.078 ms
+  [WARN] TEST MODE: runner overridden with C:\Users\ramst\Documents\Projects\selfdbms\research\experiments\phase_i7\acceptance_r2\test_evidence\_work\i7stub.exe
+  [ OK ] pebble runner (override): C:/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/i7stub.exe
+  affinity: not requested; process mask 0xfff
+  [ OK ] platform manifest: C:\Users\ramst\Documents\Projects\selfdbms\research\experiments\phase_i7\acceptance_r2\test_evidence\_work\probe_root\platform_manifest.json
+  [WARN] git working tree is dirty (recorded in worktree_fingerprint)
+
+==============================================================================
+Check summary
+==============================================================================
+Check PASSED. No trial was executed.
+--------------------------------------------------------------
+exit code: 0
+
+==============================================================
+$ powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'research/experiments/phase_i7/run_i7.ps1' -Root '/c/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/probe_root' -Campaign -TestMode -RunnerOverride '/c/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/i7stub.exe' -PebbleRunnerOverride '/c/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/i7stub.exe'
+--------------------------------------------------------------
+
+EXECUTION REFUSED (exit 5): the G2-era execution authority was revoked by the R1.2e protocol.
+  refused mode : Campaign
+  reason       : the embedded 366-row inventory (ceiling 384, replacement 18) conflicts with
+                 the R1.2e campaign model (12 cells, N in [8,10], D3 milestones, ceiling 400,
+                 replacement budget 16) and can no longer authorize an execution.
+  authority    : research/experiments/phase_i7/runlist  (runlistctl generate|validate|ceiling)
+  still usable : -Check, -DryRun (spec and run-list inspection only; launches nothing),
+                 -WriteApprovalTemplate, -Package
+  next step    : the pilot-authorization gate must rebuild the execution path around the
+                 validated runlistctl generator before any trial is launched.
+--------------------------------------------------------------
+exit code: 5
+
+==============================================================
+$ powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'research/experiments/phase_i7/run_i7.ps1' -Root '/c/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/probe_root' -Calibrate -TestMode -RunnerOverride '/c/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/i7stub.exe' -PebbleRunnerOverride '/c/Users/ramst/Documents/Projects/selfdbms/research/experiments/phase_i7/acceptance_r2/test_evidence/_work/i7stub.exe'
+--------------------------------------------------------------
+
+EXECUTION REFUSED (exit 5): the G2-era execution authority was revoked by the R1.2e protocol.
+  refused mode : Calibrate
+  reason       : the embedded 366-row inventory (ceiling 384, replacement 18) conflicts with
+                 the R1.2e campaign model (12 cells, N in [8,10], D3 milestones, ceiling 400,
+                 replacement budget 16) and can no longer authorize an execution.
+  authority    : research/experiments/phase_i7/runlist  (runlistctl generate|validate|ceiling)
+  still usable : -Check, -DryRun (spec and run-list inspection only; launches nothing),
+                 -WriteApprovalTemplate, -Package
+  next step    : the pilot-authorization gate must rebuild the execution path around the
+                 validated runlistctl generator before any trial is launched.
+--------------------------------------------------------------
+exit code: 5
+
+==============================================================
+# R1.2e statistical artifacts: byte-identical reproduction
+
+==============================================================
+$ sha256sum research/experiments/analysis/simulate_power_r1_2e.py research/experiments/analysis/r1_2e_power_simulation_results.json
+--------------------------------------------------------------
+dbcd469e9b6860e573f039716faf2edc92329b86d5d2351379534c49a4d387e3 *research/experiments/analysis/simulate_power_r1_2e.py
+4dce74545f427752232fd1360bd2eb3e1f8f212d78b2058f7646afc1902e37d1 *research/experiments/analysis/r1_2e_power_simulation_results.json
+--------------------------------------------------------------
+exit code: 0
+
+==============================================================
+$ python research/experiments/analysis/simulate_power_r1_2e.py > /dev/null && sha256sum research/experiments/analysis/r1_2e_power_simulation_results.json
+--------------------------------------------------------------
+4dce74545f427752232fd1360bd2eb3e1f8f212d78b2058f7646afc1902e37d1 *research/experiments/analysis/r1_2e_power_simulation_results.json
+--------------------------------------------------------------
+exit code: 0

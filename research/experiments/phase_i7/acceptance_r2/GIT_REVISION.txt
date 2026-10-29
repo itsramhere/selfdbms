@@ -1,0 +1,17 @@
+branch: research/i7-engineering-preflight
+HEAD:   232e48ad15ade50e0e096cd8de990b8c32127ebb
+engineering diff base: 27a041e (preservation commit)
+frozen engine revision: f4cce4b5faa80924c7ef945139ef1a65ccb2b32a
+
+232e48a test(i7-r2-acceptance): guard real-time-window scenario tests with -short
+2fdcc19 fix(i7-r2-acceptance): force full-miss reads in the open-loop overload tests so the backlog is platform-independent
+1932d25 fix(i7-r2-acceptance): deduplicate S10 fixture roots and make the E4 overload test platform-independent
+9dab1f9 feat(i7-r2-acceptance): close engineering blockers 1-5 for the R2 acceptance review
+df8b3f1 style(i7-preflight): gofmt the instrumentation and ledger test files
+fdd9459 docs(i7-r2): record checkpoint chain and refresh the provenance manifest
+0f4dcca docs(i7-r2): add provenance manifest for the R2 engineering checkpoint
+f34b3a1 docs(i7-r2): deliver R2 engineering checkpoint, estimand mismatch notice, and run-list validation artifacts
+067af86 feat(i7-preflight): R1.2e run-list model and EXP-3 metadata microbenchmark suite
+a0d0a2e docs(i7-r1): addendum — R1.1 reviewer-response paper artifacts missed by the preservation commit
+3427642 feat(i7-preflight): non-invasive sync instrumentation, conserved transaction ledger, and D3 dispatch
+27a041e docs(i7-r1): preserve R1.x external-review artifacts, revised manuscript, and R1.2e statistical deliverables
