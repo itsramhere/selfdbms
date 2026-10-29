@@ -299,31 +299,13 @@ if (Test-Path -LiteralPath $rlReport) { $valRep = Get-Content $rlReport -Raw | C
 Record 'S11-generate-validate' ($genOk -and $valOk) ('runlistctl generate+validate exit 0')
 Record 'S11-ceiling-model' (($null -ne $valRep) -and ($valRep.ok) -and ([int]$valRep.worst_case_total -le 400) -and ([int]$valRep.guaranteed_buffer -ge 12)) ('worst case=' + $valRep.worst_case_total + ' buffer=' + $valRep.guaranteed_buffer + ' ceiling=400')
 
-# ---------------------------------------------------------------------------
-# S10: calibration idempotency, restart-safety, scope binding, and budget
-# ---------------------------------------------------------------------------
-Write-Host ''
-Write-Host 'S10: calibration correctness' -ForegroundColor Cyan
-$rootCal = New-Root 's10_cal'
-$prepCal = Prepare-Root $rootCal
-
-# S10-scope-refusal: Preflight approval (scope not matching calibration) must be refused by -Calibrate
-$null = New-Approval -Root $rootCal -Gate 'G3' -AllowedBlocks @('PF') -RunlistHash $prepCal.Hash -RunnerHash $stubHash -Scope 'preflight'
-$r = Invoke-Driver -Root $rootCal -ArgList @('-Calibrate', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg)
-Record 'S10-cal-scope-refusal' (($r.ExitCode -ne 0) -and ($r.Out -match 'calibration requires scope')) 'calibration rejects non-calibration approval scope'
-
-# Generate calibration approval template with -Scope calibration
-$r = Invoke-Driver -Root $rootCal -ArgList @('-WriteApprovalTemplate', '-Gate', 'G3', '-Scope', 'calibration')
-$calTpl = Join-Path $rootCal 'APPROVAL.template.G3.calibration.json'
-Record 'S10-cal-template' (($r.ExitCode -eq 0) -and (Test-Path -LiteralPath $calTpl)) 'calibration approval template generated'
-
-# Approve for calibration
-$null = New-Approval -Root $rootCal -Gate 'G3' -AllowedBlocks @('PF') -RunlistHash $prepCal.Hash -RunnerHash $stubHash -Scope 'calibration'
-
 # S10 (continued): every legacy calibration execution path is revoked. The
 # idempotency/restart-safety/partial-completion machinery of the G3
 # calibration is unreachable until the pilot gate rebuilds it; its semantics
 # remain specified by I7_G3_CALIBRATION_CORRECTIVE_PACKET.md.
+# (Each root supports exactly one -Check: a second -Check rewrites the
+# platform manifest and the frozen-manifest integrity check rightly refuses
+# the follow-up DryRun.)
 $r = Invoke-Driver -Root $rootCal -ArgList @('-Calibrate', '-TestMode', '-RunnerOverride', $script:Stub, '-PebbleRunnerOverride', $pebbleArg, '-Scope', 'calibration')
 Record 'S10-cal-revoked-with-scope' (($r.ExitCode -eq 5) -and ($r.Out -match 'revoked')) 'exit=5 even with a calibration-scope approval (no bypass exists)'
 

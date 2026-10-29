@@ -1,0 +1,50 @@
+
+Building orchestration stub runner
+stub: C:\Users\ramst\AppData\Local\Temp\i7_orch_20261029175602\i7stub.exe sha256 895c80735a2cda3b0e79715d9032ee33a44ddc1d5255ce6eedd167fd7de8d629
+
+S1/S2: -Check and -DryRun
+  [PASS] S1-check - platform manifest written
+  [PASS] S2-runlist - runlist rows = 366
+  [PASS] S2-anchor-start - first rows: D3/start
+  [PASS] S2-anchor-end - last rows: D3/end
+  [PASS] S2-hash-recorded - manifest binds the runlist hash
+  [PASS] S2-authority-revoked - model_authority = legacy_inventory_366_REVOKED_by_R1_2e_execution_fails_closed
+  [PASS] S2-r12e-budget - ceiling=400 replacement_cap=16
+
+S3: approval template
+  [PASS] S3-template - template written with approved=false and the current runlist hash
+
+S4: legacy execution authority revoked
+  [PASS] S4-campaign-revoked - exit=5 campaign refused with a valid approval present
+  [PASS] S4-campaign-revoked-invalid-approval - revocation fires before any approval evaluation
+  [PASS] S4-preflight-revoked - exit=5 preflight refused
+  [PASS] S4-resume-revoked - exit=5 resume refused
+  [PASS] S4-dryrun-still-allowed - dry-run inspection remains available (exit 0)
+
+S5-S8: executing flows revoked
+  [PASS] S5-campaign-revoked - exit=5 no trial process launched
+  [PASS] S6-resume-revoked - exit=5 resume refused
+  [PASS] S7-budget-revoked - exit=5 even under -MaxTrials (no partial authority)
+  [PASS] S8-invalid-envelope-path-revoked - exit=5 (envelope validation itself is covered by Go unit tests)
+
+S9: safety and mode gating
+  [PASS] S9-frozen-root - results root inside a frozen campaign directory refused
+  [PASS] S9-diagnostics-revoked - diagnostics execution refused (R1.2e revocation precedes gate checks)
+  [PASS] S9-preflight-revoked - preflight execution refused regardless of gate
+  [PASS] S9-override-guard - runner override without -TestMode refused (pre-dispatch guard still first)
+
+S10: calibration authority
+  [PASS] S10-cal-revoked - exit=5 -Calibrate refused (the 9-run G3 calibration is legacy authority)
+  [PASS] S10-cal-template - calibration approval template generated
+
+S11: runlistctl authority
+  [PASS] S11-generate-validate - runlistctl generate+validate exit 0
+  [PASS] S11-ceiling-model - worst case=316 buffer=84 ceiling=400
+  [PASS] S10-cal-revoked-with-scope - exit=5 even with a calibration-scope approval (no bypass exists)
+  [PASS] S10-cal-no-ledger-created - refused calibration created no execution ledger
+
+scenarios: 27  passed: 27  failed: 0
+
+log: C:\Users\ramst\Documents\Projects\selfdbms\research\experiments\phase_i7\evidence\g2\orchestration_20261029175602.log
+json: C:\Users\ramst\Documents\Projects\selfdbms\research\experiments\phase_i7\evidence\g2\orchestration_20261029175602.json
+SUITE-EXIT: 0

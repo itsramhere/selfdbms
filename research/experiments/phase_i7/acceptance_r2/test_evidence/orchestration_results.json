@@ -1,0 +1,137 @@
+[
+    {
+        "scenario":  "S1-check",
+        "pass":  true,
+        "detail":  "platform manifest written"
+    },
+    {
+        "scenario":  "S2-runlist",
+        "pass":  true,
+        "detail":  "runlist rows = 366"
+    },
+    {
+        "scenario":  "S2-anchor-start",
+        "pass":  true,
+        "detail":  "first rows: D3/start"
+    },
+    {
+        "scenario":  "S2-anchor-end",
+        "pass":  true,
+        "detail":  "last rows: D3/end"
+    },
+    {
+        "scenario":  "S2-hash-recorded",
+        "pass":  true,
+        "detail":  "manifest binds the runlist hash"
+    },
+    {
+        "scenario":  "S2-authority-revoked",
+        "pass":  true,
+        "detail":  "model_authority = legacy_inventory_366_REVOKED_by_R1_2e_execution_fails_closed"
+    },
+    {
+        "scenario":  "S2-r12e-budget",
+        "pass":  true,
+        "detail":  "ceiling=400 replacement_cap=16"
+    },
+    {
+        "scenario":  "S3-template",
+        "pass":  true,
+        "detail":  "template written with approved=false and the current runlist hash"
+    },
+    {
+        "scenario":  "S4-campaign-revoked",
+        "pass":  true,
+        "detail":  "exit=5 campaign refused with a valid approval present"
+    },
+    {
+        "scenario":  "S4-campaign-revoked-invalid-approval",
+        "pass":  true,
+        "detail":  "revocation fires before any approval evaluation"
+    },
+    {
+        "scenario":  "S4-preflight-revoked",
+        "pass":  true,
+        "detail":  "exit=5 preflight refused"
+    },
+    {
+        "scenario":  "S4-resume-revoked",
+        "pass":  true,
+        "detail":  "exit=5 resume refused"
+    },
+    {
+        "scenario":  "S4-dryrun-still-allowed",
+        "pass":  true,
+        "detail":  "dry-run inspection remains available (exit 0)"
+    },
+    {
+        "scenario":  "S5-campaign-revoked",
+        "pass":  true,
+        "detail":  "exit=5 no trial process launched"
+    },
+    {
+        "scenario":  "S6-resume-revoked",
+        "pass":  true,
+        "detail":  "exit=5 resume refused"
+    },
+    {
+        "scenario":  "S7-budget-revoked",
+        "pass":  true,
+        "detail":  "exit=5 even under -MaxTrials (no partial authority)"
+    },
+    {
+        "scenario":  "S8-invalid-envelope-path-revoked",
+        "pass":  true,
+        "detail":  "exit=5 (envelope validation itself is covered by Go unit tests)"
+    },
+    {
+        "scenario":  "S9-frozen-root",
+        "pass":  true,
+        "detail":  "results root inside a frozen campaign directory refused"
+    },
+    {
+        "scenario":  "S9-diagnostics-revoked",
+        "pass":  true,
+        "detail":  "diagnostics execution refused (R1.2e revocation precedes gate checks)"
+    },
+    {
+        "scenario":  "S9-preflight-revoked",
+        "pass":  true,
+        "detail":  "preflight execution refused regardless of gate"
+    },
+    {
+        "scenario":  "S9-override-guard",
+        "pass":  true,
+        "detail":  "runner override without -TestMode refused (pre-dispatch guard still first)"
+    },
+    {
+        "scenario":  "S10-cal-revoked",
+        "pass":  true,
+        "detail":  "exit=5 -Calibrate refused (the 9-run G3 calibration is legacy authority)"
+    },
+    {
+        "scenario":  "S10-cal-template",
+        "pass":  true,
+        "detail":  "calibration approval template generated"
+    },
+    {
+        "scenario":  "S11-generate-validate",
+        "pass":  true,
+        "detail":  "runlistctl generate+validate exit 0"
+    },
+    {
+        "scenario":  "S11-ceiling-model",
+        "pass":  true,
+        "detail":  "worst case=316 buffer=84 ceiling=400"
+    },
+    {
+        "scenario":  "S10-cal-revoked-with-scope",
+        "pass":  true,
+        "detail":  "exit=5 even with a calibration-scope approval (no bypass exists)"
+    },
+    {
+        "scenario":  "S10-cal-no-ledger-created",
+        "pass":  true,
+        "detail":  "refused calibration created no execution ledger"
+    }
+]

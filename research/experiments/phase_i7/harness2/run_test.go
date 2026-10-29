@@ -634,7 +634,11 @@ func TestE2_EventRecorderWindowPartitioning(t *testing.T) {
 // 4. late completions are tracked separately and do not pollute within-window latency.
 func TestE4_OpenLoopOverloadAndLateAccounting(t *testing.T) {
 	spec := miniSpec(t, "E4", "overload", "A")
-	spec.OpenLoopRatePerSec = 2000 // high rate to induce queuing & abandonment
+	// 1M arrivals/s guarantees the backlog is platform-independent: the
+	// per-claim overhead (sleep/schedule + a race-detector-instrumented Get)
+	// can never sustain a 1 us period, so the reader falls behind, passes the
+	// 5 ms lateness bound, and abandons deterministically on every OS.
+	spec.OpenLoopRatePerSec = 1_000_000
 	spec.ReaderConcurrency = 1
 	spec.WriterConcurrency = 0
 	spec.MaxLatenessMs = 5 // tight deadline: waking delay or backlog drops requests
