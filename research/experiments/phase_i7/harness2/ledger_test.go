@@ -182,7 +182,11 @@ func TestRunSyncInstrumentationAttachAndAggregate(t *testing.T) {
 // identities must hold for whatever outcome mix materializes.
 func TestRunLedgerConservationUnderOpenLoopOverload(t *testing.T) {
 	spec := miniSpec(t, "E4", "ol_overload", "A")
-	spec.OpenLoopRatePerSec = 100_000
+	// Platform-independent cancellation: 1 us arrival period against
+	// full-miss reads (cost >> period) guarantees the reader falls behind
+	// and cancels arrivals past the lateness bound on every OS.
+	spec.OpenLoopRatePerSec = 1_000_000
+	spec.TargetReadHitRatio = 0.0
 	spec.MaxLatenessMs = 2
 	res, err := Run(spec, testEnv(), "test")
 	if err != nil {
