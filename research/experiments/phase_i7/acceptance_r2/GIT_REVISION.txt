@@ -1,8 +1,11 @@
 branch: research/i7-engineering-preflight
-HEAD:   1bbf51d4194df73bfcca727db7b90b27117b29bc
+package content commit: b218a25 (tree = final content of every file in this package except the three packaging files)
+packaging commits after it: add the ZIP binaries only
 engineering diff base: 27a041e (preservation commit)
 frozen engine revision: f4cce4b5faa80924c7ef945139ef1a65ccb2b32a
 
+commit chain since the frozen revision:
+b218a25 build(i7-r2-acceptance): package I7_R2_ACCEPTANCE_REVIEW.zip
 1bbf51d build(i7-r2-acceptance): package I7_R2_ACCEPTANCE_REVIEW.zip
 e3948f7 chore(i7-r2-acceptance): drop scratch _work intermediates from the evidence set
 8abe9a7 docs(i7-r2-acceptance): assemble the acceptance evidence set and refresh the provenance manifest

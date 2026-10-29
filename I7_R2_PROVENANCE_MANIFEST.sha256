@@ -1,7 +1,7 @@
 # I7 R2 Acceptance — Provenance Manifest (supersedes the R2 checkpoint manifest)
 # branch: research/i7-engineering-preflight (from frozen revision f4cce4b5faa80924c7ef945139ef1a65ccb2b32a)
 # engineering diff base: 27a041e (preservation commit); see acceptance_r2/GIT_REVISION.txt for the chain
-# generated: 2026-10-29T18:53:11Z
+# generated: 2026-10-29T19:01:38Z
 #
 # --- checkpoint and decision documents ---
 11b0759170b832e68a9be87406edbe822262f75043ec47944b44969292b1f0f5  I7_R2_ENGINEERING_CHECKPOINT.md
@@ -11,8 +11,8 @@ a9a53f9afbd3ff87ad8f66552a763dcf1f5118fdf7bd56a14422c05a0fcd2cb8  R2_STATISTICAL
 #
 # --- acceptance package (research/experiments/phase_i7/acceptance_r2) ---
 9a65fd31e18a8cc915f8fbda2e588dcd2292cfe51dce7fad9f74ab690787f87f  research/experiments/phase_i7/acceptance_r2/AUDIT_GUIDE.md
-ca436c577734ec6171be4652aac7362026d07b5238914df1404317b1baf77344  research/experiments/phase_i7/acceptance_r2/GIT_REVISION.txt
-59dfe0dfce5b50cb8d6202370bf81692a2866eb3fb3b9cbee0b5fe79aa796e77  research/experiments/phase_i7/acceptance_r2/SOURCE_TREE.sha256
+26d99be75171aac0972844eb3ab78bd147732e62ec3a0f37e49eba3be8ff3f22  research/experiments/phase_i7/acceptance_r2/GIT_REVISION.txt
+d7e2ba0983539c5d302c7c00ab8a3b2794b775ea9385efb9c4464b5fa6f8ef3d  research/experiments/phase_i7/acceptance_r2/SOURCE_TREE.sha256
 bee42b39774dcadc929e94e5c9cc37437f146446ee4134a94cc294e858f7c47f  research/experiments/phase_i7/acceptance_r2/diff/r2_engineering.diff
 8d38742ab744be33ce4e654c028be3cb49bbe6ab3377eef2c8f9abe3c794e215  research/experiments/phase_i7/acceptance_r2/diff/r2_engineering.diffstat.txt
 f065c9b4d5869bd0a4d3963bf33ad4033dc5a9b10db668d1cbc5edab64781d55  research/experiments/phase_i7/acceptance_r2/runlist_validation/runlist_N10.csv
@@ -60,8 +60,8 @@ dbeee78c1ddc7d8edbc3943bd0e60de7d5f2cd1e268291ef0c359e409f6a5676  lsmengine/sync
 c8a5a0b20bb0779ad3bebd4bd0c557a9315a45a30e2254817a4df9fe62d29df4  research/experiments/corrective_validation/t1_deterministic_sync_test.go
 aef800ddc3804622a6c699af2c1094f62a8a2ed0621a51c08ea67d792ec7201d  research/experiments/harness/flush_tracker.go
 9a65fd31e18a8cc915f8fbda2e588dcd2292cfe51dce7fad9f74ab690787f87f  research/experiments/phase_i7/acceptance_r2/AUDIT_GUIDE.md
-ca436c577734ec6171be4652aac7362026d07b5238914df1404317b1baf77344  research/experiments/phase_i7/acceptance_r2/GIT_REVISION.txt
-59dfe0dfce5b50cb8d6202370bf81692a2866eb3fb3b9cbee0b5fe79aa796e77  research/experiments/phase_i7/acceptance_r2/SOURCE_TREE.sha256
+26d99be75171aac0972844eb3ab78bd147732e62ec3a0f37e49eba3be8ff3f22  research/experiments/phase_i7/acceptance_r2/GIT_REVISION.txt
+d7e2ba0983539c5d302c7c00ab8a3b2794b775ea9385efb9c4464b5fa6f8ef3d  research/experiments/phase_i7/acceptance_r2/SOURCE_TREE.sha256
 bee42b39774dcadc929e94e5c9cc37437f146446ee4134a94cc294e858f7c47f  research/experiments/phase_i7/acceptance_r2/diff/r2_engineering.diff
 8d38742ab744be33ce4e654c028be3cb49bbe6ab3377eef2c8f9abe3c794e215  research/experiments/phase_i7/acceptance_r2/diff/r2_engineering.diffstat.txt
 f065c9b4d5869bd0a4d3963bf33ad4033dc5a9b10db668d1cbc5edab64781d55  research/experiments/phase_i7/acceptance_r2/runlist_validation/runlist_N10.csv
