@@ -78,13 +78,13 @@ func (o *recordingObserver) OnFlushPublishBegin(activeRLockHolders int) {
 
 // Unused FlushObserver callbacks (recordingObserver doubles as one so tests
 // can capture the publication arrival sample).
-func (o *recordingObserver) OnFlushRequested()            {}
-func (o *recordingObserver) OnFlushAdmitted(bool, error)  {}
-func (o *recordingObserver) OnFlushWorkerBegin()          {}
-func (o *recordingObserver) OnFlushBuildBegin()           {}
-func (o *recordingObserver) OnFlushBuildEnd(error)        {}
-func (o *recordingObserver) OnFlushPublishEnd(error)      {}
-func (o *recordingObserver) OnFlushComplete(error)        {}
+func (o *recordingObserver) OnFlushRequested()           {}
+func (o *recordingObserver) OnFlushAdmitted(bool, error) {}
+func (o *recordingObserver) OnFlushWorkerBegin()         {}
+func (o *recordingObserver) OnFlushBuildBegin()          {}
+func (o *recordingObserver) OnFlushBuildEnd(error)       {}
+func (o *recordingObserver) OnFlushPublishEnd(error)     {}
+func (o *recordingObserver) OnFlushComplete(error)       {}
 
 var _ SyncObserver = (*recordingObserver)(nil)
 var _ FlushObserver = (*recordingObserver)(nil)

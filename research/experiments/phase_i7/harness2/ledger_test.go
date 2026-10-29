@@ -55,8 +55,12 @@ func TestLedgerValidateRejectsViolations(t *testing.T) {
 		"closed-loop offer":         func(l *TransactionLedger) { l.Writes.Offered++ },
 		"closed-loop nonzero queue": func(l *TransactionLedger) { l.Writes.Queued = 1 },
 		"outstanding mismatch":      func(l *TransactionLedger) { l.Reads.OutstandingAtClose-- },
-		"outstanding vs late":       func(l *TransactionLedger) { l.Writes.OutstandingAtClose = l.Writes.CompletedLate + 1; l.Writes.Failed--; l.Writes.Attempted-- },
-		"negative count":            func(l *TransactionLedger) { l.Reads.Failed = -1 },
+		"outstanding vs late": func(l *TransactionLedger) {
+			l.Writes.OutstandingAtClose = l.Writes.CompletedLate + 1
+			l.Writes.Failed--
+			l.Writes.Attempted--
+		},
+		"negative count": func(l *TransactionLedger) { l.Reads.Failed = -1 },
 	}
 	for name, mutate := range cases {
 		l, sr, sw := mk()
@@ -74,10 +78,10 @@ func TestLedgerValidateRejectsViolations(t *testing.T) {
 // legacy OperationCounts.
 func TestRunLedgerConservedAllModes(t *testing.T) {
 	cases := []struct {
-		name    string
-		spec    Spec
-		schedR  bool
-		schedW  bool
+		name   string
+		spec   Spec
+		schedR bool
+		schedW bool
 	}{
 		{"closed_loop", func() Spec {
 			s := miniSpec(t, "E1", "r01", "A")
