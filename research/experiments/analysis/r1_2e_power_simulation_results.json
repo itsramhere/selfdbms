@@ -1,0 +1,451 @@
+{
+  "metadata": {
+    "protocol": "Phase I7 Checkpoint R1.2e Bounded Protocol Corrections Simulation",
+    "evaluated_git_revision": "f4cce4b5faa80924c7ef945139ef1a65ccb2b32a",
+    "alpha_efficacy_family": 0.025,
+    "alpha_causal_family": 0.025,
+    "margin_non_inferiority_10pct": -0.10536051565782628,
+    "mes_writer_superiority_w_per_s": 5.0,
+    "rmst_non_inferiority_margin_seconds": 1.5,
+    "cf_benefit_gate_threshold_w_per_s": 5.0,
+    "cf_target_claim_threshold": 0.7,
+    "empirical_mu_d_write": -0.01114,
+    "prospective_sample_size_factor_empirical": 884.14,
+    "global_execution_ceiling": 400,
+    "max_confirmatory_n": 10,
+    "min_confirmatory_n": 8
+  },
+  "workload_specific_sensitivity_matrix": {
+    "regime_1_closed_loop_low_variance": {
+      "description": "Closed-loop writer, low reader contention (r<=4)",
+      "sigma_d": 0.06,
+      "power_curves": {
+        "theta_1.0000": {
+          "alpha_0.025_df_adjusted_n2": {
+            "4": 0.4793,
+            "6": 0.8881,
+            "8": 0.9831,
+            "10": 0.9978
+          },
+          "alpha_0.025_df_unadjusted_n1": {
+            "4": 0.6543,
+            "6": 0.9251,
+            "8": 0.9879,
+            "10": 0.9983
+          }
+        },
+        "theta_0.9889": {
+          "alpha_0.025_df_adjusted_n2": {
+            "4": 0.4125,
+            "6": 0.8161,
+            "8": 0.9558,
+            "10": 0.9906
+          },
+          "alpha_0.025_df_unadjusted_n1": {
+            "4": 0.5671,
+            "6": 0.8632,
+            "8": 0.9655,
+            "10": 0.9924
+          }
+        },
+        "theta_0.9800": {
+          "alpha_0.025_df_adjusted_n2": {
+            "4": 0.3586,
+            "6": 0.7395,
+            "8": 0.9136,
+            "10": 0.9741
+          },
+          "alpha_0.025_df_unadjusted_n1": {
+            "4": 0.4926,
+            "6": 0.7919,
+            "8": 0.9284,
+            "10": 0.9779
+          }
+        }
+      }
+    },
+    "regime_2_paced_moderate_variance": {
+      "description": "Paced writer (250 w/s), moderate contention (r=4)",
+      "sigma_d": 0.12,
+      "power_curves": {
+        "theta_1.0000": {
+          "alpha_0.025_df_adjusted_n2": {
+            "4": 0.182,
+            "6": 0.3773,
+            "8": 0.5484,
+            "10": 0.6826
+          },
+          "alpha_0.025_df_unadjusted_n1": {
+            "4": 0.2359,
+            "6": 0.4137,
+            "8": 0.5707,
+            "10": 0.6961
+          }
+        },
+        "theta_0.9889": {
+          "alpha_0.025_df_adjusted_n2": {
+            "4": 0.1566,
+            "6": 0.3152,
+            "8": 0.4622,
+            "10": 0.5871
+          },
+          "alpha_0.025_df_unadjusted_n1": {
+            "4": 0.1992,
+            "6": 0.3452,
+            "8": 0.4819,
+            "10": 0.6001
+          }
+        },
+        "theta_0.9800": {
+          "alpha_0.025_df_adjusted_n2": {
+            "4": 0.1374,
+            "6": 0.2681,
+            "8": 0.3932,
+            "10": 0.5052
+          },
+          "alpha_0.025_df_unadjusted_n1": {
+            "4": 0.1719,
+            "6": 0.2929,
+            "8": 0.4103,
+            "10": 0.5172
+          }
+        }
+      }
+    },
+    "regime_3_heavy_contention_high_variance": {
+      "description": "Heavy reader contention (r=8), scheduler active",
+      "sigma_d": 0.18,
+      "power_curves": {
+        "theta_1.0000": {
+          "alpha_0.025_df_adjusted_n2": {
+            "4": 0.1088,
+            "6": 0.1984,
+            "8": 0.2868,
+            "10": 0.3709
+          },
+          "alpha_0.025_df_unadjusted_n1": {
+            "4": 0.1318,
+            "6": 0.2152,
+            "8": 0.299,
+            "10": 0.38
+          }
+        },
+        "theta_0.9889": {
+          "alpha_0.025_df_adjusted_n2": {
+            "4": 0.0959,
+            "6": 0.1679,
+            "8": 0.2392,
+            "10": 0.3083
+          },
+          "alpha_0.025_df_unadjusted_n1": {
+            "4": 0.1143,
+            "6": 0.1812,
+            "8": 0.249,
+            "10": 0.3158
+          }
+        },
+        "theta_0.9800": {
+          "alpha_0.025_df_adjusted_n2": {
+            "4": 0.0862,
+            "6": 0.1455,
+            "8": 0.204,
+            "10": 0.2611
+          },
+          "alpha_0.025_df_unadjusted_n1": {
+            "4": 0.1012,
+            "6": 0.1562,
+            "8": 0.212,
+            "10": 0.2674
+          }
+        }
+      }
+    },
+    "regime_4_oversaturated_preemption": {
+      "description": "Oversaturated reader load (r=16), high preemption",
+      "sigma_d": 0.25,
+      "power_curves": {
+        "theta_1.0000": {
+          "alpha_0.025_df_adjusted_n2": {
+            "4": 0.0769,
+            "6": 0.1245,
+            "8": 0.1711,
+            "10": 0.2168
+          },
+          "alpha_0.025_df_unadjusted_n1": {
+            "4": 0.0889,
+            "6": 0.133,
+            "8": 0.1774,
+            "10": 0.2218
+          }
+        },
+        "theta_0.9889": {
+          "alpha_0.025_df_adjusted_n2": {
+            "4": 0.0694,
+            "6": 0.108,
+            "8": 0.1455,
+            "10": 0.1822
+          },
+          "alpha_0.025_df_unadjusted_n1": {
+            "4": 0.0792,
+            "6": 0.1148,
+            "8": 0.1505,
+            "10": 0.1861
+          }
+        },
+        "theta_0.9800": {
+          "alpha_0.025_df_adjusted_n2": {
+            "4": 0.0637,
+            "6": 0.0959,
+            "8": 0.1267,
+            "10": 0.1568
+          },
+          "alpha_0.025_df_unadjusted_n1": {
+            "4": 0.0718,
+            "6": 0.1014,
+            "8": 0.1308,
+            "10": 0.1601
+          }
+        }
+      }
+    }
+  },
+  "prospective_pilot_and_sample_size_rules": {
+    "regime_1_closed_loop_low_variance": {
+      "sigma_d": 0.06,
+      "pilot_sample_size": 4,
+      "n_req_empirical_write_factor_884": 4,
+      "prospective_confirmatory_n_bounded": 8,
+      "realized_power_at_n_confirmatory_df_adj2": 0.9559,
+      "epistemic_classification_if_not_rejected": "Conclusive Non-Inferiority"
+    },
+    "regime_2_paced_moderate_variance": {
+      "sigma_d": 0.12,
+      "pilot_sample_size": 4,
+      "n_req_empirical_write_factor_884": 13,
+      "prospective_confirmatory_n_bounded": 10,
+      "realized_power_at_n_confirmatory_df_adj2": 0.5873,
+      "epistemic_classification_if_not_rejected": "Inconclusive Evidence (Power Reduced by 400-Ceiling)"
+    },
+    "regime_3_heavy_contention_high_variance": {
+      "sigma_d": 0.18,
+      "pilot_sample_size": 4,
+      "n_req_empirical_write_factor_884": 29,
+      "prospective_confirmatory_n_bounded": 10,
+      "realized_power_at_n_confirmatory_df_adj2": 0.3084,
+      "epistemic_classification_if_not_rejected": "Inconclusive Evidence (Power Reduced by 400-Ceiling)"
+    },
+    "regime_4_oversaturated_preemption": {
+      "sigma_d": 0.25,
+      "pilot_sample_size": 4,
+      "n_req_empirical_write_factor_884": 56,
+      "prospective_confirmatory_n_bounded": 10,
+      "realized_power_at_n_confirmatory_df_adj2": 0.1823,
+      "epistemic_classification_if_not_rejected": "Inconclusive Evidence (Power Reduced by 400-Ceiling)"
+    }
+  },
+  "causal_model_residual_reader_analysis": {
+    "c2_01_baseline_zero_delay": {
+      "r_pool": 4,
+      "t_hold_us": 0.0,
+      "duty_cycle": 0.95,
+      "mean_wait_us": 0.0,
+      "std_wait_us": 0.0,
+      "median_wait_us": 0.0,
+      "theoretical_drain_slope": 0.8,
+      "empirical_effective_slope": 0.0
+    },
+    "c2_02_renewal_point_1": {
+      "r_pool": 4,
+      "t_hold_us": 100.0,
+      "duty_cycle": 0.95,
+      "mean_wait_us": 78.98979580507694,
+      "std_wait_us": 17.18646437508077,
+      "median_wait_us": 83.39732429166006,
+      "theoretical_drain_slope": 0.8,
+      "empirical_effective_slope": 0.7898979580507693
+    },
+    "c2_03_renewal_point_2": {
+      "r_pool": 4,
+      "t_hold_us": 300.0,
+      "duty_cycle": 0.95,
+      "mean_wait_us": 236.96938741523084,
+      "std_wait_us": 51.55939312524231,
+      "median_wait_us": 250.1919728749802,
+      "theoretical_drain_slope": 0.8,
+      "empirical_effective_slope": 0.7898979580507695
+    },
+    "c2_04_renewal_point_3": {
+      "r_pool": 4,
+      "t_hold_us": 500.0,
+      "duty_cycle": 0.95,
+      "mean_wait_us": 394.9489790253847,
+      "std_wait_us": 85.93232187540386,
+      "median_wait_us": 416.9866214583003,
+      "theoretical_drain_slope": 0.8,
+      "empirical_effective_slope": 0.7898979580507693
+    },
+    "c2_05_concurrency_scaling": {
+      "r_pool": 2,
+      "t_hold_us": 300.0,
+      "duty_cycle": 0.95,
+      "mean_wait_us": 195.6162870477367,
+      "std_wait_us": 74.43315629198356,
+      "median_wait_us": 209.28087001132923,
+      "theoretical_drain_slope": 0.6666666666666666,
+      "empirical_effective_slope": 0.6520542901591223
+    },
+    "c2_06_cpu_load_matched_negative_control": {
+      "r_pool": 4,
+      "t_hold_us": 0.0,
+      "duty_cycle": 0.0,
+      "mean_wait_us": 0.0,
+      "std_wait_us": 0.0,
+      "median_wait_us": 0.0,
+      "theoretical_drain_slope": 0.8,
+      "empirical_effective_slope": 0.0
+    }
+  },
+  "capture_fraction_70pct_power": {
+    "cf_true_0.75": {
+      "N_6": {
+        "power_alpha_025": 0.8135,
+        "se_cf": 0.0175
+      },
+      "N_8": {
+        "power_alpha_025": 0.9085,
+        "se_cf": 0.0152
+      },
+      "N_10": {
+        "power_alpha_025": 0.9573,
+        "se_cf": 0.0136
+      }
+    },
+    "cf_true_0.80": {
+      "N_6": {
+        "power_alpha_025": 0.9999,
+        "se_cf": 0.0173
+      },
+      "N_8": {
+        "power_alpha_025": 1.0,
+        "se_cf": 0.015
+      },
+      "N_10": {
+        "power_alpha_025": 1.0,
+        "se_cf": 0.0134
+      }
+    },
+    "cf_true_0.85": {
+      "N_6": {
+        "power_alpha_025": 1.0,
+        "se_cf": 0.0172
+      },
+      "N_8": {
+        "power_alpha_025": 1.0,
+        "se_cf": 0.0149
+      },
+      "N_10": {
+        "power_alpha_025": 1.0,
+        "se_cf": 0.0134
+      }
+    }
+  },
+  "exp4_censoring_and_survival_analysis": {
+    "h4_1_paired_sign_test": {
+      "severe_starvation": {
+        "N_8": {
+          "power_alpha_025": 0.9798,
+          "timeout_rate_a": 0.4247,
+          "timeout_rate_amin": 0.0
+        },
+        "N_10": {
+          "power_alpha_025": 0.9992,
+          "timeout_rate_a": 0.4219,
+          "timeout_rate_amin": 0.0
+        }
+      },
+      "medium_contention": {
+        "N_8": {
+          "power_alpha_025": 0.5738,
+          "timeout_rate_a": 0.1034,
+          "timeout_rate_amin": 0.0
+        },
+        "N_10": {
+          "power_alpha_025": 0.8582,
+          "timeout_rate_a": 0.1017,
+          "timeout_rate_amin": 0.0
+        }
+      },
+      "modest_difference": {
+        "N_8": {
+          "power_alpha_025": 0.2088,
+          "timeout_rate_a": 0.0022,
+          "timeout_rate_amin": 0.0
+        },
+        "N_10": {
+          "power_alpha_025": 0.4574,
+          "timeout_rate_a": 0.0026,
+          "timeout_rate_amin": 0.0
+        }
+      }
+    },
+    "h4_2_rmst_non_inferiority": {
+      "low_contention_fast_workload": {
+        "margin_sec": 1.5,
+        "results": {
+          "N_8": {
+            "power_alpha_025": 0.9438,
+            "censoring_b": 0.0,
+            "censoring_amin": 0.0,
+            "mean_paired_diff_sec": 0.2095,
+            "sd_paired_diff_sec": 0.8133
+          },
+          "N_10": {
+            "power_alpha_025": 0.9864,
+            "censoring_b": 0.0,
+            "censoring_amin": 0.0,
+            "mean_paired_diff_sec": 0.1989,
+            "sd_paired_diff_sec": 0.8188
+          }
+        }
+      },
+      "moderate_contention_workload": {
+        "margin_sec": 1.5,
+        "results": {
+          "N_8": {
+            "power_alpha_025": 0.3786,
+            "censoring_b": 0.0002,
+            "censoring_amin": 0.0003,
+            "mean_paired_diff_sec": 0.3195,
+            "sd_paired_diff_sec": 1.6477
+          },
+          "N_10": {
+            "power_alpha_025": 0.5048,
+            "censoring_b": 0.0001,
+            "censoring_amin": 0.0003,
+            "mean_paired_diff_sec": 0.2988,
+            "sd_paired_diff_sec": 1.6613
+          }
+        }
+      },
+      "heavy_contention_censored_workload": {
+        "margin_sec": 2.5,
+        "results": {
+          "N_8": {
+            "power_alpha_025": 0.4346,
+            "censoring_b": 0.1051,
+            "censoring_amin": 0.1225,
+            "mean_paired_diff_sec": 0.458,
+            "sd_paired_diff_sec": 2.6356
+          },
+          "N_10": {
+            "power_alpha_025": 0.5628,
+            "censoring_b": 0.1102,
+            "censoring_amin": 0.1259,
+            "mean_paired_diff_sec": 0.4207,
+            "sd_paired_diff_sec": 2.6415
+          }
+        }
+      }
+    }
+  }
+}

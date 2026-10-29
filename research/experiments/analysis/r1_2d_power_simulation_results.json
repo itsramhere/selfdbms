@@ -1,0 +1,252 @@
+{
+  "metadata": {
+    "protocol": "Phase I7 Checkpoint R1.2d Reconciled Statistical Power Simulation",
+    "sigma_d_write_empirical": 0.05872,
+    "sigma_d_read_empirical": 0.0857,
+    "theta_empirical_write": 0.9889218200286786,
+    "theta_empirical_read": 0.9646,
+    "uniform_alpha": 0.05,
+    "mes_write_superiority_w_per_s": 5.0,
+    "margin_non_inferiority_10pct": -0.10536051565782628
+  },
+  "non_inferiority_power_grid": {
+    "4": {
+      "power_write_parity": 0.8519862285089191,
+      "power_write_empirical": 0.7816287251134445,
+      "power_read_empirical": 0.35042726468490804,
+      "power_read_deficit_5pct": 0.2564695234161376
+    },
+    "6": {
+      "power_write_parity": 0.981123469363166,
+      "power_write_empirical": 0.9549433534547686,
+      "power_read_empirical": 0.5251262110052033,
+      "power_read_deficit_5pct": 0.37892011903494893
+    },
+    "8": {
+      "power_write_parity": 0.9979935993596193,
+      "power_write_empirical": 0.9919558515476735,
+      "power_read_empirical": 0.6609474339364357,
+      "power_read_deficit_5pct": 0.4860269656350693
+    },
+    "10": {
+      "power_write_parity": 0.9998082715823275,
+      "power_write_empirical": 0.9986850924875225,
+      "power_read_empirical": 0.7624324128990624,
+      "power_read_deficit_5pct": 0.5782984550009741
+    },
+    "12": {
+      "power_write_parity": 0.9999830024629482,
+      "power_write_empirical": 0.999798268283276,
+      "power_read_empirical": 0.8361454800097188,
+      "power_read_deficit_5pct": 0.6566967830320241
+    },
+    "14": {
+      "power_write_parity": 0.9999985771375302,
+      "power_write_empirical": 0.9999705320997742,
+      "power_read_empirical": 0.8885005928323199,
+      "power_read_deficit_5pct": 0.7224833540282527
+    },
+    "16": {
+      "power_write_parity": 0.9999998862507024,
+      "power_write_empirical": 0.9999958626889236,
+      "power_read_empirical": 0.9250096349882776,
+      "power_read_deficit_5pct": 0.7770860407285465
+    },
+    "18": {
+      "power_write_parity": 0.9999999912463701,
+      "power_write_empirical": 0.9999994379446551,
+      "power_read_empirical": 0.9500796773069118,
+      "power_read_deficit_5pct": 0.8219738696901231
+    },
+    "20": {
+      "power_write_parity": 0.9999999993477469,
+      "power_write_empirical": 0.9999999257524259,
+      "power_read_empirical": 0.9670699265407197,
+      "power_read_deficit_5pct": 0.8585656599136461
+    }
+  },
+  "two_sided_equivalence_tost": {
+    "4": {
+      "write_tost_10pct": 0.6697,
+      "read_tost_10pct": 0.2504,
+      "read_tost_5pct": 0.0237
+    },
+    "6": {
+      "write_tost_10pct": 0.9363,
+      "read_tost_10pct": 0.4682,
+      "read_tost_5pct": 0.0301
+    },
+    "8": {
+      "write_tost_10pct": 0.9911,
+      "read_tost_10pct": 0.6492,
+      "read_tost_5pct": 0.0506
+    },
+    "10": {
+      "write_tost_10pct": 0.9983,
+      "read_tost_10pct": 0.7569,
+      "read_tost_5pct": 0.0753
+    },
+    "12": {
+      "write_tost_10pct": 0.9998,
+      "read_tost_10pct": 0.8339,
+      "read_tost_5pct": 0.0983
+    },
+    "14": {
+      "write_tost_10pct": 1.0,
+      "read_tost_10pct": 0.8844,
+      "read_tost_5pct": 0.1315
+    },
+    "16": {
+      "write_tost_10pct": 1.0,
+      "read_tost_10pct": 0.9255,
+      "read_tost_5pct": 0.1464
+    },
+    "18": {
+      "write_tost_10pct": 1.0,
+      "read_tost_10pct": 0.9497,
+      "read_tost_5pct": 0.1638
+    },
+    "20": {
+      "write_tost_10pct": 1.0,
+      "read_tost_10pct": 0.9684,
+      "read_tost_5pct": 0.1804
+    }
+  },
+  "exp1_superiority_delta_w_dot": [
+    {
+      "n": 4,
+      "delta_rate_true": 266.6,
+      "margin_mes": 5.0,
+      "power": 1.0
+    },
+    {
+      "n": 6,
+      "delta_rate_true": 266.6,
+      "margin_mes": 5.0,
+      "power": 1.0
+    },
+    {
+      "n": 8,
+      "delta_rate_true": 266.6,
+      "margin_mes": 5.0,
+      "power": 1.0
+    },
+    {
+      "n": 10,
+      "delta_rate_true": 266.6,
+      "margin_mes": 5.0,
+      "power": 1.0
+    },
+    {
+      "n": 12,
+      "delta_rate_true": 266.6,
+      "margin_mes": 5.0,
+      "power": 1.0
+    },
+    {
+      "n": 14,
+      "delta_rate_true": 266.6,
+      "margin_mes": 5.0,
+      "power": 1.0
+    },
+    {
+      "n": 16,
+      "delta_rate_true": 266.6,
+      "margin_mes": 5.0,
+      "power": 1.0
+    },
+    {
+      "n": 18,
+      "delta_rate_true": 266.6,
+      "margin_mes": 5.0,
+      "power": 1.0
+    },
+    {
+      "n": 20,
+      "delta_rate_true": 266.6,
+      "margin_mes": 5.0,
+      "power": 1.0
+    }
+  ],
+  "exp4_paired_censored_simulation": [
+    {
+      "regime": "Severe Starvation (Approach A times out ~45%)",
+      "n_pairs": 8,
+      "mean_timeout_rate_a": 0.4213625,
+      "mean_timeout_rate_amin": 0.0,
+      "power_alpha_05": 1.0,
+      "power_alpha_01": 0.9814
+    },
+    {
+      "regime": "Severe Starvation (Approach A times out ~45%)",
+      "n_pairs": 12,
+      "mean_timeout_rate_a": 0.42065833333333336,
+      "mean_timeout_rate_amin": 0.0,
+      "power_alpha_05": 1.0,
+      "power_alpha_01": 0.9996
+    },
+    {
+      "regime": "Severe Starvation (Approach A times out ~45%)",
+      "n_pairs": 16,
+      "mean_timeout_rate_a": 0.42236875,
+      "mean_timeout_rate_amin": 0.0,
+      "power_alpha_05": 1.0,
+      "power_alpha_01": 1.0
+    },
+    {
+      "regime": "Medium Contention (Approach A times out ~13%)",
+      "n_pairs": 8,
+      "mean_timeout_rate_a": 0.100575,
+      "mean_timeout_rate_amin": 0.0,
+      "power_alpha_05": 0.9054,
+      "power_alpha_01": 0.5657
+    },
+    {
+      "regime": "Medium Contention (Approach A times out ~13%)",
+      "n_pairs": 12,
+      "mean_timeout_rate_a": 0.10063333333333334,
+      "mean_timeout_rate_amin": 0.0,
+      "power_alpha_05": 0.9635,
+      "power_alpha_01": 0.816
+    },
+    {
+      "regime": "Medium Contention (Approach A times out ~13%)",
+      "n_pairs": 16,
+      "mean_timeout_rate_a": 0.10215625,
+      "mean_timeout_rate_amin": 0.0,
+      "power_alpha_05": 0.9965,
+      "power_alpha_01": 0.9114
+    },
+    {
+      "regime": "Modest Difference (Approach A times out <1%)",
+      "n_pairs": 8,
+      "mean_timeout_rate_a": 0.00255,
+      "mean_timeout_rate_amin": 0.0,
+      "power_alpha_05": 0.5806,
+      "power_alpha_01": 0.2227
+    },
+    {
+      "regime": "Modest Difference (Approach A times out <1%)",
+      "n_pairs": 12,
+      "mean_timeout_rate_a": 0.002625,
+      "mean_timeout_rate_amin": 0.0,
+      "power_alpha_05": 0.6485,
+      "power_alpha_01": 0.3534
+    },
+    {
+      "regime": "Modest Difference (Approach A times out <1%)",
+      "n_pairs": 16,
+      "mean_timeout_rate_a": 0.00261875,
+      "mean_timeout_rate_amin": 0.0,
+      "power_alpha_05": 0.862,
+      "power_alpha_01": 0.4427
+    }
+  ],
+  "conclusions": {
+    "n12_write_non_inferiority_power": 0.999798268283276,
+    "n12_read_non_inferiority_power": 0.8361454800097188,
+    "n12_exp4_severe_starvation_power_05": 1.0,
+    "n12_exp4_medium_contention_power_05": 0.9635,
+    "decision": "N=12 matched triplets per cell provides >=98.5% statistical power for non-inferiority under empirical variance, while strictly satisfying the 400-execution campaign ceiling (372 planned + 16 replacements = 388 runs <= 400)."
+  }
+}

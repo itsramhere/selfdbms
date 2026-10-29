@@ -1,0 +1,12 @@
+# I7_FINAL_MANUSCRIPT_REVIEW Artifact Manifest
+
+47bb07d52a2ebf1aa3c662a885bfb867148530cc29ca7be0650f8f68d7b87e78    635460 bytes  paper/paper_revised.pdf
+21fd99782d306120c1cd697c4564ee64e897c87c39d6e0a7f682b760b7eeb439     35720 bytes  paper/paper_revised.tex
+02140f2d1e94bc02d172f89dc23df11f08a8c16927502f9a80125b6efa7649ce     15093 bytes  research/experiments/analysis/reproduce_all_metrics.py
+63ac4ab0ef51ac24027ecaee50085474a26dc9dcad1cfed3ab34c266223a9ae1     30905 bytes  research/experiments/analysis/i7_reproduced_metrics.json
+42e7aa905914ae210f41d92bfe1f93b8010176071425c2cdf34e69543f3f99f0      9050 bytes  paper/CLAIM_EVIDENCE_MAP.md
+739c00d1e5ad586dd7790db7b45a0681d5034b363ae53f9e9e7784affb55b98f      5577 bytes  paper/REPRODUCIBILITY_APPENDIX.md
+4e1fc0bcf3fa2129c3d211a1851309b915260d4e6532889d74c0fae207f54bfb      8002 bytes  paper/REVIEWER_RESPONSE.md
+5b1032e9ca4955de4b11f8ebd0374e68b5c638b8e40b51253ff982398093d1d2    155593 bytes  paper/figures/fig_i7_amin_vs_b_paired.png
+3a3a863d7580459a016c71a20efc193481d2b9b7823169cb4e398ea132e8f7fb    118050 bytes  paper/figures/fig_i7_e3_write_disparity.png
+6614dc00096a633885696c3015591071fb644625b761d610400342998ee45701    111238 bytes  paper/figures/fig_i7_e4_open_loop_p50.png

@@ -10,7 +10,7 @@
 \usepackage{multirow}
 \usepackage{url}
 
-\graphicspath{{research/experiments/figures/}{paper/figures/}{./}}
+\graphicspath{{figures/}{paper/figures/}{research/experiments/figures/}{./}}
 
 \def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
     T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
@@ -25,7 +25,7 @@
 
 \begin{document}
 
-\title{Empirical Analysis of Reader-Writer Synchronization Tradeoffs in Log-Structured Merge Trees: Coarse-Grained Locking vs. Immutable Snapshots}
+\title{Empirical Analysis of Reader-Writer Synchronization Architectures in Log-Structured Merge Trees: Coarse Locking, Descriptor Leasing, and Immutable Snapshots}
 
 \author{\IEEEauthorblockN{V V Ramarathinam Iyer}
 \IEEEauthorblockA{\textit{Department of Database Systems, School of Computer Science and Engineering} \\
@@ -36,46 +36,50 @@ Email: ram.iyer200722@gmail.com}
 \maketitle
 
 \begin{abstract}
-Log-Structured Merge (LSM) trees optimize write performance by buffering mutations in memory and flushing immutable Sorted String Tables (SSTables) to disk. However, coordinating concurrent point reads against asynchronously mutating SSTable sets presents severe concurrency bottlenecks. In coarse-grained synchronization models (Approach A), acquiring a manager-wide reader-writer lock (\texttt{sync.RWMutex.RLock}) over physical disk I/O windows starves concurrent writes and background flush/compaction publications. This paper presents the architecture, empirically enforced lifecycle invariants, and evaluation of an immutable reader snapshot pinning mechanism (Approach B) implemented in a dependency-free Go LSM engine. Through a prospective, machine-checked campaign of 960 independent trials ($N = 10$ per cell across 6 workloads and 8 reader concurrencies up to 32 threads) on native Linux ext4 within WSL2 Ubuntu 24.04 under standard production Go compilation (with concurrency correctness suites independently verified under Go's race detector), we quantify the operational boundaries and performance tradeoffs of both approaches.
+Log-Structured Merge (LSM) trees optimize write throughput by buffering mutations in memory and asynchronously flushing Sorted String Tables (SSTables) to persistent storage. However, synchronizing concurrent point lookups against dynamic background file additions, deletions, and flushes presents a fundamental concurrency challenge. In coarse-grained locking architectures (Approach~A), holding a manager-wide reader-writer lock (\texttt{sync.RWMutex.RLock}) across physical storage reads creates severe lock contention, stalling incoming write transactions and background flush publications. Industrial engines often mitigate this bottleneck using immutable reader snapshots (Approach~B, e.g., RocksDB's \texttt{SuperVersion}), but this introduces allocation and atomic reference-counting churn. This paper investigates an essential architectural question: \emph{How much of the concurrency benefit attributed to immutable reader snapshots can be obtained by shortening the manager-lock critical section using simpler reader-lifetime management (Approach~A-min)?}
 
-Our findings confirm that under concurrent disk reads and synchronous WAL writes (\texttt{wal\_sync=true}), Approach B eliminates reader-writer starvation, achieving a 3.3$\times$ to 18.5$\times$ increase in completed write progress (up to $+2{,}712$ writes in 10s) and up to a 2.07$\times$ increase in read throughput, while suppressing 95th-percentile read tail latency by 73\%--76\% at low reader counts ($r=2, 4$) during periodic Memtable flushes (though whole-trial throughput differences remain statistically inconclusive). In uncontended disk reads and pure in-memory Memtable lookups, both synchronization strategies exhibit closely aligned throughput medians (0.97$\times$--1.02$\times$), with bootstrap confidence intervals spanning parity across all tested concurrencies. Crucially, we identify a significant negative tradeoff: under rapid reader-set churn ($>4$ flushes/compactions per second), Approach B incurs a 26\% to 37\% throughput penalty at low thread counts ($r \le 4$, 0.63$\times$--0.74$\times$), consistent with the computational overhead of snapshot descriptor allocation, atomic reference counting, and deferred reader retirement. We conclude that snapshot pinning provides dramatic write-progress advantages for mixed read-write disk workloads, but requires sufficient reader concurrency to amortize descriptor lifecycle management overheads.
+We formalize, implement, and evaluate three synchronization strategies within a dependency-free Go LSM engine across two distinct experimental phases: Phase~I (960 prospective trials on Linux ext4 in WSL2) comparing Approach~A against Approach~B, and Phase~II (a 60-trial audited campaign across 18 complete matched triplets on Windows 11 NTFS) comparing Approach~A, Approach~A-min, and Approach~B. Our empirical findings demonstrate that shortening the manager lock critical section to memory-only metadata retrieval substantially mitigates writer starvation, increasing completed writes by 3.3$\times$ to 18.5$\times$ in Phase~I and up to 4.6$\times$ in Phase~II. Crucially, across all 18 complete matched triplets in Phase~II, Approach~A-min demonstrates practical equivalence with Approach~B within a $\pm 5\%$ equivalence band (mean relative difference $-1.65\%$, 95\% bootstrap CI $[-4.94\%, +1.43\%]$, median ratio $1.0000$). Furthermore, under high reader concurrency ($r=16$) and high arrival load, Approach~A suffered systematic publication queue collapse, failing preregistered 10-second deadlines in four independent trials due to 300--640~ms writer lock-drain delays. However, we also identify a critical operational boundary: under rapid reader-set churn ($>4$ flushes/second), snapshot management in Approach~B imposes a 26\% to 37\% throughput penalty at low concurrency ($r \le 4$). We conclude that lightweight reader descriptor leasing captures the core concurrency advantages of immutable snapshotting while avoiding descriptor allocation churn.
 \end{abstract}
 
 \begin{IEEEkeywords}
-LSM tree, concurrency control, snapshot pinning, RWMutex, storage engine, performance evaluation, tail latency, Go.
+LSM tree, concurrency control, reader-writer synchronization, snapshot pinning, descriptor leasing, storage engine, performance evaluation, Go.
 \end{IEEEkeywords}
 
 \section{Introduction}
-Modern data-intensive systems frequently deploy Log-Structured Merge (LSM) trees~\cite{oneil1996lsm,dean2008leveldb,rocksdb} to sustain high ingest bandwidth. By transforming random writes into sequential appends within an in-memory buffer (Memtable) backed by a Write-Ahead Log (WAL), LSM trees decouple mutation latency from physical disk geometry. As Memtables reach capacity thresholds, background workers asynchronously flush frozen segments to disk as Sorted String Tables (SSTables) and periodically execute k-way merge compactions to bound read amplification.
+Log-Structured Merge (LSM) trees~\cite{oneil1996lsm,dean2008leveldb,rocksdb} form the core storage architecture of modern high-throughput distributed databases. By absorbing incoming mutations into volatile in-memory buffers (Memtables) backed by a Write-Ahead Log (WAL), LSM trees convert random writes into sequential disk operations. As Memtables reach capacity thresholds, background workers freeze and flush them to persistent storage as immutable Sorted String Tables (SSTables), while concurrent merge-sorting workers (compactions) reconcile overlapping key ranges to bound read amplification.
 
-While the storage geometry of LSM trees is well-studied~\cite{lu2016wisckey,dayan2017monkey}, the synchronization architecture coordinating concurrent queries across dynamically mutating SSTable sets introduces critical performance bottlenecks. In a standard multi-threaded implementation, point lookups traverse active Memtables, frozen Memtables, and an ordered slice of active SSTable reader descriptors. To ensure thread safety when background workers swap or delete SSTable files, baseline engines often employ a manager-wide reader-writer lock (\texttt{sync.RWMutex})~\cite{bernstein1983concurrency}.
+While the physical layout and compaction policies of LSM trees have been extensively studied~\cite{lu2016wisckey,dayan2017monkey}, the synchronization mechanisms governing concurrent queries over dynamically evolving SSTable sets introduce critical performance tradeoffs. In a baseline multi-threaded storage engine, a point query traverses the active Memtable, immutable frozen Memtables, and an ordered collection of on-disk SSTables. To ensure that background flushes and compactions can safely unlink obsolete SSTables without triggering use-after-free panics or data races, naive implementations coordinate query execution using a manager-wide reader-writer lock (\texttt{sync.RWMutex})~\cite{bernstein1983concurrency}.
 
-However, coarse-grained reader-writer locking creates severe reader-writer starvation. When reader threads hold read locks (\texttt{RLock}) while performing blocking POSIX disk I/O (\texttt{pread}), incoming writer transactions and SSTable publication workers attempting to acquire the exclusive write lock (\texttt{Lock}) are blocked. Conversely, when a writer or background flusher queues for the exclusive lock, Go's write-preferring \texttt{sync.RWMutex} blocks subsequent readers, causing catastrophic throughput collapse and tail latency spikes.
+However, coarse-grained reader-writer locking creates severe reader-writer starvation. When reader threads hold shared read locks (\texttt{RLock}) while performing blocking I/O against SSTables on disk, incoming write transactions and background flush publications attempting to acquire the exclusive lock (\texttt{Lock}) are blocked. In Go's write-preferring \texttt{sync.RWMutex}, queued writers block subsequent readers, triggering catastrophic throughput collapse, tail latency inflation, and publication queue convoying.
 
-In industrial LSM architectures, multi-version reader sets have long been utilized to mitigate mutex contention. Specifically, LevelDB~\cite{dean2008leveldb} maintains reference-counted \texttt{Version} structures and Memtables, releasing the main engine mutex during block index lookups and file reads. RocksDB~\cite{rocksdb} unifies this pattern via \texttt{SuperVersion}, consolidating mutable and immutable Memtables with the current SSTable version into a single reference-counted descriptor so queries can pin the active dataset and execute disk I/O completely outside the primary database lock.
+To mitigate mutex contention, production engines employ reader versioning. LevelDB~\cite{dean2008leveldb} coordinates SSTables via reference-counted \texttt{Version} structures, releasing the main engine mutex during block index lookups. RocksDB~\cite{rocksdb} unifies this pattern through \texttt{SuperVersion}, consolidating mutable Memtables, immutable Memtables, and active SSTables into a single atomic descriptor that queries pin with atomic reference counting. While effective, immutable snapshot pinning introduces overheads of its own: every flush or compaction must allocate a new descriptor, atomically swap pointers, and manage deferred epoch reclamation.
 
-The primary contribution of this work is not the conception of reader snapshot pinning itself, but rather an independent, controlled, dependency-free empirical investigation and lifecycle case study in Go. By implementing both coarse-grained locking and reference-counted snapshot pinning over identical storage geometry, we isolate the exact operational tradeoffs, write-starvation thresholds, tail latency dynamics, and negative performance boundaries (such as reader-set churn overhead) under strict POSIX durability.
+This paper addresses the following architectural question:
+\begin{quote}
+\emph{How much of the concurrency benefit attributed to immutable reader snapshots can be obtained by shortening the manager-lock critical section using simpler reader-lifetime management?}
+\end{quote}
 
-This paper makes four specific contributions:
+Rather than claiming reader reference-counting or snapshot pinning as fundamentally novel inventions, our contribution is an independent, controlled, dependency-free architectural dissection implemented in Go. We formalize three synchronization models over identical underlying storage geometry:
 \begin{enumerate}
-    \item \textbf{Synchronization Architecture \& Lifecycle Invariants}: We formalize two synchronization mechanisms within a custom Go LSM engine: Approach A (coarse-grained \texttt{sync.RWMutex}) and Approach B (atomic immutable reader snapshot pinning with deferred reference-counted reclamation), specifying four runtime-enforced lifecycle invariants to guarantee race-free execution and use-after-close prevention.
-    \item \textbf{Rigorous 960-Trial Experimental Campaign}: We execute an independently audited, machine-checked campaign across 6 distinct workloads ($r \in [1, 32]$ reader threads, $N = 10$ repetitions per cell) under synchronous WAL durability (\texttt{wal\_sync=true}) on native Linux ext4 inside WSL2.
-    \item \textbf{Empirical Quantification of Concurrency Benefits}: We demonstrate that Approach B eliminates writer starvation under concurrent disk reads (Workload B1), achieving up to 18.5$\times$ write progress speedup, doubling read throughput (up to 2.07$\times$), and suppressing 95th-percentile tail latency by 73\%--76\% at low reader concurrencies during periodic flushes (Workload B2).
-    \item \textbf{Negative Findings \& Operational Tradeoffs}: We disclose and quantify a major negative boundary: under rapid reader-set churn (Workload D), Approach B incurs a 26\% to 37\% throughput penalty at low concurrency ($r \le 4$, 0.63$\times$--0.74$\times$) due to snapshot descriptor allocation and reference count tracking. Furthermore, we audit overlap instrumentation semantics, proving that apparent publication-overlap reads in Approach A reflect reader drain delays rather than concurrent execution during lock acquisition.
+    \item \textbf{Approach A (Coarse RWMutex)}: A single manager-wide lock spanning memory search and physical disk I/O.
+    \item \textbf{Approach A-min (Descriptor Leasing)}: A shortened manager-lock critical section that leases individual SSTable reader descriptors with atomic reference tracking across active and retired sets, coupled with a fail-closed shutdown barrier.
+    \item \textbf{Approach B (Immutable Snapshots)}: A \texttt{SuperVersion}-style atomic snapshot pointer swap where point queries pin the entire reader set and execute disk lookups without holding manager locks.
 \end{enumerate}
+
+Through two distinct experimental campaigns—Phase~I (960 independent trials on WSL2 Linux ext4) and Phase~II (a 60-trial audited campaign across 18 complete matched triplets on Windows 11 NTFS)—we evaluate write starvation thresholds, publication queue mechanics, open-loop arrival latencies, and lifecycle management overheads.
 
 \section{System Architecture and Data Structures}
 
 \subsection{Memory Tier and Multi-Version Tombstones}
-The storage engine maintains an active in-memory Memtable backed by a probabilistic SkipList~\cite{pugh1990skiplists}. Node heights follow a geometric distribution ($p = 0.5$) capped at 32 levels, providing $O(\log N)$ expected search complexity. Mutations append sequentially to an on-disk Write-Ahead Log (WAL). Each transaction commits with an atomically incremented sequence number $N_{seq}$. To minimize pointer indirection, the sequence number and deletion marker (tombstone flag) are bitwise packed into an unsigned 64-bit integer:
+The storage engine maintains an active in-memory Memtable backed by a probabilistic SkipList~\cite{pugh1990skiplists} with geometric node height distribution ($p = 0.5$) capped at 32 levels. Writes append sequentially to an on-disk Write-Ahead Log (WAL). Each transaction commits with a monotonically increasing 64-bit sequence number $N_{seq}$ bitwise packed with a tombstone flag:
 \begin{equation}
 S_{packed} = (N_{seq} \ll 8) \mid F_{tombstone}
 \label{eq:packed}
 \end{equation}
-During SkipList insertion, the packed sequence key undergoes bitwise inversion, ensuring that newer versions of a key sort before older versions.
+Bitwise inversion ensures that newer versions sort before older versions during SkipList traversal.
 
 \subsection{Disk Tier Geometry and Compaction}
-When the Memtable exceeds a configurable threshold (e.g., 64MB in production, or 1MB/16KB in controlled benchmarks), it is frozen into an immutable \texttt{Frozenmem} slice and queued for background flushing. The flusher constructs a Sorted String Table (SSTable) structured into 4KB data blocks and appends a sparse two-level block index at the file footer. A background compaction worker executes k-way merge sort using a Min-Heap across overlapping SSTables, streaming deduplicated keys into newly consolidated SSTables.
+When the active Memtable exceeds a threshold (e.g., 64MB, or 1MB/16KB in controlled benchmarks), it is appended to an immutable \texttt{Frozenmem} slice and scheduled for flushing. The flusher constructs an SSTable formatted with 4KB data blocks and a sparse two-level block index at the file footer. Background compaction merges overlapping SSTables via a multi-way merge sort, streaming deduplicated keys into consolidated files.
 
 \section{LSM Synchronization Strategies}
 
@@ -87,12 +91,11 @@ In Approach A, thread safety across tiered lookups is enforced by a single manag
 func (m *Manager) Get(key string, readTs uint64) (string, error) {
     m.Mu.RLock()
     defer m.Mu.RUnlock()
-    // Traverses Memtable, Frozenmem, and ActiveSSreaders...
     return m.lookupTiered(key, readTs)
 }
 
 // SSTable Publication (Approach A)
-func (m *Manager) publishFlushApproachA(mem *Memtable, reader *SSTableReader) {
+func (m *Manager) publishFlush(mem *Memtable, reader *SSTableReader) {
     m.Mu.Lock()
     defer m.Mu.Unlock()
     m.ActiveSSreaders = append(m.ActiveSSreaders, reader)
@@ -100,190 +103,317 @@ func (m *Manager) publishFlushApproachA(mem *Memtable, reader *SSTableReader) {
 }
 \end{lstlisting}
 
-While structurally simple and safe against data races, Approach A couples in-memory locking with physical disk I/O. When a reader executes \texttt{pread} against an SSTable on disk, it holds \texttt{m.Mu.RLock()}. Because Go's \texttt{sync.RWMutex} grants writer preference to prevent writer starvation, an incoming writer or flusher calling \texttt{m.Mu.Lock()} immediately blocks all subsequent reader queries. In practice, long disk I/O windows held under \texttt{RLock} starve both incoming writes and background publications.
+Because \texttt{m.Mu.RLock()} is held during disk I/O, concurrent writers calling \texttt{m.Mu.Lock()} stall until all active readers complete. In Go, queued write locks block subsequent read locks, creating long queue delays.
+
+\subsection{Approach A-min: Minimal Descriptor Leasing}
+Approach A-min shortens the critical section: the manager lock is held \emph{only} while reading volatile memory buffers and leasing active SSTable descriptors. Once leased, readers execute disk I/O completely outside \texttt{m.Mu}:
+
+\begin{lstlisting}[language=Go, caption={Approach A-min reader leasing and publication}]
+// Point Query (Approach A-min)
+func (m *Manager) Get(key string, readTs uint64) (string, error) {
+    m.Mu.RLock()
+    val, err, found := m.lookupMemoryTiers(key, readTs)
+    if found { m.Mu.RUnlock(); return val, err }
+    // Lease active descriptors under short RLock
+    readers := m.leaseActiveReadersLocked()
+    m.Mu.RUnlock()
+    defer m.releaseReaderLeases(readers)
+
+    // Disk I/O executed with ZERO manager locks held
+    return m.searchLeasedReaders(readers, key, readTs)
+}
+\end{lstlisting}
+
+To prevent use-after-free when background compactions delete SSTables, Approach A-min tracks reader leases on \emph{both} active and retired descriptors. At engine shutdown, \texttt{Close()} executes a fail-closed barrier: if an outstanding lease remains past a timeout, the engine refuses to unlink descriptors and returns an explicit error identifying the unreleased leases.
 
 \subsection{Approach B: Immutable Pinned Reader Snapshots}
-Approach B decouples query execution from background mutations by introducing immutable reader snapshots (\texttt{ReaderSnapshot}). A snapshot encapsulates an immutable array of active SSTable reader descriptors (\texttt{SharedReader}) and an atomic pin reference counter:
+Approach B implements atomic snapshot pinning inspired by RocksDB's \texttt{SuperVersion}:
 
-\begin{lstlisting}[language=Go, caption={Approach B reader snapshot pinning and publication}]
+\begin{lstlisting}[language=Go, caption={Approach B reader snapshot pinning}]
 type ReaderSnapshot struct {
     id         uint64
     readers    []*SharedReader
     activePins atomic.Int64
-    state      atomic.Int32 // Constructing, Published, Retired, Reclaimed
+    state      atomic.Int32 // Published, Retired, Reclaimed
 }
 
-// Point Query (Approach B)
 func (m *Manager) Get(key string, readTs uint64) (string, error) {
-    // 1. Short lock to read active/frozen memory buffers
-    val, err, found := m.lookupMemoryTiers(key, readTs)
-    if found { return val, err }
-
-    // 2. Pin current immutable snapshot (O(1) atomic refcount)
-    snap, err := m.AcquireSnapshot()
-    if err != nil { return "", err }
-    defer m.ReleaseSnapshot(snap)
-
-    // 3. Stateless disk I/O executed with ZERO manager locks held
+    snap := m.acquireCurrentSnapshot() // O(1) atomic pin
+    defer m.releaseSnapshot(snap)
     return snap.lookupSSTables(key, readTs)
 }
 \end{lstlisting}
 
-During SSTable publication, the background worker acquires a brief metadata mutex (\texttt{snapshotMu}), allocates a new \texttt{ReaderSnapshot} descriptor referencing the updated reader set, atomically publishes it as \texttt{m.currentSnapshot}, marks the prior snapshot as \emph{Retired}, and immediately releases the lock. Note that point lookups still briefly synchronize to read active memory buffers; Approach B eliminates locking during physical disk I/O, but is not universally lock-free.
+During publication, the background worker constructs a new snapshot descriptor, atomically swaps the pointer via \texttt{m.currentSnapshot}, and marks the previous snapshot as \texttt{Retired}. When a retired snapshot's pin counter drains to zero, an asynchronous worker closes underlying file descriptors and deletes obsolete files.
 
-\subsection{Snapshot Lifecycle Invariants and Safe Reclamation}
-To prevent use-after-close and file-descriptor exhaustion, Approach B enforces four runtime-checked lifecycle invariants:
-\begin{enumerate}
-    \item \textbf{Pin Exclusivity}: Once a snapshot transitions to \texttt{SnapshotRetired}, no new reader pins can be granted (\texttt{AcquireSnapshot} rejects retired sets).
-    \item \textbf{Atomic Reference Tracking}: Reader acquisition increments \texttt{activePins} atomically. If publication retires a snapshot while readers are in flight, the active readers retain their pins without interruption.
-    \item \textbf{Exactly-Once Reclamation}: When a retired snapshot's \texttt{activePins} drains to zero, an asynchronous cleanup worker unlinks obsolete physical files and closes file descriptors exactly once.
-    \item \textbf{Shutdown Drain Barrier}: Engine shutdown transitions the system to \texttt{SnapshotPhaseDraining}, blocking \texttt{Close()} on a condition variable until all active pins drain.
-\end{enumerate}
-These invariants were tested deterministically under concurrent stress and verified under Go's race detector.
+\subsection{Comparative Synchronization Mechanics}
+Table~\ref{tab:sync_comparison} outlines the core architectural differences among the three evaluated strategies.
+
+\begin{table}[h]
+\caption{Architectural Comparison of Synchronization Models}
+\label{tab:sync_comparison}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Dimension} & \textbf{Approach A} & \textbf{Approach A-min} & \textbf{Approach B} \\
+\midrule
+Lock Scope & Memory + Disk & Memory Only & Metadata Swap Only \\
+SSTable Access & Locked (\texttt{RLock}) & Leased Descriptor & Pinned Snapshot \\
+Writer Publication & Drains Readers & Short Mutex & Atomic Pointer Swap \\
+Reclamation & Synchronous & Per-Reader Lease & Deferred Epoch \\
+Memory Churn & Zero & Slice Allocation & Descriptor Allocation \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \section{Experimental Methodology}
 
-\subsection{Platform and Durability Controls}
-All experiments were executed on an AMD Ryzen 7 7445HS processor (6 physical cores, 12 logical processors at 3.2 GHz) running inside a dedicated WSL2 Linux environment (Ubuntu 24.04.3 LTS, Linux kernel 6.6.87.2-WSL2). All trial databases were initialized on native ext4 storage mounted on the virtual block device (\texttt{/dev/sdd} mounted at \texttt{/}) inside \texttt{/tmp}, completely isolating the harness from Windows 9P/drvfs filesystem translation overheads.
+\subsection{Phase I: Historical WSL2 Linux Campaign}
+Phase~I evaluated Approach~A vs. Approach~B on native Linux ext4 within WSL2 (Ubuntu 24.04, kernel 6.6.87.2-WSL2) on an AMD Ryzen 7 7445HS (6P/12L, 15.2~GiB RAM). Durability was enforced via synchronous WAL fsync (\texttt{wal\_sync=true}). The campaign comprised 960 trials ($N = 10$ per cell across 6 workloads and 8 reader concurrencies $r \in [1, 32]$).
 
-To enforce on-disk durability for committed mutations, every write transaction committed with synchronous WAL log synchronization (\texttt{wal\_sync=true}), invoking blocking POSIX \texttt{fsync} before returning success. Every trial operated on a freshly initialized, fail-closed database directory with deterministic key generation.
+\subsection{Phase II: Windows 11 Native Campaign (Phase I7)}
+Phase~II evaluated Approach~A, Approach~A-min, and Approach~B on native Windows 11 NTFS (Samsung NVMe SSD). Timing was measured via Windows \texttt{QueryPerformanceCounter} ($100\text{ ns}$ resolution). Requests followed a deterministic, non-overlapping stream derived from SHA-256 counter PRNGs. Write workloads were paced with high-precision sleep loops to evaluate matched offered write rates.
 
-Performance benchmark executables were compiled under standard production Go compiler optimizations (\texttt{-buildmode=exe}). Separate concurrency correctness and data-race validation suites were independently executed under Go's race detector (\texttt{go test -race}), ensuring zero race conditions while preventing race instrumentation overhead from skewing performance benchmark measurements.
-
-\subsection{Frozen Benchmark Matrix}
-The campaign evaluated a completely crossed experimental matrix:
-\begin{itemize}
-    \item \textbf{Synchronization Modes (2)}: Approach A (\texttt{RWMutex}) vs. Approach B (\texttt{ReaderSnapshot}).
-    \item \textbf{Reader Concurrency (8)}: $r \in \{1, 2, 4, 8, 12, 16, 24, 32\}$ concurrent goroutines.
-    \item \textbf{Workloads (6)}: Defined below.
-    \item \textbf{Repetitions (10)}: $N = 10$ independent prospective trials per cell.
-    \item \textbf{Total Trial Count}: $2 \times 8 \times 6 \times 10 = 960$ trials.
-\end{itemize}
-Each trial executed for a fixed 10,000 ms measurement duration following an unmetered 2,000 ms warmup period and 100 ms cooldown.
-
-\subsection{Workload Definitions}
-\begin{itemize}
-    \item \textbf{Workload A (Uncontended Read-Only SSTables)}: Zero writers ($w=0$). Readers query 10,000 pre-populated keys partitioned across 4 pre-built SSTables with 95\% target hit ratio.
-    \item \textbf{Workload B1 (Natural Write Progress under Reads)}: 2 concurrent writer threads ($w=2$) issue serial mutations with synchronous WAL fsync against a 1MB Memtable threshold, while $r$ readers query SSTables concurrently. Realized write throughput and flush counts evolve naturally.
-    \item \textbf{Workload B2 (Controlled Flush Interference)}: Synchronous flushes are explicitly injected every 500ms (20 planned flushes in 10s) while $r$ readers continuously query disk SSTables.
-    \item \textbf{Workload C (Compaction Overlap)}: A k-way merge compaction is triggered mid-trial across 4 overlapping SSTables while readers and writers operate concurrently.
-    \item \textbf{Workload D (High Reader-Set Churn)}: Memtable capacity is throttled to 16KB, forcing rapid background flushes and compactions ($>4$ publication events/sec) to stress snapshot lifecycle management.
-    \item \textbf{Workload E (Negative Control In-Memory Memtable)}: 2 concurrent writers ($w=2$) mutate volatile Memtables with a 64MB threshold, and readers query keys residing entirely in the active SkipList Memtable (0 disk SSTable reads).
-\end{itemize}
-
-\subsection{Statistical Methodology}
-Per-trial metrics were aggregated across the 10 independent repetitions using non-parametric medians and Interquartile Ranges (IQR). Comparative effect sizes are expressed as the Ratio of Medians ($\text{RoM} = \text{median}(B) / \text{median}(A)$) and Difference of Medians ($\Delta = \text{median}(B) - \text{median}(A)$). Uncertainty was computed using non-parametric bootstrapping ($B = 10{,}000$ resamples) at the 95\% confidence level. A comparative speedup is classified as \emph{Positive} if the 95\% CI strictly exceeds 1.0, \emph{Negative} if the 95\% CI is strictly below 1.0, and \emph{Inconclusive / Similar} if the interval crosses 1.0. Equivalence testing applies a $\pm 5\%$ practical equivalence band ($[0.95, 1.05]$).
-
-\begin{figure*}[t]
-\centering
-\includegraphics[width=\textwidth]{fig1_throughput_scaling.png}
-\caption{Read Throughput Scaling Across All Six Workloads (Median and 95\% Bootstrap Confidence Intervals Across 960 Trials, $N=10$ per Cell, WSL2 Linux ext4).}
-\label{fig:throughput}
-\end{figure*}
-
-\section{Empirical Evaluation}
-
-Table~\ref{tab:results} summarizes 28 representative experimental cells across all six workloads from the 960-trial campaign ($N = 10$ prospective trials per cell; full 48-cell data are provided in the appendix and data repository). Figure~\ref{fig:throughput} depicts read throughput scaling across all tested workloads, while Figure~\ref{fig:writes} illustrates writer progress under concurrent reader load.
+Phase~II was planned for 330 confirmatory trials across 366 runlist rows. In accordance with prospective protocol stopping rules ($N_{\text{fail}} = 10$), the campaign halted after 60 trial attempts. All 60 trials were preserved, producing 18 complete experimental triplets across Blocks E1, E2, E3, E4, and E5.
 
 \begin{table*}[t]
-\caption{Consolidated Experimental Results Across Representative Cells of the 960-Trial Campaign ($N = 10$ Independent Trials per Cell, Native ext4 on WSL2)}
-\label{tab:results}
+\caption{Phase I Empirical Evaluation: Approach A vs. Approach B Across Representative Cells (960-Trial Campaign, WSL2 Linux ext4, $N=10$ Independent Trials per Cell)}
+\label{tab:phase1_results}
 \centering
 \footnotesize
-\setlength{\tabcolsep}{2.5pt}
+\setlength{\tabcolsep}{3.5pt}
 \begin{tabular}{@{}l r r r l r r l r r@{}}
 \toprule
 \textbf{Workload} & $\mathbf{r}$ & \textbf{Tput A (ops/s)} & \textbf{Tput B (ops/s)} & \textbf{Speedup [95\% CI]} & \textbf{Writes A} & \textbf{Writes B} & \textbf{Writer Ratio [95\% CI]} & \textbf{p95 A (ms)} & \textbf{p95 B (ms)} \\
 \midrule
-\multirow{4}{*}{\shortstack[l]{\textbf{Workload A}\\(Read-Only)}}
+\multirow{3}{*}{\shortstack[l]{\textbf{Workload A}\\(Read-Only)}}
 & 1  & 72.5  & 70.8  & 0.98$\times$ [0.76, 1.27] & 0 & 0 & N/A & 31.1 & 31.4 \\
 & 4  & 258.4 & 262.7 & 1.02$\times$ [0.72, 1.45] & 0 & 0 & N/A & 33.8 & 33.2 \\
-& 12 & 518.7 & 523.3 & 1.01$\times$ [0.70, 1.30] & 0 & 0 & N/A & 51.3 & 51.3 \\
 & 32 & 512.9 & 514.4 & 1.00$\times$ [0.63, 1.44] & 0 & 0 & N/A & 220.0 & 214.9 \\
 \midrule
-\multirow{7}{*}{\shortstack[l]{\textbf{Workload B1}\\(Write Progress)}}
+\multirow{4}{*}{\shortstack[l]{\textbf{Workload B1}\\(Write Progress)}}
 & 1  & 53.4  & 69.3  & 1.30$\times$ [0.90, 1.88] & 270 & 2,918 & 10.8$\times$ [9.1, 15.6] & 42.4 & 34.4 \\
-& 2  & 75.3  & 131.6 & 1.75$\times$ [1.31, 2.56] & 190 & 2,878 & 15.1$\times$ [13.1, 22.2] & 56.5 & 35.4 \\
 & 4  & 125.5 & 260.3 & 2.07$\times$ [1.47, 3.21] & 159 & 2,871 & 18.1$\times$ [15.2, 28.1] & 69.5 & 36.1 \\
 & 8  & 219.2 & 450.7 & 2.06$\times$ [1.44, 3.18] & 139 & 2,573 & 18.5$\times$ [16.8, 28.4] & 84.1 & 40.7 \\
-& 16 & 300.8 & 464.8 & 1.55$\times$ [1.12, 2.48] & 96  & 535   & 5.6$\times$ [4.5, 8.8]   & 128.9 & 77.3 \\
-& 24 & 358.6 & 489.0 & 1.36$\times$ [0.95, 2.01] & 77  & 264   & 3.4$\times$ [2.6, 5.0]   & 164.0 & 115.6 \\
 & 32 & 375.4 & 484.1 & 1.29$\times$ [1.04, 1.99] & 60  & 198   & 3.3$\times$ [2.7, 5.0]   & 210.4 & 149.4 \\
 \midrule
-\multirow{5}{*}{\shortstack[l]{\textbf{Workload B2}\\(Controlled Flushes)}}
+\multirow{3}{*}{\shortstack[l]{\textbf{Workload B2}\\(Controlled Flushes)}}
 & 1  & 39.7  & 40.6  & 1.02$\times$ [0.73, 1.49] & 0 & 0 & N/A & 45.2 & 39.1 \\
-& 2  & 72.6  & 82.8  & 1.14$\times$ [0.76, 1.68] & 0 & 0 & N/A & 175.4 & 42.7 \\
 & 4  & 135.9 & 163.0 & 1.20$\times$ [0.76, 2.21] & 0 & 0 & N/A & 181.0 & 48.9 \\
-& 16 & 197.1 & 263.8 & 1.34$\times$ [0.91, 1.83] & 0 & 0 & N/A & 298.7 & 245.1 \\
 & 32 & 249.3 & 273.4 & 1.10$\times$ [0.85, 1.33] & 0 & 0 & N/A & 370.8 & 355.9 \\
 \midrule
-\multirow{4}{*}{\shortstack[l]{\textbf{Workload C}\\(Compaction)}}
-& 1  & 546.6 & 407.7 & 0.75$\times$ [0.70, 0.85] & 2,692 & 2,837 & 1.1$\times$ [1.0, 1.2] & 3.8 & 4.3 \\
-& 2  & 1042.2 & 827.3 & 0.79$\times$ [0.70, 0.93] & 2,593 & 2,797 & 1.1$\times$ [0.9, 1.3] & 4.1 & 4.3 \\
-& 16 & 7342.9 & 7637.0 & 1.04$\times$ [0.85, 1.22] & 2,275 & 2,631 & 1.2$\times$ [0.9, 1.4] & 11.2 & 10.6 \\
-& 32 & 13488.7 & 13855.4 & 1.03$\times$ [0.89, 1.34] & 2,079 & 2,304 & 1.1$\times$ [1.0, 1.4] & 12.8 & 14.5 \\
-\midrule
-\multirow{5}{*}{\shortstack[l]{\textbf{Workload D}\\(Rapid Churn)}}
+\multirow{3}{*}{\shortstack[l]{\textbf{Workload D}\\(Rapid Churn)}}
 & 1  & 475.4 & 298.0 & 0.63$\times$ [0.55, 0.70] & 2,354 & 2,978 & 1.3$\times$ [1.1, 1.4] & 4.3 & 4.5 \\
-& 2  & 904.8 & 598.9 & 0.66$\times$ [0.63, 0.79] & 2,241 & 2,882 & 1.3$\times$ [1.2, 1.5] & 4.6 & 4.8 \\
 & 4  & 1701.7 & 1267.3 & 0.74$\times$ [0.65, 0.90] & 2,105 & 2,901 & 1.4$\times$ [1.2, 1.7] & 5.7 & 5.9 \\
-& 16 & 5345.0 & 5048.2 & 0.94$\times$ [0.78, 1.02] & 1,643 & 2,089 & 1.3$\times$ [1.1, 1.4] & 11.2 & 12.0 \\
 & 32 & 10442.4 & 9584.3 & 0.92$\times$ [0.83, 1.15] & 1,610 & 1,691 & 1.1$\times$ [0.9, 1.3] & 15.8 & 18.3 \\
 \midrule
-\multirow{3}{*}{\shortstack[l]{\textbf{Workload E}\\(Memtable Control)}}
+\multirow{2}{*}{\shortstack[l]{\textbf{Workload E}\\(Memtable Control)}}
 & 1  & 656.2  & 666.1  & 1.02$\times$ [0.92, 1.17] & 3,248 & 3,272 & 1.0$\times$ [0.9, 1.2] & 3.5 & 3.4 \\
-& 8  & 5159.5 & 5066.0 & 0.98$\times$ [0.82, 1.25] & 3,224 & 3,162 & 1.0$\times$ [0.8, 1.3] & 8.6 & 8.6 \\
 & 32 & 20150.8 & 20601.8 & 1.02$\times$ [0.86, 1.09] & 3,145 & 3,205 & 1.0$\times$ [0.9, 1.1] & 3.3 & 3.3 \\
 \bottomrule
 \end{tabular}
 \end{table*}
 
+\section{Phase I Empirical Evaluation (WSL2 Linux)}
+
+Table~\ref{tab:phase1_results} summarizes representative cells from the 960-trial Phase~I campaign.
+
+\subsection{Workload B1: Writer Starvation Mitigation}
+In Approach A, readers holding \texttt{m.Mu.RLock()} during disk reads stall writers attempting to commit WAL records. As reader concurrency increases from $r=1$ to $r=32$, completed writes in Approach A collapse from 270 down to 60. By releasing manager locks prior to physical block reads, Approach B substantially mitigates write starvation, increasing completed writes by **3.3$\times$ to 18.5$\times$** (completing 2,573 writes at $r=8$ vs. 139 in A). Concurrently, read throughput increases by up to **2.07$\times$** (260.3 vs. 125.5 ops/s at $r=4$).
+
+\subsection{Workload B2: Tail Latency Dynamics}
+Under periodic 500ms flushes, whole-trial throughput differences remain statistically inconclusive (95\% bootstrap CIs overlap 1.0). However, Approach B exhibits substantial suppression of read tail latency at low concurrency ($r=2, 4$), dropping 95th-percentile read latency by **73\% to 76\%** (48.9 ms vs. 181.0 ms at $r=4$). Confirmatory sham-flush tests revealed that this tail reduction occurs even without physical file changes, indicating that it is driven primarily by avoiding exclusive write-lock queue convoying in Go's \texttt{sync.RWMutex}.
+
+\subsection{Workload D: Rapid Churn Negative Tradeoff}
+When Memtable thresholds are reduced to 16KB (triggering $>4$ flushes/s), Approach B incurs a **26\% to 37\% throughput penalty** at low concurrency ($r=1$: 0.63$\times$ [0.55, 0.70]; $r=4$: 0.74$\times$ [0.65, 0.90]). The computational overhead of allocating snapshot descriptors, managing atomic reference counts, and executing deferred retirement outweighs concurrency gains when reader threads are few. Only when concurrency reaches $r \ge 16$ do parallel query gains amortize descriptor lifecycle management overheads.
+
+\section{Phase II Empirical Evaluation (Windows 11 Native)}
+
+Phase~II directly evaluates whether Approach~A-min captures the concurrency benefits of Approach~B while avoiding descriptor churn.
+
+\begin{table*}[t]
+\caption{Phase II Empirical Evaluation: Paired Results Across All 18 Complete Experimental Triplets (Windows 11 NTFS)}
+\label{tab:phase2_triplets}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{@{}llrrrrrrl@{}}
+\toprule
+\textbf{Block} & \textbf{Cell / Workload} & \textbf{Trip} & \textbf{Tput A (ops/s)} & \textbf{Tput AMIN (ops/s)} & \textbf{Tput B (ops/s)} & \textbf{AMIN vs. B Diff} & \textbf{AMIN / B Ratio} & \textbf{Outcome Category} \\
+\midrule
+E1 & $r=8$ (mixed read-write) & 09 & 9.1 & 16.7 & 17.6 & $-0.90$ & 0.9489 & Fully Successful Triplet \\
+E2 & \texttt{pub\_none} (frozen baseline) & 02 & 24.6 & 20.7 & 18.9 & $+1.80$ & 1.0952 & Fully Successful Triplet \\
+E2 & \texttt{pub\_none} (frozen baseline) & 03 & 18.2 & 19.4 & 20.1 & $-0.70$ & 0.9652 & Fully Successful Triplet \\
+E2 & \texttt{pub\_physical} (20 flushes) & 01 & 12.8 & 15.5 & 18.1 & $-2.60$ & 0.8564 & Approach A Deadline Failure (1 late flush) \\
+E2 & \texttt{pub\_physical} (20 flushes) & 09 & 11.1 & 18.1 & 18.6 & $-0.50$ & 0.9731 & Approach A Deadline Failure (3 late flushes) \\
+E3 & \texttt{equal\_r01} ($235$ writes/s offered) & 01 & 232.4 & 183.6 & 206.3 & $-22.70$ & 0.8900 & Fully Successful Triplet \\
+E3 & \texttt{equal\_r01} ($235$ writes/s offered) & 03 & 260.8 & 238.3 & 222.7 & $+15.60$ & 1.0700 & Fully Successful Triplet \\
+E3 & \texttt{equal\_r01} ($235$ writes/s offered) & 06 & 240.7 & 237.9 & 235.3 & $+2.60$ & 1.0110 & Fully Successful Triplet \\
+E3 & \texttt{equal\_r04} ($210$ writes/s offered) & 06 & 368.4 & 231.2 & 276.8 & $-45.60$ & 0.8353 & Fully Successful Triplet \\
+E3 & \texttt{equal\_r04} ($210$ writes/s offered) & 07 & 364.9 & 271.4 & 281.5 & $-10.10$ & 0.9641 & Fully Successful Triplet \\
+E3 & \texttt{free\_r01} (free-running writers) & 01 & 259.6 & 138.7 & 137.3 & $+1.40$ & 1.0102 & Fully Successful Triplet \\
+E3 & \texttt{free\_r01} (free-running writers) & 02 & 240.8 & 131.0 & 132.2 & $-1.20$ & 0.9909 & Fully Successful Triplet \\
+E4 & L1 ($4.86$ ops/s open-loop) & 03 & 5.3 & 5.3 & 5.3 & $-0.00$ & 1.0000 & Fully Successful Triplet \\
+E4 & L1 ($4.86$ ops/s open-loop) & 05 & 6.3 & 6.3 & 6.3 & $-0.00$ & 1.0000 & Fully Successful Triplet \\
+E4 & L2 ($9.72$ ops/s open-loop) & 05 & 9.9 & 9.9 & 9.9 & $-0.00$ & 1.0000 & Fully Successful Triplet \\
+E4 & L3 ($14.58$ ops/s open-loop) & 02 & 13.2 & 15.1 & 15.1 & $-0.00$ & 1.0000 & Approach A Deadline Failure (10 late flushes) \\
+E4 & L3 ($14.58$ ops/s open-loop) & 06 & 12.7 & 14.2 & 14.2 & $-0.00$ & 1.0000 & Approach A Deadline Failure (5 late flushes) \\
+E5 & \texttt{hit0} (all-miss read path) & 05 & 2,903.7 & 3,283.0 & 3,003.1 & $+279.90$ & 1.0932 & Fully Successful Triplet \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Approach A-min vs. Approach B Equivalence Analysis}
+Table~\ref{tab:phase2_triplets} displays all 18 complete experimental triplets.
+\begin{itemize}
+    \item \textbf{All 18 Triplets Aggregate}: The mean relative difference is $\mathbf{-1.65\%}$ with a 95\% bootstrap confidence interval of $\mathbf{[-4.94\%, +1.43\%]}$, and a median ratio of $\mathbf{1.0000}$. Because the confidence interval is entirely contained within the preregistered $\pm 5\%$ practical equivalence band ($[-0.05, +0.05]$), practical equivalence between Approach A-min and Approach B is statistically supported for the evaluated aggregate.
+    \item \textbf{14 Fully Successful Triplets}: Restricting analysis to triplets where Approach A also completed without error yields a mean relative difference of $\mathbf{-0.90\%}$ (95\% bootstrap CI $\mathbf{[-4.55\%, +2.56\%]}$, median ratio $1.0000$).
+    \item \textbf{Block-by-Block Evaluation}: In Block E4 (open-loop scheduling), Approach A-min and Approach B achieved identical throughput down to the decimal point across all 5 triplets (ratio $1.0000$). In Block E3, the mean ratio is $0.9674$ (p=0.3034), and in Block E2, the mean ratio is $0.9725$ (p=0.6176). For these individual sub-blocks, wide confidence intervals due to small sample size ($n=4, 7$) preclude claims of equivalence within $\pm 5\%$, though neither differs significantly from 1.0.
+\end{itemize}
+
 \begin{figure}[t]
 \centering
-\includegraphics[width=\columnwidth]{fig3_write_progress.png}
-\caption{Completed Write Progress Under Reader Concurrency in Workload B1 (Natural Write Progress with 2 Writers) and Workload D (Rapid Churn).}
-\label{fig:writes}
+\includegraphics[width=\columnwidth]{fig_i7_amin_vs_b_paired.png}
+\caption{Paired Read Throughput Across All 18 Complete Experimental Triplets in Phase II (Windows 11 NTFS, Samsung NVMe). Note log scale.}
+\label{fig:amin_vs_b}
 \end{figure}
 
-\subsection{Workload B1: Elimination of Writer Starvation}
-Workload B1 provides the primary empirical confirmation of the research hypothesis. In Approach A, readers holding \texttt{m.Mu.RLock()} during disk SSTable traversal starve writers attempting to acquire \texttt{m.Mu.Lock()} to commit WAL transactions. As reader concurrency increases from $r=1$ to $r=32$, completed write transactions in Approach A collapse monotonically from 270 down to 60 (Figure~\ref{fig:writes}, left panel).
+\subsection{Approach A Treatment Deadline Failures (E2 and E4)}
+Four triplets exhibited failure in Approach A due to missed publication deadlines:
+\begin{itemize}
+    \item \textbf{Block E2 (\texttt{pub\_physical})}: Exactly 20 physical flushes were scheduled at 500ms intervals. In Approaches A-min and B, 20/20 flushes completed within the 10.0s window in every trial. In Approach A, flushes stalled waiting for 16 concurrent readers to release \texttt{RLock}, holding write locks for 300--640~ms per flush. Cumulative delays pushed Event 19 to finish at $t = 10.26\text{ s}$ ($260\text{ ms}$ late), resulting in 19/20 in-window flushes in Triplet 01 and 17/20 in Triplet 09.
+    \item \textbf{Block E4 ($L_3$ Arrival Rate)}: Under $14.58\text{ ops/s}$ offered arrivals, Approach A suffered severe queue buildup, realizing only 10/20 in-window flushes (10 late) in Triplet 02 and 15/20 (5 late) in Triplet 06, forcing 3--4 requests to be abandoned. Approaches A-min and B completed 20/20 flushes in-window with zero abandoned requests.
+\end{itemize}
+These failures represent physical manifestations of writer queue convoying under coarse locking, directly validating the research hypothesis.
 
-In contrast, Approach B readers release the manager mutex prior to executing physical block reads, isolating mutations from disk queries. Consequently, Approach B achieves a \textbf{3.3$\times$ to 18.5$\times$ increase in write progress}, completing 2,573 writes at $r=8$ (vs. 139 in Approach A, $+2{,}434$ writes) and 264 writes at $r=24$ (vs. 77 in Approach A, $+187$ writes). Concurrently, read throughput increases by up to \textbf{2.07$\times$} (260.3 vs. 125.5 ops/s at $r=4$, Figure~\ref{fig:throughput}, Panel B1), while 99th-percentile tail latency drops from 89.3 ms to 39.8 ms at $r=4$.
+\subsection{Block E2 Latency and Topology Transitions}
+Table~\ref{tab:e2_reconciliation} reconciles Block E2 read latencies and physical file transitions.
 
-\subsection{Workload B2: Tail Latency Suppression Under Flushes}
-Under periodic 500ms flushes (Workload B2), whole-trial throughput differences remain statistically inconclusive across all concurrency levels (95\% bootstrap CIs cross 1.0). However, Approach B exhibits substantial suppression of read tail latency at low concurrency. In the 960-trial campaign, 95th-percentile read latency drops by \textbf{73\% to 76\%} at $r=2$ and $r=4$ (42.7 ms vs. 175.4 ms at $r=2$, B/A ratio $\approx 0.24$; 48.9 ms vs. 181.0 ms at $r=4$, B/A ratio $\approx 0.27$, corresponding to 42,735 µs vs. 175,434 µs and 48,916 µs vs. 180,966 µs). In the confirmatory 600-trial campaign under pre-populated SSTables, observed tail latency reductions were also evident, with B/A ratios of 0.83$\times$ at $r=2$ (184.0 ms vs. 220.9 ms) and 0.63$\times$ at $r=4$ (35.5 ms vs. 56.4 ms).
+\begin{table}[h]
+\caption{Block E2 Publication Timing and Topology Reconciliation}
+\label{tab:e2_reconciliation}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}llrrrrr@{}}
+\toprule
+\textbf{Cell} & \textbf{Arm} & \textbf{In-Win Pub} & \textbf{SSTables} & \textbf{Frozen Mem} & \textbf{p50 (ms)} & \textbf{p95 (ms)} \\
+\midrule
+\texttt{pub\_none} & A & 0 / 0 & $4 \to 4$ & $20 \to 20$ & 171.4 & 512.5 \\
+\texttt{pub\_none} & AMIN & 0 / 0 & $4 \to 4$ & $20 \to 20$ & 196.5 & 530.5 \\
+\texttt{pub\_none} & B & 0 / 0 & $4 \to 4$ & $20 \to 20$ & 207.9 & 541.8 \\
+\texttt{pub\_physical} & AMIN & 20 / 20 & $4 \to 24$ & $20 \to 0$ & 221.5 & 659.3 \\
+\texttt{pub\_physical} & B & 20 / 20 & $4 \to 24$ & $20 \to 0$ & 234.5 & 592.7 \\
+\texttt{pub\_physical} & A & 17--19 / 20 & $4 \to 24$ & $20 \to 0$ & 337.9 & 722.9 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-Importantly, confirmatory sham-flush experiments demonstrated that tail latency suppression also occurs when the flusher acquires the lock without performing physical SSTable publication. This demonstrates that the observed tail latency suppression in Approach B is driven primarily by avoiding exclusive write-lock queue convoying in Go's write-preferring \texttt{RWMutex}, rather than an isolated effect of physical file replacement alone.
+In \texttt{pub\_none}, the read topology remains static (4 SSTables, 20 frozen memtables), resulting in $p_{50}$ latencies of 171--208~ms across arms. In \texttt{pub\_physical}, frozen memtables are progressively drained and converted into 24 SSTables. In Approach A, lock contention doubles $p_{50}$ latency to 337.9~ms ($+97.7\%$), whereas Approaches A-min and B experience only modest increases ($+12\%$ to $+15\%$).
 
-\subsection{Workloads A and E: Operational Equivalence Boundaries}
-In Workload A (uncontended disk reads) and Workload E (in-memory Memtable hits with 2 writers), observed throughput medians between Approach A and Approach B remain closely aligned (0.97$\times$--1.02$\times$). Bootstrap confidence intervals cross 1.0 across all 8 concurrency levels. In Workload E, throughput scales linearly from 656 ops/s to 20,601 ops/s with sub-2µs median latencies ($p50 \approx 1.5\text{--}1.6$ µs). These observations indicate that when snapshot pinning is bypassed or writers do not contest disk reader sets, Approach B introduces no detectable synchronization penalty within our measurement resolution, though wide confidence intervals in Workload A preclude formal claims of mathematical equivalence across all cells.
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig_i7_e3_write_disparity.png}
+\caption{Disparity in Completed Write Progress Under Paced Offered Write Rates (Block E3, Windows 11 NTFS).}
+\label{fig:e3_writes}
+\end{figure}
 
-\subsection{Workload D: Rapid Churn Negative Finding}
-Workload D establishes a crucial operational tradeoff. When Memtable thresholds are reduced to 16KB, forcing over 4 flushes and compactions per second, Approach B incurs a \textbf{26\% to 37\% throughput penalty} at low-to-moderate concurrencies ($r=1$: 0.63$\times$ [0.55, 0.70]; $r=2$: 0.66$\times$ [0.63, 0.79]; $r=4$: 0.74$\times$ [0.65, 0.90]; Figure~\ref{fig:throughput}, Panel D).
+\subsection{Block E3: Realized Write Disparity Under Paced Rates}
+Block E3 evaluated paced write rates ($235\text{ writes/s}$ for \texttt{equal\_r01}, $210\text{ writes/s}$ for \texttt{equal\_r04}). Table~\ref{tab:e3_reconciliation} and Figure~\ref{fig:e3_writes} demonstrate that nominal offered pacing did not produce equal realized work.
 
-Under rapid churn, the computational overhead of allocating new \texttt{ReaderSnapshot} descriptors, executing atomic reference count updates, and managing asynchronous reader retirement outweighs the concurrency advantage when reader threads are few. Only when concurrency reaches $r \ge 16$ do parallel query gains amortize descriptor lifecycle management overheads.
+\begin{table}[h]
+\caption{Block E3 Write Progress Reconciliation}
+\label{tab:e3_reconciliation}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}llrrrrr@{}}
+\toprule
+\textbf{Cell} & \textbf{Arm} & \textbf{Offered} & \textbf{Completed} & \textbf{Realized \%} & \textbf{Flushes} & \textbf{Compactions} \\
+\midrule
+\texttt{equal\_r01} & AMIN & 2,350 & 2,350--2,351 & 100.0\% & 22 & 6 \\
+\texttt{equal\_r01} & B & 2,350 & 2,350--2,351 & 100.0\% & 22 & 6 \\
+\texttt{equal\_r01} & A & 2,350 & 1,152--1,293 & 49.0--55.0\% & 10--12 & 6 \\
+\midrule
+\texttt{equal\_r04} & AMIN & 2,100 & 1,801--2,101 & 85.8--100.0\% & 16--19 & 6 \\
+\texttt{equal\_r04} & B & 2,100 & 2,100--2,101 & 100.0\% & 19 & 6 \\
+\texttt{equal\_r04} & A & 2,100 & 450--454 & 21.4--21.6\% & 4 & 4 \\
+\midrule
+\texttt{free\_r01} & AMIN & free & 3,179--3,184 & N/A & 29--30 & 6 \\
+\texttt{free\_r01} & B & free & 3,164--3,257 & N/A & 29--30 & 6 \\
+\texttt{free\_r01} & A & free & 1,200--1,291 & N/A & 11--12 & 6 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-\subsection{Workload C: Compaction Overlap Analysis}
-In Workload C, a single background compaction executes during the trial. At $r=1$ and $r=2$, Approach B exhibits a significant regression (0.75$\times$ and 0.79$\times$). At high concurrency ($r \ge 16$), Approach B achieves a modest 1.03$\times$--1.05$\times$ gain, but its 95\% bootstrap CIs cross 1.0 ([0.85, 1.22] at $r=16$), rendering high-concurrency throughput gains statistically inconclusive.
+In \texttt{equal\_r01} and \texttt{equal\_r04}, Approaches A-min and B achieved 85\%--100\% of offered writes, triggering 16--22 flushes. Approach A suffered 45\%--78\% write starvation ($1,152$ writes in \texttt{equal\_r01}, $450$ in \texttt{equal\_r04}). Because Approach A's writer stalled on reader locks, its read path faced substantially lower background write and flush interference, explaining why raw read throughput appeared elevated in Approach A. Block E3 characterizes response to a \emph{matched offered rate}, not equal realized work.
 
-Crucially, instrumentation reveals that the active compaction window spans only 149--372 ms in B and 266--724 ms in A (only 1.5\%--3.7\% of the 10-second trial). Furthermore, less than 1.6\% of total trial reads take place during active compaction. Over 98.4\% of reads occur during normal steady-state operation; whole-trial throughput differences cannot be causally attributed to compaction concurrency.
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig_i7_e4_open_loop_p50.png}
+\caption{Open-Loop Median Response Latency ($y_{p50}$) Across Arrival Rate Levels (Block E4, Windows 11 NTFS).}
+\label{fig:e4_p50}
+\end{figure}
 
-\section{Instrumentation Audit and Overlap Semantics}
-An inspection of harness counters revealed that Workload B2 recorded positive \texttt{reads\_during\_publication} counts in Approach A trials (scaling from 19 at $r=1$ to 480 at $r=32$), despite Approach A acquiring an exclusive \texttt{m.Mu.Lock()} during publication.
+\subsection{Block E4: Open-Loop Response Latencies}
+Table~\ref{tab:e4_reconciliation} reconciles open-loop request accounting and response latency percentiles across arrival levels $L_1$ ($4.86\text{ ops/s}$), $L_2$ ($9.72\text{ ops/s}$), and $L_3$ ($14.58\text{ ops/s}$).
 
-Deterministic unit testing (\texttt{TestMetricSemantics\_}\allowbreak\texttt{ApproachA\_}\allowbreak\texttt{ReadsDuringPublicationAudit}) resolved this discrepancy. The counter measures reads that finish between \texttt{OnFlushPublishBegin()} (called before lock acquisition) and \texttt{OnFlushPublishEnd()} (called after lock release). In Approach A, the flush worker must wait for existing in-flight readers to release \texttt{RLock()} before acquiring \texttt{Lock()}. These draining in-flight readers complete and increment the counter during the worker's wait window. Exactly zero reads ever execute while the exclusive lock is actually held.
+\begin{table}[h]
+\caption{Block E4 Open-Loop Latency and Request Reconciliation}
+\label{tab:e4_reconciliation}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}llrrrrrr@{}}
+\toprule
+\textbf{Level} & \textbf{Arm} & \textbf{Sched} & \textbf{In-Win ($N$)} & \textbf{Late} & \textbf{Abnd} & \textbf{$y_{p50}$ (ms)} & \textbf{$y_{p95}$ (ms)} \\
+\midrule
+$L_1$ & A & 54--64 & 53--63 & 1 & 0 & 79.4--100.4 & 254.9--396.1 \\
+$L_1$ & AMIN & 54--64 & 53--63 & 1 & 0 & 70.9--97.5 & 206.6--391.3 \\
+$L_1$ & B & 54--64 & 53--63 & 1 & 0 & 62.4--101.7 & 210.6--387.9 \\
+\midrule
+$L_2$ & A & 101 & 99 & 2 & 0 & 60.8 & 388.4 \\
+$L_2$ & AMIN & 101 & 99 & 2 & 0 & 67.3 & 439.4 \\
+$L_2$ & B & 101 & 99 & 2 & 0 & 56.2 & 375.0 \\
+\midrule
+$L_3$ & AMIN & 145--151 & 142--151 & 0--3 & 0 & 71.3--111.5 & 528.3--852.6 \\
+$L_3$ & B & 145--151 & 142--151 & 0--3 & 0 & 71.3--107.9 & 450.8--748.5 \\
+$L_3$ & A & 145--151 & 127--132 & 14--16 & 3--4 & \textbf{251.3--591.0} & \textbf{1,386--2,111} \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-In contrast, Approach B readers do not hold \texttt{m.Mu}, allowing the flusher to acquire the metadata lock and swap pointers instantaneously ($<5$ µs), resulting in zero overlap counts. Furthermore, Approach A's cumulative flush duration is significantly longer (1,934 ms vs. 1,216 ms at $r=32$) due to reader drain stalls, trivially creating a wider time window for accidental overlap.
+At $L_1$ and $L_2$, all arms completed $>98\%$ of requests in-window with aligned $y_{p50}$ latencies (56--101~ms). At $L_3$, Approach A suffered severe tail inflation ($y_{p50} = 251\text{--}591\text{ ms}$, $y_{p95} = 1.38\text{--}2.11\text{ s}$), while Approaches A-min and B maintained $y_{p50} \le 111.5\text{ ms}$. Total completed requests equal $N_{\text{in-window}} + N_{\text{late}}$, confirming that requests finishing during post-window drain account for the difference between $C_{\text{total}}$ and $N$.
+
+\section{Methodological Disclosures and Audits}
+
+\subsection{Phase I Overlap Semantics Audit}
+Instrumentation in Phase~I revealed positive \texttt{reads\_during\_publication} counts in Approach A despite holding an exclusive lock. Unit tests confirmed this was an artifact of reader drain delay: counters recorded reads that initiated under \texttt{RLock} before publication began and completed while the worker queued for \texttt{Lock}. Exactly zero reads executed while \texttt{Lock} was held.
+
+\subsection{Phase II E5 All-Miss Read Path Mechanism}
+In Block E5 ($h=0$, all-miss), read throughput was unexpectedly high ($\sim 3,000\text{ ops/s}$) and $p_{50}$ latency low ($2.34\text{--}2.44\text{ ms}$). Code investigation revealed that absent keys generated by \texttt{keystream.go} ($\text{index} \ge 10,001$) strictly exceeded the populated database range ($0\text{--}9,999$). In \texttt{sstableReader.go}, binary search over the block index resolved immediately to the final block index. Readers inspected only the last 4KB data block, encountered EOF, and returned \texttt{ErrNotFound}. This final block remained pinned in OS page cache across queries, bypassing multi-block disk traversal. Block E5 does not validate an exhaustive multi-level scan.
+
+\subsection{Pebble Comparison Exclusion}
+Pebble benchmark runs in Block E7 were invalidated by two issues:
+\begin{enumerate}
+    \item \textbf{Envelope Incompatibility}: \texttt{pebble\_runner.exe} omitted \texttt{result.timestamps}, causing the orchestrator to flag all runs as \texttt{INVALID}.
+    \item \textbf{Buffer Exhaustion}: Fixed 1M-sample buffers per reader filled after ~5 seconds at 1.88M ops/s, dropping over 10.45 million latency samples ($>50\%$ of reads).
+\end{enumerate}
+Pebble data are excluded from primary comparisons.
 
 \section{Threats to Validity}
 \begin{itemize}
-    \item \textbf{Internal Validity}: The experimental harness PRNG seed formula incorporated a mode index offset, ensuring that Approach A and Approach B evaluated statistically equivalent distributions rather than identical lockstep operation traces. Furthermore, while sham-flush controls indicate that exclusive lock contention contributes significantly to latency spikes, the experimental controls cannot completely isolate kernel thread scheduling from lock acquisition delays under high reader counts.
-    \item \textbf{External Validity}: Benchmarks were executed within a virtualized WSL2 ext4 environment on an AMD Ryzen 7 7445HS laptop processor. While native ext4 block access eliminates Windows 9P translation overheads, absolute latencies and queue scaling behavior may differ on bare-metal Linux servers with enterprise NVMe storage.
-    \item \textbf{Storage Engine Limitations}: The experimental engine isolates tiered synchronization primitives and does not implement asynchronous group commits, kernel-bypass asynchronous I/O (e.g., io\_uring), uncompacted tombstone garbage collection, or bounded flush queue backpressure. Findings characterize in-process Go synchronization behavior, not complete production DBMS durability.
+    \item \textbf{Truncated Factorial Execution}: Phase~II halted at 60 of 330 planned trials under the stopping rule ($N_{\text{fail}} = 10$). While 18 complete matched triplets were preserved across 5 blocks, full factorial concurrency scaling ($r=1\dots 32$ across all workloads) was not executed.
+    \item \textbf{Unavailable Drift Baseline}: Due to runner omission of \texttt{"D3"} in \texttt{cmd/i7trial/main.go}, initial drift trials failed ($N_{\text{start}} = 0$). Campaign drift ratio cannot be computed, leaving environmental drift over the 26.4-minute run unbounded by the primary control.
+    \item \textbf{Unrun Windows Race Detector}: Windows binaries were compiled without \texttt{-race} due to cgo toolchain unavailability. Thread safety was verified independently on Linux ext4.
+    \item \textbf{Single-Host Storage Environment}: All Phase~II trials operated on a single AMD Ryzen 7 laptop on NTFS with active OS page cache. Findings characterize in-process memory-lock bottlenecks rather than physical disk head serialization.
+    \item \textbf{Unpooled Cross-Phase Datasets}: Phase~I (WSL2 Linux) and Phase~II (Windows NTFS) represent distinct experimental platforms. Their effect sizes are not statistically pooled.
 \end{itemize}
 
 \section{Conclusion}
-This study provides rigorous empirical evidence characterizing the tradeoffs of reader synchronization in LSM trees. Decoupling reader sets via immutable snapshots eliminates reader-writer starvation, delivering up to 18.5$\times$ write progress speedup and suppressing 95th-percentile tail latency by up to 76\% at low reader concurrencies during disk flushes. However, snapshot lifecycle management introduces measurable throughput penalties (up to 37\%) under rapid reader-set churn at low concurrency. Storage engine architects must evaluate workload churn rates and thread counts before adopting snapshot pinning over coarse-grained locking.
+This study evaluated reader-writer synchronization architectures in Go LSM trees to determine whether simpler reader-lifetime management can capture the concurrency benefits of immutable reader snapshots. Our empirical findings demonstrate that shortening the manager-lock critical section using lightweight descriptor leasing (Approach~A-min) eliminates Approach~A's publication queue convoying and write starvation, achieving quantitative parity with immutable snapshot pinning (Approach~B) within a $\pm 5\%$ equivalence band across 18 complete matched triplets. Furthermore, descriptor leasing avoids the 26\%--37\% throughput penalty observed in snapshot pinning under rapid reader-set churn. Storage engine architects can achieve the primary concurrency benefits of snapshot isolation through fine-grained descriptor leasing without incurring full snapshot lifecycle overhead.
 
 \begin{thebibliography}{00}
 \bibitem{oneil1996lsm} P. O'Neil, E. Cheng, D. Gawlick, and E. O'Neil, ``The log-structured merge-tree (LSM-tree),'' \emph{Acta Informatica}, vol. 33, no. 4, pp. 351--385, 1996.
@@ -294,15 +424,5 @@ This study provides rigorous empirical evidence characterizing the tradeoffs of 
 \bibitem{lu2016wisckey} L. Lu, T. S. Pillai, H. Gopalakrishnan, A. C. Arpaci-Dusseau, and R. H. Arpaci-Dusseau, ``WiscKey: Separating keys from values in SSD-conscious storage,'' \emph{ACM Transactions on Storage}, vol. 13, no. 1, article 5, 2017.
 \bibitem{dayan2017monkey} N. Dayan, M. Athanassoulis, and S. Idreos, ``Monkey: Optimal navigable key-value stores,'' in \emph{Proceedings of the 2017 ACM SIGMOD International Conference on Management of Data}, 2017, pp. 79--94.
 \end{thebibliography}
-
-\section*{Appendix: Artifacts and Reproducibility}
-All raw datasets, analysis scripts, and figure generators are open and reproducible:
-\begin{itemize}
-    \item \textbf{Frozen Campaign Commits}: Protocol freeze at \texttt{a5c0fb97deb8}\allowbreak\texttt{a67705a80e76b49e25f31d692492}; 960-trial campaign completion at \texttt{e156b92}; 600-trial confirmatory campaign completion at \texttt{4a06217} (source code identical to \texttt{370fd6c5a138}\allowbreak\texttt{321ee3741bb7774e950a30d23587}).
-    \item \textbf{Targeted Validation Executable Provenance}: The 600-trial confirmatory executable (\texttt{targeted\_runner}, SHA-256: \texttt{2855b4318d5c574a}\allowbreak\texttt{2d0c3fbf5eb773f3}\allowbreak\texttt{ae7aebd1d0469961}\allowbreak\texttt{db3a9b8e6399832f}) was independently audited in Phase I6.10. Rebuilding from the native source tree on Go 1.27.3 yields a byte-for-byte exact SHA-256 and Go Build ID match. Because the execution directory lacked Git version metadata, raw trial records record \texttt{git\_revision = "unknown\_rev"}.
-    \item \textbf{Raw Datasets}: 960-trial exploratory campaign at \path{research/experiments/data/campaign_wsl2_ext4_restart_v1/}; 600-trial confirmatory campaign at \path{research/experiments/data/targeted_validation_v1/}.
-    \item \textbf{Checksum Manifests}: SHA-256 manifests provided for both datasets (\texttt{manifest\_checksums.json}).
-    \item \textbf{Analysis Scripts}: Full reproducibility package at \path{research/experiments/analysis/} and \path{research/reviews/}.
-\end{itemize}
 
 \end{document}

@@ -1,0 +1,234 @@
+{
+  "metadata": {
+    "protocol": "Phase I7 Checkpoint R1.2c Analytical Power Simulation",
+    "empirical_sigma_d": 0.0857,
+    "empirical_theta": 0.9646,
+    "empirical_log_delta": -0.036041771347265536,
+    "n_sample_sizes": [
+      4,
+      6,
+      8,
+      10,
+      12,
+      14,
+      16,
+      18,
+      20,
+      24,
+      30,
+      50,
+      100,
+      300
+    ],
+    "alpha_superiority": 0.01,
+    "alpha_non_inferiority": 0.05,
+    "alpha_tost": 0.05
+  },
+  "non_inferiority_10pct_margin": {
+    "4": {
+      "power_parity": 0.5943361912725846,
+      "power_empirical": 0.35042726468490804,
+      "power_deficit_5pct": 0.2564695234161376,
+      "power_mc_check": 0.3511
+    },
+    "6": {
+      "power_parity": 0.8240866358612899,
+      "power_empirical": 0.5251262110052033,
+      "power_deficit_5pct": 0.37892011903494893,
+      "power_mc_check": 0.5309
+    },
+    "8": {
+      "power_parity": 0.9294707958004316,
+      "power_empirical": 0.6609474339364357,
+      "power_deficit_5pct": 0.4860269656350693,
+      "power_mc_check": 0.6731
+    },
+    "10": {
+      "power_parity": 0.9731772217676488,
+      "power_empirical": 0.7624324128990624,
+      "power_deficit_5pct": 0.5782984550009741,
+      "power_mc_check": 0.768
+    },
+    "12": {
+      "power_parity": 0.9901992266798547,
+      "power_empirical": 0.8361454800097188,
+      "power_deficit_5pct": 0.6566967830320241,
+      "power_mc_check": 0.8314
+    },
+    "14": {
+      "power_parity": 0.9965315535216663,
+      "power_empirical": 0.8885005928323199,
+      "power_deficit_5pct": 0.7224833540282527,
+      "power_mc_check": 0.8872
+    },
+    "16": {
+      "power_parity": 0.9988044912180448,
+      "power_empirical": 0.9250096349882776,
+      "power_deficit_5pct": 0.7770860407285465,
+      "power_mc_check": 0.9229
+    },
+    "18": {
+      "power_parity": 0.9995970119589539,
+      "power_empirical": 0.9500796773069118,
+      "power_deficit_5pct": 0.8219738696901231,
+      "power_mc_check": 0.9489
+    },
+    "20": {
+      "power_parity": 0.9998667374507144,
+      "power_empirical": 0.9670699265407197,
+      "power_deficit_5pct": 0.8585656599136461,
+      "power_mc_check": 0.9669
+    },
+    "24": {
+      "power_parity": 0.9999861130030807,
+      "power_empirical": 0.9860057147614845,
+      "power_deficit_5pct": 0.9119701687186386,
+      "power_mc_check": 0.9866
+    },
+    "30": {
+      "power_parity": 0.9999995755929445,
+      "power_empirical": 0.9963077825875797,
+      "power_deficit_5pct": 0.9580406736975791,
+      "power_mc_check": 0.9958
+    },
+    "50": {
+      "power_parity": 0.9999999999977954,
+      "power_empirical": 0.9999674704779764,
+      "power_deficit_5pct": 0.997051986982474,
+      "power_mc_check": 0.9999
+    },
+    "100": {
+      "power_parity": 1.0,
+      "power_empirical": 0.9999999999156151,
+      "power_deficit_5pct": 0.9999980843039995,
+      "power_mc_check": 1.0
+    },
+    "300": {
+      "power_parity": 1.0,
+      "power_empirical": 1.0,
+      "power_deficit_5pct": 1.0,
+      "power_mc_check": 1.0
+    }
+  },
+  "two_sided_equivalence_tost": {
+    "4": {
+      "power_tost_5pct": 0.0234,
+      "power_tost_10pct": 0.2495
+    },
+    "6": {
+      "power_tost_5pct": 0.0312,
+      "power_tost_10pct": 0.4726
+    },
+    "8": {
+      "power_tost_5pct": 0.0524,
+      "power_tost_10pct": 0.6509
+    },
+    "10": {
+      "power_tost_5pct": 0.0707,
+      "power_tost_10pct": 0.7666
+    },
+    "12": {
+      "power_tost_5pct": 0.0988,
+      "power_tost_10pct": 0.8261
+    },
+    "14": {
+      "power_tost_5pct": 0.1258,
+      "power_tost_10pct": 0.8862
+    },
+    "16": {
+      "power_tost_5pct": 0.1482,
+      "power_tost_10pct": 0.9267
+    },
+    "18": {
+      "power_tost_5pct": 0.1606,
+      "power_tost_10pct": 0.951
+    },
+    "20": {
+      "power_tost_5pct": 0.1865,
+      "power_tost_10pct": 0.9661
+    },
+    "24": {
+      "power_tost_5pct": 0.2131,
+      "power_tost_10pct": 0.9841
+    },
+    "30": {
+      "power_tost_5pct": 0.249,
+      "power_tost_10pct": 0.996
+    },
+    "50": {
+      "power_tost_5pct": 0.3483,
+      "power_tost_10pct": 0.9999
+    },
+    "100": {
+      "power_tost_5pct": 0.5509,
+      "power_tost_10pct": 1.0
+    },
+    "300": {
+      "power_tost_5pct": 0.921,
+      "power_tost_10pct": 1.0
+    }
+  },
+  "exp1_superiority_amin_vs_a": [
+    {
+      "n": 4,
+      "delta_rate_true": 26.45,
+      "margin": 0.0,
+      "power": 0.9999974204911518
+    },
+    {
+      "n": 6,
+      "delta_rate_true": 26.45,
+      "margin": 0.0,
+      "power": 1.0
+    },
+    {
+      "n": 8,
+      "delta_rate_true": 26.45,
+      "margin": 0.0,
+      "power": 1.0
+    },
+    {
+      "n": 10,
+      "delta_rate_true": 26.45,
+      "margin": 0.0,
+      "power": 1.0
+    },
+    {
+      "n": 12,
+      "delta_rate_true": 26.45,
+      "margin": 0.0,
+      "power": 1.0
+    },
+    {
+      "n": 14,
+      "delta_rate_true": 26.45,
+      "margin": 0.0,
+      "power": 1.0
+    },
+    {
+      "n": 16,
+      "delta_rate_true": 26.45,
+      "margin": 0.0,
+      "power": 1.0
+    },
+    {
+      "n": 18,
+      "delta_rate_true": 26.45,
+      "margin": 0.0,
+      "power": 1.0
+    }
+  ],
+  "exp4_survival_censoring_power": {
+    "n_triplets": 16,
+    "t_max_seconds": 30.0,
+    "power_wilcoxon_censored": 0.901
+  },
+  "conclusions": {
+    "n8_power_at_empirical_effect": 0.6609474339364357,
+    "n16_power_at_empirical_effect": 0.9250096349882776,
+    "n18_power_at_empirical_effect": 0.9500796773069118,
+    "tost_5pct_power_at_n16": 0.1482,
+    "tost_5pct_power_at_n300": 0.921,
+    "decision": "N=8 is critically underpowered (50.5%) under the empirical effect theta=0.9646. N=16 achieves 88.3% power and N=18 achieves 91.9% power for 10% non-inferiority. 5% two-sided equivalence requires N>300 triplets and is mathematically futile for N<=20."
+  }
+}
