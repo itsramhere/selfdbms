@@ -55,7 +55,11 @@ func (t *Transaction) Delete(key string) error {
 }
 
 func (t *Transaction) Commit() error {
+	// Writer arrival sampling (Phase I7 instrumentation): measure the interval
+	// from this arrival at Manager.Mu to completed acquisition.
+	lockArrival := t.Man.writerLockArrival(LockSiteCommit)
 	t.Man.Mu.Lock()
+	lockArrival.acquired(t.Man)
 
 	if t.Man.state != EngineOpen {
 		t.Man.Mu.Unlock()

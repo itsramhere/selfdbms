@@ -1,0 +1,183 @@
+package harness2
+
+// Deterministic tests for the conserved transaction ledger and the
+// synchronization-instrumentation collector (Phase I7 engineering preflight).
+
+import (
+	"strings"
+	"testing"
+
+	"owndbms/lsmengine"
+)
+
+func validScheduledLedger() RequestAccounting {
+	// offered 100 = attempted 90 + abandoned 5 + queued 5
+	// attempted 90 = in-window 70 + late 12 + failed 8
+	// outstanding 20 = attempted 90 - in-window 70 - failed 8 == late 12? No:
+	// outstanding must equal late for conservation, so use consistent numbers:
+	// in-window 70, late 20, failed 0 -> attempted 90, outstanding 20.
+	return NewScheduledAccounting(100, 90, 70, 20, 0, 5)
+}
+
+func TestLedgerValidateAcceptsConsistentScheduled(t *testing.T) {
+	a := validScheduledLedger()
+	if a.Queued != 5 || a.OutstandingAtClose != 20 {
+		t.Fatalf("derived fields wrong: queued=%d outstanding=%d", a.Queued, a.OutstandingAtClose)
+	}
+	l := TransactionLedger{Reads: a, Writes: NewClosedLoopAccounting(0, 0, 0, 0)}
+	if err := l.Validate(true, false); err != nil {
+		t.Fatalf("consistent scheduled ledger rejected: %v", err)
+	}
+}
+
+func TestLedgerValidateAcceptsConsistentClosedLoop(t *testing.T) {
+	l := TransactionLedger{
+		Reads:  NewClosedLoopAccounting(500, 480, 19, 1),
+		Writes: NewClosedLoopAccounting(60, 55, 5, 0),
+	}
+	if err := l.Validate(false, false); err != nil {
+		t.Fatalf("consistent closed-loop ledger rejected: %v", err)
+	}
+}
+
+// TestLedgerValidateRejectsViolations is the error-path suite: each mutation
+// breaks exactly one conservation identity and must be rejected.
+func TestLedgerValidateRejectsViolations(t *testing.T) {
+	mk := func() (TransactionLedger, bool, bool) {
+		return TransactionLedger{
+			Reads:  validScheduledLedger(),
+			Writes: NewClosedLoopAccounting(10, 9, 1, 0),
+		}, true, true
+	}
+	cases := map[string]func(l *TransactionLedger){
+		"terminal conservation":     func(l *TransactionLedger) { l.Reads.CompletedLate++ },
+		"arrival conservation":      func(l *TransactionLedger) { l.Reads.Offered++ },
+		"closed-loop offer":         func(l *TransactionLedger) { l.Writes.Offered++ },
+		"closed-loop nonzero queue": func(l *TransactionLedger) { l.Writes.Queued = 1 },
+		"outstanding mismatch":      func(l *TransactionLedger) { l.Reads.OutstandingAtClose-- },
+		"outstanding vs late":       func(l *TransactionLedger) { l.Writes.OutstandingAtClose = l.Writes.CompletedLate + 1; l.Writes.Failed--; l.Writes.Attempted-- },
+		"negative count":            func(l *TransactionLedger) { l.Reads.Failed = -1 },
+	}
+	for name, mutate := range cases {
+		l, sr, sw := mk()
+		mutate(&l)
+		if err := l.Validate(sr, sw); err == nil {
+			t.Fatalf("%s: expected Validate to reject", name)
+		} else if !strings.Contains(err.Error(), "violated") && !strings.Contains(err.Error(), "want 0/0") && !strings.Contains(err.Error(), "negative") && !strings.Contains(err.Error(), "drain") {
+			t.Fatalf("%s: unexpected error text %q", name, err.Error())
+		}
+	}
+}
+
+// TestRunLedgerConservedAllModes executes mini trials in all four driver
+// modes and asserts the emitted ledger is conserved and agrees with the
+// legacy OperationCounts.
+func TestRunLedgerConservedAllModes(t *testing.T) {
+	cases := []struct {
+		name    string
+		spec    Spec
+		schedR  bool
+		schedW  bool
+	}{
+		{"closed_loop", func() Spec {
+			s := miniSpec(t, "E1", "r01", "A")
+			s.WriterConcurrency = 1
+			return s
+		}(), false, false},
+		{"open_loop", func() Spec {
+			s := miniSpec(t, "E4", "ol", "A")
+			s.OpenLoopRatePerSec = 500
+			s.MaxLatenessMs = 20
+			return s
+		}(), true, false},
+		{"paced_writes", func() Spec {
+			s := miniSpec(t, "E3", "equal_r01", "A")
+			s.PacedWriteRatePerSec = 200
+			s.WriterConcurrency = 1
+			return s
+		}(), false, true},
+		{"publication_only", func() Spec {
+			s := miniSpec(t, "E2", "pub", "A")
+			s.PublicationMode = string(PubNone)
+			s.WriterConcurrency = 1
+			return s
+		}(), false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := Run(tc.spec, testEnv(), "test")
+			if err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if res.Status != "SUCCESS" {
+				t.Fatalf("trial failed: %s", res.Error)
+			}
+			if err := res.Ledger.Validate(tc.schedR, tc.schedW); err != nil {
+				t.Fatalf("ledger not conserved: %v", err)
+			}
+			// Cross-check against the legacy counters.
+			if res.Ledger.Reads.Offered != res.Operations.ReadOpsScheduled {
+				t.Fatalf("ledger offered %d != scheduled %d", res.Ledger.Reads.Offered, res.Operations.ReadOpsScheduled)
+			}
+			if res.Ledger.Reads.CompletedInWindow+res.Ledger.Reads.CompletedLate != res.Operations.ReadOpsCompleted {
+				t.Fatalf("ledger completions != ReadOpsCompleted")
+			}
+			if res.Ledger.Writes.CompletedInWindow+res.Ledger.Writes.CompletedLate != res.Operations.WriteOpsCompleted {
+				t.Fatalf("ledger write completions != WriteOpsCompleted")
+			}
+			if res.Ledger.Reads.Failed+res.Ledger.Writes.Failed != res.Operations.ErrorOpsCount {
+				t.Fatalf("ledger failures %d != ErrorOpsCount %d",
+					res.Ledger.Reads.Failed+res.Ledger.Writes.Failed, res.Operations.ErrorOpsCount)
+			}
+		})
+	}
+}
+
+// TestRunSyncInstrumentationAttachAndAggregate runs one instrumented trial and
+// asserts the collector observed reads, a commit wait, and fixture/publication
+// work, with mode and site names intact.
+func TestRunSyncInstrumentationAttachAndAggregate(t *testing.T) {
+	spec := miniSpec(t, "E1", "r01", "AMIN")
+	spec.WriterConcurrency = 1
+	spec.InstrumentSync = true
+	res, err := Run(spec, testEnv(), "test")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if res.Status != "SUCCESS" {
+		t.Fatalf("trial failed: %s", res.Error)
+	}
+	if res.Sync == nil {
+		t.Fatal("instrumented trial produced no sync summary")
+	}
+	readMode := lsmengine.SyncModeApproachAMin.String()
+	cs, ok := res.Sync.ReadCriticalSectionNanos[readMode]
+	if !ok || cs.Count == 0 {
+		t.Fatalf("no read critical sections recorded for %s: %+v", readMode, res.Sync.ReadCriticalSectionNanos)
+	}
+	if cs.MaxNanos < cs.MinNanos {
+		t.Fatalf("read CS stats inconsistent: min %d > max %d", cs.MinNanos, cs.MaxNanos)
+	}
+	w, ok := res.Sync.WriterLockWaitNanos[lsmengine.LockSiteCommit.String()]
+	if !ok || w.Count == 0 {
+		t.Fatalf("no commit waits recorded: %+v", res.Sync.WriterLockWaitNanos)
+	}
+	// Fixture construction flushes at least one publication; it is inside the
+	// collector's trial-lifecycle scope by design.
+	p, ok := res.Sync.PublicationNanos[lsmengine.LockSiteFlushPublish.String()]
+	if !ok || p.Count == 0 {
+		t.Fatalf("no publications recorded: %+v", res.Sync.PublicationNanos)
+	}
+}
+
+// TestSyncCollectorDropsUnknownSlots guards the enum mapping.
+func TestSyncCollectorDropsUnknownSlots(t *testing.T) {
+	c := NewSyncCollector()
+	c.OnReadCriticalSection(lsmengine.SyncMode(99), 5)
+	c.OnWriterLockWait(lsmengine.LockSite(99), 5, 1)
+	c.OnPublication(lsmengine.LockSite(99), 5, 1)
+	s := c.Summary()
+	if len(s.ReadCriticalSectionNanos)+len(s.WriterLockWaitNanos)+len(s.PublicationNanos) != 0 {
+		t.Fatalf("unknown slots were recorded: %+v", s)
+	}
+}

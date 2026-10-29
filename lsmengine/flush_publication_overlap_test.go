@@ -23,7 +23,7 @@ func (m *mockFlushTracker) OnFlushWorkerBegin()                       {}
 func (m *mockFlushTracker) OnFlushBuildBegin()                        {}
 func (m *mockFlushTracker) OnFlushBuildEnd(err error)                 {}
 
-func (m *mockFlushTracker) OnFlushPublishBegin() {
+func (m *mockFlushTracker) OnFlushPublishBegin(activeRLockHolders int) {
 	m.isPublicationActive.Store(true)
 }
 

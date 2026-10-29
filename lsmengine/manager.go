@@ -149,6 +149,17 @@ type Manager struct {
 	flushGateCond    *sync.Cond
 	flushGateEnabled bool
 	flushGateTokens  int
+
+	// Synchronization instrumentation (Phase I7 engineering preflight). Nil /
+	// inert unless SetSyncObserver attaches an observer; see
+	// sync_instrumentation.go for the semantics contract.
+	// activeRLockHolders is the one exception: it is maintained on every read
+	// regardless of instrumentation state (pre-registered EXP-2 arrival
+	// sampling), and costs one uncontended atomic add per read-side
+	// lock/unlock pair.
+	syncObserver       SyncObserver
+	instrumentClock    func() int64
+	activeRLockHolders atomic.Int32
 }
 
 var sstableFileSeq atomic.Uint64
@@ -229,8 +240,8 @@ func (m *Manager) Get(key string, readTs uint64) (string, error) {
 	}
 
 	byteKey := []byte(key)
-	m.Mu.RLock()
-	defer m.Mu.RUnlock()
+	m.rLock()
+	defer m.rUnlockObserved(SyncModeApproachA, m.readCSStart())
 
 	if m.state != EngineOpen {
 		return "", ErrClosed
@@ -386,9 +397,9 @@ func (m *Manager) drainReaderLeases() error {
 	}
 	deadline := time.Now().Add(timeout)
 	for {
-		m.Mu.RLock()
+		m.rLock()
 		outstanding := m.countOutstandingLeasesLocked()
-		m.Mu.RUnlock()
+		m.rUnlock()
 		if outstanding == 0 {
 			return nil
 		}
@@ -444,9 +455,10 @@ func (m *Manager) getApproachAMin(key string, readTs uint64) (string, error) {
 	byteKey := []byte(key)
 
 	// ---- one RLock window: memory tiers + read-set capture + leases ----
-	m.Mu.RLock()
+	m.rLock()
+	csStart := m.readCSStart()
 	if m.state != EngineOpen {
-		m.Mu.RUnlock()
+		m.rUnlockObserved(SyncModeApproachAMin, csStart)
 		return "", ErrClosed
 	}
 
@@ -457,16 +469,16 @@ func (m *Manager) getApproachAMin(key string, readTs uint64) (string, error) {
 	sol, err := m.Mem.Get(byteKey, readTs)
 	if err == nil {
 		m.memtablePointReads.Add(1)
-		m.Mu.RUnlock()
+		m.rUnlockObserved(SyncModeApproachAMin, csStart)
 		return string(sol), nil
 	}
 	if errors.Is(err, ErrKeyDeleted) {
 		m.memtablePointReads.Add(1)
-		m.Mu.RUnlock()
+		m.rUnlockObserved(SyncModeApproachAMin, csStart)
 		return "Key is Deleted", err
 	}
 	if !errors.Is(err, ErrNotFound) {
-		m.Mu.RUnlock()
+		m.rUnlockObserved(SyncModeApproachAMin, csStart)
 		return "", err
 	}
 
@@ -474,23 +486,23 @@ func (m *Manager) getApproachAMin(key string, readTs uint64) (string, error) {
 		val, ferr := m.Frozenmem[i].Get(byteKey, readTs)
 		if ferr == nil {
 			m.memtablePointReads.Add(1)
-			m.Mu.RUnlock()
+			m.rUnlockObserved(SyncModeApproachAMin, csStart)
 			return string(val), nil
 		}
 		if errors.Is(ferr, ErrKeyDeleted) {
 			m.memtablePointReads.Add(1)
-			m.Mu.RUnlock()
+			m.rUnlockObserved(SyncModeApproachAMin, csStart)
 			return " ", ferr
 		}
 		if !errors.Is(ferr, ErrNotFound) {
-			m.Mu.RUnlock()
+			m.rUnlockObserved(SyncModeApproachAMin, csStart)
 			return "", ferr
 		}
 	}
 
 	n := len(m.ActiveSSreaders)
 	if n == 0 {
-		m.Mu.RUnlock()
+		m.rUnlockObserved(SyncModeApproachAMin, csStart)
 		return " ", ErrNotFound
 	}
 
@@ -500,7 +512,7 @@ func (m *Manager) getApproachAMin(key string, readTs uint64) (string, error) {
 	for i := 0; i < n; i++ {
 		buf[i].lease()
 	}
-	m.Mu.RUnlock()
+	m.rUnlockObserved(SyncModeApproachAMin, csStart)
 
 	// From here on: zero manager locks held; every captured table is leased.
 	// There is deliberately no deferred closure: a single release path keeps the
@@ -712,8 +724,8 @@ func (m *Manager) Close() error {
 }
 
 func (m *Manager) LatestValue(userKey []byte) (uint64, error) {
-	m.Mu.RLock()
-	defer m.Mu.RUnlock()
+	m.rLock()
+	defer m.rUnlock()
 	return m.latestValueLocked(userKey)
 }
 
@@ -847,9 +859,9 @@ func (m *Manager) flushLoop() {
 		// Halting prevents subsequent generations from being published to ActiveSSreaders
 		// while an older Memtable remains in Frozenmem, preserving strict chronological
 		// precedence (INV-ORDER-1, INV-MVCC-6). All remaining queued Memtables remain in Frozenmem.
-		m.Mu.RLock()
+		m.rLock()
 		err := m.flushErr
-		m.Mu.RUnlock()
+		m.rUnlock()
 		if err != nil {
 			return
 		}
@@ -858,8 +870,8 @@ func (m *Manager) flushLoop() {
 
 // FlushErr returns the fatal background flush error, if any has occurred.
 func (m *Manager) FlushErr() error {
-	m.Mu.RLock()
-	defer m.Mu.RUnlock()
+	m.rLock()
+	defer m.rUnlock()
 	return m.flushErr
 }
 
@@ -906,9 +918,9 @@ func (m *Manager) WaitForFlushCompletion() error {
 	m.flushQueueMu.Lock()
 	defer m.flushQueueMu.Unlock()
 	for (len(m.flushQueue) > 0 || m.isFlushing) && !m.flushQueueClosed {
-		m.Mu.RLock()
+		m.rLock()
 		err := m.flushErr
-		m.Mu.RUnlock()
+		m.rUnlock()
 		if err != nil {
 			return err
 		}
@@ -918,8 +930,8 @@ func (m *Manager) WaitForFlushCompletion() error {
 			break
 		}
 	}
-	m.Mu.RLock()
-	defer m.Mu.RUnlock()
+	m.rLock()
+	defer m.rUnlock()
 	return m.flushErr
 }
 
@@ -1166,13 +1178,25 @@ func (m *Manager) flushToDisk(mem *Memtable) {
 		m.beforeFlushPublishHook()
 	}
 
+	// Writer arrival at the publication lock. The pre-registered R1.2e §3.2
+	// arrival sample (active RLock holders) is taken here, before Mu.Lock.
+	lockArrival := m.writerLockArrival(LockSiteFlushPublish)
 	if m.flushObserver != nil {
-		m.flushObserver.OnFlushPublishBegin()
+		holders := int(m.activeRLockHolders.Load())
+		if lockArrival.observed {
+			holders = int(lockArrival.holders)
+		}
+		m.flushObserver.OnFlushPublishBegin(holders)
 	}
 
 	// Swap the newly built SSTable into the read path and remove the frozen memtable
 	m.Mu.Lock()
-	defer m.Mu.Unlock()
+	lockArrival.acquired(m)
+	pub := m.beginPublication(LockSiteFlushPublish, lockArrival.holders)
+	defer func() {
+		pub.end(m)
+		m.Mu.Unlock()
+	}()
 
 	// Prevent publication into an engine that is already fully CLOSED
 	if m.state == EngineClosed {
@@ -1323,8 +1347,8 @@ func (m *Manager) ActiveSSTableCount() int {
 		}
 		return len(m.currentSnapshot.readers)
 	}
-	m.Mu.RLock()
-	defer m.Mu.RUnlock()
+	m.rLock()
+	defer m.rUnlock()
 	return len(m.ActiveSSreaders)
 }
 

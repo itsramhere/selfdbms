@@ -84,6 +84,13 @@ type Spec struct {
 	OpenLoopRatePerSec  float64 `json:"open_loop_rate_per_sec,omitempty"`
 	PacedWriteRatePerSec float64 `json:"paced_write_rate_per_sec,omitempty"`
 	MaxLatenessMs       int     `json:"max_lateness_ms,omitempty"`
+
+	// Engineering-preflight extension (Phase I7 R2). When true, the engine's
+	// non-invasive synchronization instrumentation is attached for the whole
+	// trial and the aggregate is reported in
+	// TrialResult.Sync. Default off: the observer costs one nil check on
+	// uninstrumented paths and the trial schema gains no field.
+	InstrumentSync bool `json:"instrument_sync,omitempty"`
 }
 
 // Mode returns the driver mode implied by the block and cell.
@@ -114,6 +121,9 @@ func (s Spec) ResolveMode() (Mode, error) {
 		if len(s.Cell) >= 6 && s.Cell[:6] == "equal_" {
 			if s.PacedWriteRatePerSec <= 0 {
 				return 0, errf("E3 equal-work requires paced_write_rate_per_sec > 0 (W_paced)")
+			}
+			if s.PacedWriteRatePerSec > maxPacedWriteRatePerSec {
+				return 0, errf("E3 paced_write_rate_per_sec %g exceeds the sanity bound %g", s.PacedWriteRatePerSec, maxPacedWriteRatePerSec)
 			}
 			return ModePacedWrites, nil
 		}
@@ -209,6 +219,13 @@ type EventRecord struct {
 	BuildNs      int64 `json:"build_ns"`
 	MemtableKeys int   `json:"memtable_keys"`
 	InWindow     bool  `json:"in_window"`
+	// ActiveReadersAtArrival is the engine's sampled count of active
+	// Manager.Mu read holders taken immediately before the publication Lock
+	// attempt (R1.2e §3.2). The sample is one-sided: it can overcount the
+	// true blocking set (readers mid-acquisition or mid-release are still
+	// counted) and is not linearized with the Lock. See the checkpoint
+	// document for the full timestamp and synchronization limitations.
+	ActiveReadersAtArrival int `json:"active_readers_at_arrival"`
 }
 
 // EventConditioned summarises reads whose execution overlapped an event window.
@@ -255,6 +272,12 @@ type TrialResult struct {
 	LatencyReadLate     LatencyStats          `json:"latency_read_late_nanos,omitempty"`
 	LatencyResponseLate LatencyStats          `json:"latency_response_late_nanos,omitempty"`
 	LSMDiagnostics      Diagnostics           `json:"lsm_diagnostics"`
+	// Ledger is the conserved request-lifecycle accounting (offered /
+	// attempted / in-window / late / failed / queued / outstanding).
+	Ledger      TransactionLedger             `json:"transaction_ledger"`
+	// Sync carries the aggregated engine synchronization instrumentation when
+	// spec.instrument_sync was set; nil otherwise.
+	Sync        *SyncInstrumentationSummary   `json:"sync_instrumentation,omitempty"`
 	Events          []EventRecord         `json:"publication_events,omitempty"`
 	EventsLate      []EventRecord         `json:"publication_events_late,omitempty"`
 	EventCond       []EventConditioned    `json:"event_conditioned,omitempty"`
@@ -265,6 +288,11 @@ type TrialResult struct {
 
 // helperError keeps error construction in one place.
 func errf(format string, args ...any) error { return fmt.Errorf(format, args...) }
+
+// maxPacedWriteRatePerSec is a fail-closed sanity bound: a paced rate beyond
+// this would make the tick period sub-nanosecond and the paced writer loop
+// unbounded. Real cells are two to three orders of magnitude below it.
+const maxPacedWriteRatePerSec = 1e7
 
 // defaultWindow is only used by tests that omit durations.
 const defaultWindow = 400 * time.Millisecond

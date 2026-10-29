@@ -29,6 +29,11 @@ type FlushTracker struct {
 	ReadsDuringPublication   atomic.Int64 `json:"reads_during_publication"`
 	ReadsDuringQueueWait     atomic.Int64 `json:"reads_during_queue_wait"`
 
+	// Sampled active Manager.Mu read holders at the most recent publication
+	// arrival (Phase I7 R1.2e §3.2). One-sided estimate, may overcount; see
+	// lsmengine/sync_instrumentation.go.
+	ActiveHoldersAtPublishBegin atomic.Int32 `json:"active_holders_at_publish_begin"`
+
 	// Active phase indicators
 	isPhysicalFlushActive atomic.Bool
 	isPublicationActive   atomic.Bool
@@ -146,7 +151,8 @@ func (ft *FlushTracker) OnFlushBuildEnd(err error) {
 }
 
 // OnFlushPublishBegin is called immediately before acquiring the publication critical section.
-func (ft *FlushTracker) OnFlushPublishBegin() {
+func (ft *FlushTracker) OnFlushPublishBegin(activeRLockHolders int) {
+	ft.ActiveHoldersAtPublishBegin.Store(int32(activeRLockHolders))
 	ft.mu.Lock()
 	ft.publishStart = time.Now()
 	ft.mu.Unlock()

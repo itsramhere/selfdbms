@@ -24,6 +24,14 @@ const spinWindow = 1500 * time.Microsecond
 // Now returns a QPC timestamp.
 func Now() harness.PrecisionTime { return harness.NowPrecision() }
 
+// qpcElapsedNanos is the monotonic nanosecond clock injected into the engine's
+// synchronization instrumentation. It reads the same QPC counter the trial
+// window uses (base count 0, so the value is nanoseconds since the counter
+// origin), keeping engine-side durations on one timeline with the harness.
+func qpcElapsedNanos() int64 {
+	return harness.SincePrecisionNanos(harness.PrecisionTime{})
+}
+
 // ElapsedNs returns nanoseconds since base.
 func ElapsedNs(base harness.PrecisionTime) int64 {
 	return harness.SincePrecisionNanos(base)

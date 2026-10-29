@@ -85,6 +85,17 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		return nil, fmt.Errorf("create manager: %w", err)
 	}
 
+	// Optional synchronization instrumentation. The QPC clock keeps engine
+	// timestamps on the same monotonic timeline as the trial window.
+	var syncCollector *SyncCollector
+	if spec.InstrumentSync {
+		syncCollector = NewSyncCollector()
+		if err := man.SetSyncObserver(syncCollector, qpcElapsedNanos); err != nil {
+			_ = man.Close()
+			return nil, fmt.Errorf("attach sync instrumentation: %w", err)
+		}
+	}
+
 	fixStart := time.Now()
 	if err := buildFixture(man, spec, &res.FixtureManifest); err != nil {
 		_ = man.Close()
@@ -346,6 +357,37 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		ReadOpsPerSec:  float64(tot.ReadsCompletedInWindow) / secs,
 		WriteOpsPerSec: float64(tot.WritesCompletedInWindow) / secs,
 		TotalOpsPerSec: float64(tot.ReadsCompletedInWindow+tot.WritesCompletedInWindow) / secs,
+	}
+
+	// ---- conserved transaction ledger ----
+	scheduledReads := mode == ModeOpenLoop
+	scheduledWrites := mode == ModePacedWrites
+	if scheduledReads {
+		res.Ledger.Reads = NewScheduledAccounting(
+			res.Operations.ReadOpsScheduled, tot.ReadsAttempted,
+			tot.ReadsCompletedInWindow, tot.ReadsCompletedLate, tot.ReadsError, tot.Abandoned)
+	} else {
+		res.Ledger.Reads = NewClosedLoopAccounting(
+			tot.ReadsAttempted, tot.ReadsCompletedInWindow, tot.ReadsCompletedLate, tot.ReadsError)
+	}
+	if scheduledWrites {
+		periodNs := int64(float64(time.Second) / spec.PacedWriteRatePerSec)
+		offeredTicks := (windowNs + periodNs - 1) / periodNs
+		res.Ledger.Writes = NewScheduledAccounting(
+			offeredTicks, tot.WritesAttempted,
+			tot.WritesCompletedInWindow, tot.WritesCompletedLate, tot.WritesError, 0)
+	} else {
+		res.Ledger.Writes = NewClosedLoopAccounting(
+			tot.WritesAttempted, tot.WritesCompletedInWindow, tot.WritesCompletedLate, tot.WritesError)
+	}
+	if ledgerErr := res.Ledger.Validate(scheduledReads, scheduledWrites); ledgerErr != nil && res.Error == "" {
+		res.Status = "FAILED"
+		res.Error = "transaction ledger: " + ledgerErr.Error()
+	}
+
+	if syncCollector != nil {
+		s := syncCollector.Summary()
+		res.Sync = &s
 	}
 
 	finalFrozen := man.PendingFlushes()

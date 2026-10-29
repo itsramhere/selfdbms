@@ -322,8 +322,8 @@ func (m *Manager) acquireSnapshotLocked() (*ReaderSnapshot, error) {
 // AcquireSnapshot acquires a pin on the current snapshot for point reads.
 // Locks Manager.Mu.RLock() briefly to coordinate with memory tiers, pins snapshot, and releases Manager.Mu.
 func (m *Manager) AcquireSnapshot() (*ReaderSnapshot, error) {
-	m.Mu.RLock()
-	defer m.Mu.RUnlock()
+	m.rLock()
+	defer m.rUnlock()
 	return m.acquireSnapshotLocked()
 }
 
@@ -677,9 +677,10 @@ func (m *Manager) getApproachB(key string, readTs uint64) (string, error) {
 	byteKey := []byte(key)
 
 	// Step 1: Memory Tier Inspection + Snapshot Pinning under short m.Mu.RLock()
-	m.Mu.RLock()
+	m.rLock()
+	csStart := m.readCSStart()
 	if m.state != EngineOpen {
-		m.Mu.RUnlock()
+		m.rUnlockObserved(SyncModeApproachB, csStart)
 		return "", ErrClosed
 	}
 
@@ -691,14 +692,14 @@ func (m *Manager) getApproachB(key string, readTs uint64) (string, error) {
 	sol, err := m.Mem.Get(byteKey, readTs)
 	if err == nil {
 		m.memtablePointReads.Add(1)
-		m.Mu.RUnlock()
+		m.rUnlockObserved(SyncModeApproachB, csStart)
 		return string(sol), nil
 	} else if errors.Is(err, ErrKeyDeleted) {
 		m.memtablePointReads.Add(1)
-		m.Mu.RUnlock()
+		m.rUnlockObserved(SyncModeApproachB, csStart)
 		return "Key is Deleted", err
 	} else if !errors.Is(err, ErrNotFound) {
-		m.Mu.RUnlock()
+		m.rUnlockObserved(SyncModeApproachB, csStart)
 		return "", err
 	}
 
@@ -707,21 +708,21 @@ func (m *Manager) getApproachB(key string, readTs uint64) (string, error) {
 		val, err := m.Frozenmem[i].Get(byteKey, readTs)
 		if err == nil {
 			m.memtablePointReads.Add(1)
-			m.Mu.RUnlock()
+			m.rUnlockObserved(SyncModeApproachB, csStart)
 			return string(val), nil
 		} else if errors.Is(err, ErrKeyDeleted) {
 			m.memtablePointReads.Add(1)
-			m.Mu.RUnlock()
+			m.rUnlockObserved(SyncModeApproachB, csStart)
 			return " ", err
 		} else if !errors.Is(err, ErrNotFound) {
-			m.Mu.RUnlock()
+			m.rUnlockObserved(SyncModeApproachB, csStart)
 			return "", err
 		}
 	}
 
 	// 1c. Pin current disk snapshot before releasing m.Mu!
 	snap, err := m.acquireSnapshotLocked()
-	m.Mu.RUnlock() // CRUCIAL: Release Manager.Mu before ANY slow disk I/O!
+	m.rUnlockObserved(SyncModeApproachB, csStart) // CRUCIAL: Release Manager.Mu before ANY slow disk I/O!
 
 	if err != nil {
 		return "", err

@@ -76,11 +76,13 @@ func (r *EventRecorder) OnFlushBuildBegin() {}
 func (r *EventRecorder) OnFlushBuildEnd(err error) {}
 
 // OnFlushPublishBegin starts the publication critical section.
-func (r *EventRecorder) OnFlushPublishBegin() {
+// activeRLockHolders is the engine's arrival sample (R1.2e §3.2).
+func (r *EventRecorder) OnFlushPublishBegin(activeRLockHolders int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.cur.BeginNs = r.now()
 	r.cur.Index = len(r.events)
+	r.cur.ActiveReadersAtArrival = activeRLockHolders
 }
 
 // OnFlushPublishEnd closes the publication window.

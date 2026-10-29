@@ -213,8 +213,12 @@ func (m *Manager) CompactAll() error {
 	}
 
 	// Protected identity-preserving publication under write lock
+	pubArrival := m.writerLockArrival(LockSiteCompactionPublish)
 	m.Mu.Lock()
+	pubArrival.acquired(m)
+	pub := m.beginPublication(LockSiteCompactionPublish, pubArrival.holders)
 	if m.isClosed || m.state != EngineOpen {
+		pub.end(m)
 		m.Mu.Unlock()
 		newReader.Close()
 		os.Remove(newFilename)
@@ -226,6 +230,7 @@ func (m *Manager) CompactAll() error {
 
 	updatedReaders, err := replaceCompactedReaders(m.ActiveSSreaders, readersToCompact, newReader)
 	if err != nil {
+		pub.end(m)
 		m.Mu.Unlock()
 		newReader.Close()
 		os.Remove(newFilename)
@@ -250,6 +255,7 @@ func (m *Manager) CompactAll() error {
 		}
 		m.pruneRetiredReadersLocked()
 	}
+	pub.end(m)
 	m.Mu.Unlock()
 
 	// Retirement and resource cleanup

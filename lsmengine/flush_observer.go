@@ -19,7 +19,12 @@ type FlushObserver interface {
 	OnFlushBuildEnd(err error)
 
 	// OnFlushPublishBegin is called immediately before acquiring synchronization to publish the new SSTable.
-	OnFlushPublishBegin()
+	// activeRLockHolders is the Manager's sampled count of active Manager.Mu
+	// read holders at writer arrival (R1.2e §3.2). The sample is taken before
+	// the publication Lock attempt and can overcount the true blocking set by
+	// readers that are mid-acquisition or mid-release; see
+	// lsmengine/sync_instrumentation.go for the sampling semantics.
+	OnFlushPublishBegin(activeRLockHolders int)
 
 	// OnFlushPublishEnd is called immediately after publication completes or fails.
 	OnFlushPublishEnd(err error)

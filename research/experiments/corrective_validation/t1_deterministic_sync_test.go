@@ -23,7 +23,7 @@ func (d *deterministicPublicationObserver) OnFlushAdmitted(bool, error) {}
 func (d *deterministicPublicationObserver) OnFlushWorkerBegin()          {}
 func (d *deterministicPublicationObserver) OnFlushBuildBegin()           {}
 func (d *deterministicPublicationObserver) OnFlushBuildEnd(error)        {}
-func (d *deterministicPublicationObserver) OnFlushPublishBegin() {
+func (d *deterministicPublicationObserver) OnFlushPublishBegin(activeRLockHolders int) {
 	d.isPublishing.Store(true)
 	d.publishBeginTime.Store(time.Now().UnixNano())
 }

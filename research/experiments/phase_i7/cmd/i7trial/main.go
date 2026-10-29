@@ -39,7 +39,12 @@ const (
 	campaignID      = "I7_STRENGTHENING_V1"
 )
 
-var supportedBlocks = []string{"E1", "E2", "E3", "E4", "E5", "PF", "SMOKE"}
+// supportedBlocks lists the blocks this runner dispatches. D3 (R1.2e §4.2)
+// is the drift-anchor control block: closed-loop triplets on the C2-01
+// zero-delay cell, spliced at campaign milestones. Its absence here was the
+// D3 runner-dispatch defect corrected by the R2 engineering authorization —
+// a runlist containing D3 rows previously failed closed with exitUnsupported.
+var supportedBlocks = []string{"E1", "E2", "E3", "E4", "E5", "D3", "PF", "SMOKE"}
 var separateRunnerBlocks = []string{"E7"}
 
 // Approval is written by the operator only after external review authorizes the
