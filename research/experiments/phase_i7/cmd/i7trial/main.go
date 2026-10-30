@@ -1,9 +1,10 @@
 // Command i7trial executes exactly one I7 trial in its own OS process.
 //
 // Contract (see research/experiments/phase_i7/12_WINDOWS_EXECUTION_AMENDMENT.md):
-//   i7trial -selftest                       -> platform + timer + affinity JSON, no trial
-//   i7trial -smoke -mode A|AMIN|B -out F    -> tiny functional trial on the host FS
-//   i7trial -spec S.json -out F -gate G4 -approval A.json
+//
+//	i7trial -selftest                       -> platform + timer + affinity JSON, no trial
+//	i7trial -smoke -mode A|AMIN|B -out F    -> tiny functional trial on the host FS
+//	i7trial -spec S.json -out F -gate G4 -approval A.json
 //
 // Execution is refused unless an approval file authorizes the exact gate,
 // protocol version, runner binary and block being executed. Block E7 is owned by
@@ -44,7 +45,7 @@ const (
 // zero-delay cell, spliced at campaign milestones. Its absence here was the
 // D3 runner-dispatch defect corrected by the R2 engineering authorization —
 // a runlist containing D3 rows previously failed closed with exitUnsupported.
-var supportedBlocks = []string{"E1", "E2", "E3", "E4", "E5", "D3", "PF", "SMOKE"}
+var supportedBlocks = []string{"E1", "E2", "E3", "E4", "E5", "D3", "PF", "SMOKE", "X1", "X2", "X3", "ANCHOR"}
 var separateRunnerBlocks = []string{"E7"}
 
 // Approval is written by the operator only after external review authorizes the
@@ -58,6 +59,7 @@ type Approval struct {
 	ApprovedBy      string   `json:"approved_by"`
 	ApprovedAt      string   `json:"approved_at"`
 	Scope           string   `json:"scope"`
+	PlanSHA256      string   `json:"plan_sha256,omitempty"`
 	RunlistSHA256   string   `json:"runlist_sha256"`
 	RunnerSHA256    string   `json:"runner_sha256"`
 	AllowedBlocks   []string `json:"allowed_blocks"`
@@ -111,7 +113,7 @@ func main() {
 		outPath  = flag.String("out", "", "output JSON path")
 		modeFlag = flag.String("mode", "", "smoke sync mode: A, AMIN or B")
 		platform = flag.String("platform", "", "platform_manifest.json produced by run_i7.ps1")
-		gate     = flag.String("gate", "", "gate being executed (G3, G4, G5)")
+		gate     = flag.String("gate", "", "gate being executed (G3, G4, G5, X)")
 		approval = flag.String("approval", "", "approval JSON file")
 		keepData = flag.Bool("keep-data", false, "keep the trial data directory")
 		affinity = flag.String("affinity", "", "expected affinity mask, hex (recorded only)")
@@ -184,6 +186,9 @@ func runSpec(rt RuntimeInfo, specPath, outPath, platformPath, gitRev, gate, appr
 	if err := json.Unmarshal(raw, &spec); err != nil {
 		fail(exitUsage, "parse spec: "+err.Error())
 	}
+	if gate == "X" && spec.Block == "ANCHOR" {
+		spec.Block = "X1"
+	}
 	env.Spec = &spec
 	env.TrialID, env.Block, env.Cell = spec.TrialID, spec.Block, spec.Cell
 	env.Triplet, env.Arm = spec.Triplet, spec.Arm
@@ -207,7 +212,18 @@ func runSpec(rt RuntimeInfo, specPath, outPath, platformPath, gitRev, gate, appr
 	if err != nil {
 		fail(exitNotApproved, err.Error())
 	}
-	_ = appr
+	if gate == "X" {
+		// Campaign specs live directly below specs/. Bind the runner invocation to
+		// the same immutable plan that the driver checked before launching it.
+		plan, err := os.ReadFile(filepath.Join(filepath.Dir(filepath.Dir(specPath)), "plan.json"))
+		if err != nil {
+			fail(exitNotApproved, "read X plan: "+err.Error())
+		}
+		sum := sha256.Sum256(plan)
+		if !strings.EqualFold(hex.EncodeToString(sum[:]), appr.PlanSHA256) {
+			fail(exitNotApproved, "X plan_sha256 mismatch")
+		}
+	}
 
 	plat := readPlatformManifest(platformPath)
 	env.Platform = plat
@@ -581,6 +597,23 @@ func checkApproval(approvalPath, gate, block string) (*Approval, error) {
 	}
 	if !a.Approved {
 		return nil, errors.New("approval file does not set approved=true")
+	}
+	if gate == "X" {
+		if a.CampaignID != "X-readcost-v1" {
+			return nil, errors.New("X approval campaign_id mismatch")
+		}
+		if !containsFold([]string{"X1", "X2", "X3", "ANCHOR"}, block) {
+			return nil, errors.New("block is outside X approval")
+		}
+		planHash, err := hex.DecodeString(a.PlanSHA256)
+		if err != nil || len(planHash) != sha256.Size {
+			return nil, errors.New("X approval requires a plan_sha256")
+		}
+		self := runtimeInfo().ExeSHA256
+		if self == "" || !strings.EqualFold(a.RunnerSHA256, self) {
+			return nil, errors.New("X approval runner_sha256 mismatch")
+		}
+		return &a, nil
 	}
 	if a.CampaignID != campaignID {
 		return nil, fmt.Errorf("approval campaign_id = %q, expected %q", a.CampaignID, campaignID)

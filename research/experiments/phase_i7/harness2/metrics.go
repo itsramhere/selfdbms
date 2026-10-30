@@ -13,9 +13,11 @@ import (
 
 // Shard accumulates one worker's observations.
 type Shard struct {
-	Samples     []int64 // service latency (completion - issue) inside measurement window
-	Resp        []int64 // response latency (completion - intended) inside measurement window; open loop only
-	Issues      []Issue // interval pairs for event conditioning inside measurement window
+	ServiceHistogram     *Histogram
+	ServiceLateHistogram *Histogram
+	Samples              []int64 // service latency (completion - issue) inside measurement window
+	Resp                 []int64 // response latency (completion - intended) inside measurement window; open loop only
+	Issues               []Issue // interval pairs for event conditioning inside measurement window
 
 	SamplesLate []int64 // service latency for late completions (done > windowNs)
 	RespLate    []int64 // response latency for late completions (done > windowNs)
@@ -71,6 +73,10 @@ func NewShard(capacity int, trackResp, trackIssues bool) *Shard {
 // RecordService appends a service-latency sample. Past capacity the sample is
 // dropped and counted, never silently truncated into a biased "first N" set.
 func (s *Shard) RecordService(ns int64) {
+	if s.ServiceHistogram != nil {
+		s.ServiceHistogram.Record(ns)
+		return
+	}
 	if ns < 0 {
 		ns = 0
 	}
@@ -100,6 +106,10 @@ func (s *Shard) RecordIssue(intended, issued, complete int64) {
 
 // RecordServiceLate appends a service-latency sample for late completions.
 func (s *Shard) RecordServiceLate(ns int64) {
+	if s.ServiceLateHistogram != nil {
+		s.ServiceLateHistogram.Record(ns)
+		return
+	}
 	if ns < 0 {
 		ns = 0
 	}
@@ -116,6 +126,9 @@ func (s *Shard) RecordResponseLate(ns int64) {
 
 // RecordIssueLate appends an interval triple for late completions.
 func (s *Shard) RecordIssueLate(intended, issued, complete int64) {
+	if s.ServiceHistogram != nil {
+		return
+	}
 	s.IssuesLate = append(s.IssuesLate, Issue{IntendedNs: intended, IssuedNs: issued, CompleteNs: complete})
 }
 
@@ -290,4 +303,9 @@ func Sum(shards []*Shard) Totals {
 		t.Dropped += s.Dropped
 	}
 	return t
+}
+
+// NewHistogramShard has bounded memory even when reads exceed any expected rate.
+func NewHistogramShard() *Shard {
+	return &Shard{ServiceHistogram: &Histogram{}, ServiceLateHistogram: &Histogram{}}
 }

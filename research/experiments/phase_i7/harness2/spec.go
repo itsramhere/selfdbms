@@ -15,8 +15,12 @@
 package harness2
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"time"
+
+	"owndbms/lsmengine"
 
 	"owndbms/research/experiments/harness"
 )
@@ -25,6 +29,9 @@ import (
 type Block string
 
 const (
+	BlockX1    Block = "X1"
+	BlockX2    Block = "X2"
+	BlockX3    Block = "X3"
 	BlockE1    Block = "E1"
 	BlockE2    Block = "E2"
 	BlockE3    Block = "E3"
@@ -50,40 +57,42 @@ const (
 // JSON names are a contract with the PowerShell driver and must not change
 // without a schema version bump.
 type Spec struct {
-	Schema                  string  `json:"schema"`
-	TrialID                 string  `json:"trial_id"`
-	Block                   string  `json:"block"`
-	Cell                    string  `json:"cell"`
-	Triplet                 int     `json:"triplet"`
-	Arm                     string  `json:"arm"`
-	OrderPosition           int     `json:"order_position"`
-	RunlistPosition         int     `json:"runlist_position"`
-	Seed                    int64   `json:"seed"`
-	WorkloadID              string  `json:"workload_id"`
-	ReaderConcurrency       int     `json:"reader_concurrency"`
-	WriterConcurrency       int     `json:"writer_concurrency"`
-	MeasurementDurationMs   int     `json:"measurement_duration_ms"`
-	WarmupDurationMs        int     `json:"warmup_duration_ms"`
-	CooldownDurationMs      int     `json:"cooldown_duration_ms"`
-	KeyspaceCardinality     int     `json:"keyspace_cardinality"`
-	InitialSSTableCount     int     `json:"initial_sstable_count"`
-	InitialKeysPerSSTable   int     `json:"initial_keys_per_sstable"`
-	TargetReadHitRatio      float64 `json:"target_read_hit_ratio"`
-	MemtableThresholdBytes  int64   `json:"memtable_threshold_bytes"`
-	FlushTriggerIntervalMs  int     `json:"flush_trigger_interval_ms"`
-	CompactionTriggerMs     int     `json:"compaction_trigger_interval_ms"`
-	WalSync                 bool    `json:"wal_sync"`
-	ReadDistribution        string  `json:"read_distribution"`
-	DataDir                 string  `json:"data_dir"`
-	ExpectedReaderSetSize   int     `json:"expected_reader_set_size"`
-	Notes                   string  `json:"notes,omitempty"`
+	Schema                 string  `json:"schema"`
+	TrialID                string  `json:"trial_id"`
+	Block                  string  `json:"block"`
+	Cell                   string  `json:"cell"`
+	Triplet                int     `json:"triplet"`
+	Arm                    string  `json:"arm"`
+	OrderPosition          int     `json:"order_position"`
+	RunlistPosition        int     `json:"runlist_position"`
+	Seed                   int64   `json:"seed"`
+	WorkloadID             string  `json:"workload_id"`
+	ReaderConcurrency      int     `json:"reader_concurrency"`
+	WriterConcurrency      int     `json:"writer_concurrency"`
+	MeasurementDurationMs  int     `json:"measurement_duration_ms"`
+	WarmupDurationMs       int     `json:"warmup_duration_ms"`
+	CooldownDurationMs     int     `json:"cooldown_duration_ms"`
+	KeyspaceCardinality    int     `json:"keyspace_cardinality"`
+	InitialSSTableCount    int     `json:"initial_sstable_count"`
+	InitialKeysPerSSTable  int     `json:"initial_keys_per_sstable"`
+	TargetReadHitRatio     float64 `json:"target_read_hit_ratio"`
+	MemtableThresholdBytes int64   `json:"memtable_threshold_bytes"`
+	FlushTriggerIntervalMs int     `json:"flush_trigger_interval_ms"`
+	CompactionTriggerMs    int     `json:"compaction_trigger_interval_ms"`
+	WalSync                bool    `json:"wal_sync"`
+	ReadPath               string  `json:"read_path,omitempty"`
+	ReadIODelayUs          int     `json:"read_io_delay_us,omitempty"`
+	ReadDistribution       string  `json:"read_distribution"`
+	DataDir                string  `json:"data_dir"`
+	ExpectedReaderSetSize  int     `json:"expected_reader_set_size"`
+	Notes                  string  `json:"notes,omitempty"`
 
 	// Driver extensions (Phase I7 G2). Zero values mean "not applicable".
-	PublicationEvents   int     `json:"publication_events,omitempty"`
-	PublicationMode     string  `json:"publication_mode,omitempty"`
-	OpenLoopRatePerSec  float64 `json:"open_loop_rate_per_sec,omitempty"`
+	PublicationEvents    int     `json:"publication_events,omitempty"`
+	PublicationMode      string  `json:"publication_mode,omitempty"`
+	OpenLoopRatePerSec   float64 `json:"open_loop_rate_per_sec,omitempty"`
 	PacedWriteRatePerSec float64 `json:"paced_write_rate_per_sec,omitempty"`
-	MaxLatenessMs       int     `json:"max_lateness_ms,omitempty"`
+	MaxLatenessMs        int     `json:"max_lateness_ms,omitempty"`
 
 	// Engineering-preflight extension (Phase I7 R2). When true, the engine's
 	// non-invasive synchronization instrumentation is attached for the whole
@@ -106,10 +115,17 @@ const (
 // ResolveMode classifies a spec. An unsupported combination returns an error so
 // the runner fails closed instead of silently running a different experiment.
 func (s Spec) ResolveMode() (Mode, error) {
+	if _, err := s.ResolveReadPath(); err != nil {
+		return 0, err
+	}
+	// X requires true rather than relying on a missing JSON bool's zero value.
+	if s.IsX() && !s.WalSync {
+		return 0, errf("X blocks require explicit wal_sync=true")
+	}
 	switch Block(s.Block) {
-	case BlockE2:
+	case BlockE2, BlockX2:
 		if s.PublicationMode != string(PubPhysical) && s.PublicationMode != string(PubNone) {
-			return 0, errf("E2 requires publication_mode none|physical, got %q", s.PublicationMode)
+			return 0, errf("%s requires publication_mode none|physical, got %q", s.Block, s.PublicationMode)
 		}
 		return ModePublicationOnly, nil
 	case BlockE4:
@@ -128,12 +144,52 @@ func (s Spec) ResolveMode() (Mode, error) {
 			return ModePacedWrites, nil
 		}
 		return ModeClosedLoop, nil
-	case BlockE1, BlockE5, BlockD1, BlockD2, BlockD3, BlockPF, BlockSMOKE:
+	case BlockX1, BlockX3, BlockE1, BlockE5, BlockD1, BlockD2, BlockD3, BlockPF, BlockSMOKE:
 		return ModeClosedLoop, nil
 	case BlockE7:
 		return 0, errf("E7 is executed by the separate pebble_runner binary")
 	}
 	return 0, errf("unknown block %q", s.Block)
+}
+
+func (s Spec) IsX() bool {
+	return s.Block == string(BlockX1) || s.Block == string(BlockX2) || s.Block == string(BlockX3)
+}
+
+// ResolveReadPath fails closed, including duration overflow before conversion.
+func (s Spec) ResolveReadPath() (lsmengine.ReadPathMode, error) {
+	if s.ReadIODelayUs < 0 || int64(s.ReadIODelayUs) > math.MaxInt64/int64(time.Microsecond) {
+		return 0, errf("invalid read_io_delay_us %d", s.ReadIODelayUs)
+	}
+	switch s.ReadPath {
+	case "", "block":
+		return lsmengine.ReadPathBlock, nil
+	case "legacy_scan":
+		if s.ReadIODelayUs != 0 {
+			return 0, errf("legacy_scan requires read_io_delay_us=0")
+		}
+		return lsmengine.ReadPathLegacyScan, nil
+	default:
+		return 0, errf("unknown read_path %q", s.ReadPath)
+	}
+}
+
+// MarshalJSON keeps old specs byte-compatible while making X zero-dose settings
+// explicit in the serialized config, where omission would obscure treatment.
+func (s Spec) MarshalJSON() ([]byte, error) {
+	type plain Spec
+	if !s.IsX() {
+		return json.Marshal(plain(s))
+	}
+	path := s.ReadPath
+	if path == "" {
+		path = "block"
+	}
+	return json.Marshal(struct {
+		plain
+		ReadPath      string `json:"read_path"`
+		ReadIODelayUs int    `json:"read_io_delay_us"`
+	}{plain(s), path, s.ReadIODelayUs})
 }
 
 // Environment is the harness-compatible environment record.
@@ -152,26 +208,26 @@ type TimestampInfo struct {
 // abandoned/unissued accounting required for open-loop measurement, and
 // distinguishes completions in-window from late completions during drain.
 type OperationCounts struct {
-	ReadOpsScheduled         int64 `json:"read_ops_scheduled"`
-	ReadOpsIssued            int64 `json:"read_ops_issued"`
-	ReadOpsCompletedInWindow int64 `json:"read_ops_completed_in_window"`
-	ReadOpsCompletedLate     int64 `json:"read_ops_completed_late"`
-	ReadOpsCompleted         int64 `json:"read_ops_completed"`
-	ReadOpsAbandoned         int64 `json:"read_ops_abandoned"`
-	ReadOpsUnissued          int64 `json:"read_ops_unissued"`
-	ExpectedHitCount         int64 `json:"expected_hit_count"`
-	ExpectedMissCount        int64 `json:"expected_miss_count"`
-	ActualHitCount           int64 `json:"actual_hit_count"`
-	ActualMissCount          int64 `json:"actual_miss_count"`
-	ActualMemtableHitCount   int64 `json:"actual_memtable_hit_count"`
-	ActualSSTableHitCount    int64 `json:"actual_sstable_hit_count"`
-	WriteOpsAttempted        int64 `json:"write_ops_attempted"`
-	WriteOpsCompletedInWindow int64 `json:"write_ops_completed_in_window"`
-	WriteOpsCompletedLate    int64 `json:"write_ops_completed_late"`
-	WriteOpsCompleted        int64 `json:"write_ops_completed"`
-	ErrorOpsCount            int64 `json:"error_ops_count"`
-	ValidationErrorCount     int64 `json:"validation_error_count"`
-	WorkerSeeds              map[string]int64 `json:"worker_seeds,omitempty"`
+	ReadOpsScheduled          int64            `json:"read_ops_scheduled"`
+	ReadOpsIssued             int64            `json:"read_ops_issued"`
+	ReadOpsCompletedInWindow  int64            `json:"read_ops_completed_in_window"`
+	ReadOpsCompletedLate      int64            `json:"read_ops_completed_late"`
+	ReadOpsCompleted          int64            `json:"read_ops_completed"`
+	ReadOpsAbandoned          int64            `json:"read_ops_abandoned"`
+	ReadOpsUnissued           int64            `json:"read_ops_unissued"`
+	ExpectedHitCount          int64            `json:"expected_hit_count"`
+	ExpectedMissCount         int64            `json:"expected_miss_count"`
+	ActualHitCount            int64            `json:"actual_hit_count"`
+	ActualMissCount           int64            `json:"actual_miss_count"`
+	ActualMemtableHitCount    int64            `json:"actual_memtable_hit_count"`
+	ActualSSTableHitCount     int64            `json:"actual_sstable_hit_count"`
+	WriteOpsAttempted         int64            `json:"write_ops_attempted"`
+	WriteOpsCompletedInWindow int64            `json:"write_ops_completed_in_window"`
+	WriteOpsCompletedLate     int64            `json:"write_ops_completed_late"`
+	WriteOpsCompleted         int64            `json:"write_ops_completed"`
+	ErrorOpsCount             int64            `json:"error_ops_count"`
+	ValidationErrorCount      int64            `json:"validation_error_count"`
+	WorkerSeeds               map[string]int64 `json:"worker_seeds,omitempty"`
 }
 
 // ThroughputInfo mirrors the frozen schema.
@@ -204,9 +260,9 @@ type Diagnostics struct {
 	PendingCleanupCount               int    `json:"pending_cleanup_count"`
 	LivePhysicalReaders               int    `json:"live_physical_readers"`
 	// New in I7.
-	PendingFlushesAtEnd               int   `json:"pending_flushes_at_end"`
-	MaxOutstandingLeases              int32 `json:"max_outstanding_leases"`
-	DataDirRemoved                    bool  `json:"data_dir_removed"`
+	PendingFlushesAtEnd  int   `json:"pending_flushes_at_end"`
+	MaxOutstandingLeases int32 `json:"max_outstanding_leases"`
+	DataDirRemoved       bool  `json:"data_dir_removed"`
 }
 
 // EventRecord is one scheduled or observed publication.
@@ -230,13 +286,13 @@ type EventRecord struct {
 
 // EventConditioned summarises reads whose execution overlapped an event window.
 type EventConditioned struct {
-	EventIndex   int     `json:"event_index"`
-	OverlapReads int     `json:"overlap_reads"`
-	MaxResponseNs int64  `json:"max_response_ns"`
-	P50ResponseNs int64  `json:"p50_response_ns"`
+	EventIndex    int     `json:"event_index"`
+	OverlapReads  int     `json:"overlap_reads"`
+	MaxResponseNs int64   `json:"max_response_ns"`
+	P50ResponseNs int64   `json:"p50_response_ns"`
 	P95ResponseNs *int64  `json:"p95_response_ns"`
-	HoldNs       int64   `json:"hold_ns"`
-	BlockRatio   float64 `json:"block_ratio"`
+	HoldNs        int64   `json:"hold_ns"`
+	BlockRatio    float64 `json:"block_ratio"`
 }
 
 // LatencyStats mirrors the frozen schema, including the sample-sufficiency rules.
@@ -253,37 +309,38 @@ type LatencyStats struct {
 
 // TrialResult is the per-trial envelope consumed by the analysis layer.
 type TrialResult struct {
-	SchemaVersion   string                `json:"schema_version"`
-	TrialID         string                `json:"trial_id"`
-	TrialIndex      int                   `json:"trial_index"`
-	WorkloadID      string                `json:"workload_id"`
-	Block           string                `json:"block"`
-	Cell            string                `json:"cell"`
-	Arm             string                `json:"arm"`
-	SyncMode        string                `json:"sync_mode"`
-	GitRevision     string                `json:"git_revision"`
-	Environment     Environment           `json:"environment"`
-	Config          Spec                  `json:"config"`
-	Timestamps      TimestampInfo         `json:"timestamps"`
-	Operations      OperationCounts       `json:"operations"`
-	Throughput      ThroughputInfo        `json:"throughput"`
-	LatencyRead         LatencyStats          `json:"latency_read_nanos"`
-	LatencyResponse     LatencyStats          `json:"latency_response_nanos"`
-	LatencyReadLate     LatencyStats          `json:"latency_read_late_nanos,omitempty"`
-	LatencyResponseLate LatencyStats          `json:"latency_response_late_nanos,omitempty"`
-	LSMDiagnostics      Diagnostics           `json:"lsm_diagnostics"`
+	FixtureWALSync      *bool           `json:"fixture_wal_sync,omitempty"`
+	SchemaVersion       string          `json:"schema_version"`
+	TrialID             string          `json:"trial_id"`
+	TrialIndex          int             `json:"trial_index"`
+	WorkloadID          string          `json:"workload_id"`
+	Block               string          `json:"block"`
+	Cell                string          `json:"cell"`
+	Arm                 string          `json:"arm"`
+	SyncMode            string          `json:"sync_mode"`
+	GitRevision         string          `json:"git_revision"`
+	Environment         Environment     `json:"environment"`
+	Config              Spec            `json:"config"`
+	Timestamps          TimestampInfo   `json:"timestamps"`
+	Operations          OperationCounts `json:"operations"`
+	Throughput          ThroughputInfo  `json:"throughput"`
+	LatencyRead         LatencyStats    `json:"latency_read_nanos"`
+	LatencyResponse     LatencyStats    `json:"latency_response_nanos"`
+	LatencyReadLate     LatencyStats    `json:"latency_read_late_nanos,omitempty"`
+	LatencyResponseLate LatencyStats    `json:"latency_response_late_nanos,omitempty"`
+	LSMDiagnostics      Diagnostics     `json:"lsm_diagnostics"`
 	// Ledger is the conserved request-lifecycle accounting (offered /
 	// attempted / in-window / late / failed / queued / outstanding).
-	Ledger      TransactionLedger             `json:"transaction_ledger"`
+	Ledger TransactionLedger `json:"transaction_ledger"`
 	// Sync carries the aggregated engine synchronization instrumentation when
 	// spec.instrument_sync was set; nil otherwise.
-	Sync        *SyncInstrumentationSummary   `json:"sync_instrumentation,omitempty"`
-	Events          []EventRecord         `json:"publication_events,omitempty"`
-	EventsLate      []EventRecord         `json:"publication_events_late,omitempty"`
-	EventCond       []EventConditioned    `json:"event_conditioned,omitempty"`
-	FixtureManifest harness.FixtureManifest `json:"fixture_manifest"`
-	Status          string                `json:"status"`
-	Error           string                `json:"error,omitempty"`
+	Sync            *SyncInstrumentationSummary `json:"sync_instrumentation,omitempty"`
+	Events          []EventRecord               `json:"publication_events,omitempty"`
+	EventsLate      []EventRecord               `json:"publication_events_late,omitempty"`
+	EventCond       []EventConditioned          `json:"event_conditioned,omitempty"`
+	FixtureManifest harness.FixtureManifest     `json:"fixture_manifest"`
+	Status          string                      `json:"status"`
+	Error           string                      `json:"error,omitempty"`
 }
 
 // helperError keeps error construction in one place.

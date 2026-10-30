@@ -5,11 +5,10 @@ package harness2
 // lsmengine.SyncObserver; its callbacks run on reader, writer and flush-worker
 // hot paths, so it uses only atomics — no mutex, no allocation.
 //
-// Aggregates cover the whole trial lifecycle, including fixture construction
-// and the post-window drain; the observation scope is the trial, not the
-// measurement window. Percentiles are deliberately not computed online (a
-// bounded sample buffer would either drop or lock); consumers get
-// count/mean/min/max plus the mean holder sample at arrival.
+// E/D aggregates retain their whole-trial scope. X trials reset after warmup,
+// so their observation scope starts at the measurement window and includes the
+// post-window drain. X additionally uses atomic histogram buckets for
+// percentiles; old blocks retain their original aggregation cost and schema.
 
 import (
 	"sync/atomic"
@@ -71,13 +70,17 @@ func siteSlotName(i int) string {
 // unset sentinel (durations are non-negative, so a stored 0 and "nothing
 // stored" are equivalent for reporting).
 type dist struct {
-	count atomic.Int64
-	sum   atomic.Int64
-	min   atomic.Int64
-	max   atomic.Int64
+	histogram *[histogramBuckets]atomic.Int64
+	count     atomic.Int64
+	sum       atomic.Int64
+	min       atomic.Int64
+	max       atomic.Int64
 }
 
 func (d *dist) add(v int64) {
+	if d.histogram != nil {
+		d.histogram[histogramIndex(v)].Add(1)
+	}
 	d.count.Add(1)
 	d.sum.Add(v)
 	for {
@@ -118,6 +121,46 @@ var _ lsmengine.SyncObserver = (*SyncCollector)(nil)
 // NewSyncCollector returns an empty collector.
 func NewSyncCollector() *SyncCollector { return &SyncCollector{} }
 
+// NewSyncHistogramCollector enables the X percentile view before observers run.
+func NewSyncHistogramCollector() *SyncCollector {
+	c := NewSyncCollector()
+	for i := 0; i < 3; i++ {
+		c.readCS[i].histogram = new([histogramBuckets]atomic.Int64)
+		c.wait[i].histogram = new([histogramBuckets]atomic.Int64)
+	}
+	return c
+}
+
+// reset clears observations without replacing atomics or histogram storage.
+// PRECONDITION: no observer callbacks are active until reset has completed.
+func (d *dist) reset() {
+	d.count.Store(0)
+	d.sum.Store(0)
+	d.min.Store(0)
+	d.max.Store(0)
+	if d.histogram != nil {
+		for i := range d.histogram {
+			d.histogram[i].Store(0)
+		}
+	}
+}
+
+// Reset starts a new observation phase for either collector variant. The engine
+// must be idle: atomic stores avoid copying live atomic values, but the sequence
+// is not a linearizable reset against concurrent callbacks. Histogram pointers
+// remain attached so subsequent observations retain the same percentile view.
+func (c *SyncCollector) Reset() {
+	for i := 0; i < 3; i++ {
+		c.readCS[i].reset()
+		c.wait[i].reset()
+		c.pub[i].reset()
+		c.waitHolders[i].Store(0)
+		c.waitArrivals[i].Store(0)
+		c.pubHolders[i].Store(0)
+		c.pubArrivals[i].Store(0)
+	}
+}
+
 // OnReadCriticalSection implements lsmengine.SyncObserver.
 func (c *SyncCollector) OnReadCriticalSection(mode lsmengine.SyncMode, durationNs int64) {
 	if i := modeIndex(mode); i >= 0 {
@@ -149,6 +192,9 @@ func (c *SyncCollector) OnPublication(site lsmengine.LockSite, durationNs int64,
 
 // SyncStats is one reported distribution.
 type SyncStats struct {
+	P50Nanos             *int64  `json:"p50_nanos,omitempty"`
+	P95Nanos             *int64  `json:"p95_nanos,omitempty"`
+	P99Nanos             *int64  `json:"p99_nanos,omitempty"`
 	Count                int64   `json:"count"`
 	MeanNanos            float64 `json:"mean_nanos"`
 	MinNanos             int64   `json:"min_nanos"`
@@ -170,6 +216,15 @@ func (d *dist) stats(holdersSum, arrivals int64) SyncStats {
 	}
 	if arrivals > 0 {
 		st.MeanHoldersAtArrival = float64(holdersSum) / float64(arrivals)
+	}
+	if d.histogram != nil {
+		var h Histogram
+		for i := range h.buckets {
+			h.buckets[i] = d.histogram[i].Load()
+			h.count += h.buckets[i]
+		}
+		p50, p95, p99 := h.percentile(.5), h.percentile(.95), h.percentile(.99)
+		st.P50Nanos, st.P95Nanos, st.P99Nanos = &p50, &p95, &p99
 	}
 	return st
 }

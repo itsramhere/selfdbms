@@ -45,7 +45,7 @@ func TestD3BlockIsDispatchable(t *testing.T) {
 
 // TestSupportedBlocksComplete locks the full dispatch surface.
 func TestSupportedBlocksComplete(t *testing.T) {
-	want := []string{"E1", "E2", "E3", "E4", "E5", "D3", "PF", "SMOKE"}
+	want := []string{"E1", "E2", "E3", "E4", "E5", "D3", "PF", "SMOKE", "X1", "X2", "X3", "ANCHOR"}
 	if len(supportedBlocks) != len(want) {
 		t.Fatalf("supportedBlocks = %v, want %v", supportedBlocks, want)
 	}
@@ -181,5 +181,31 @@ func TestValidateEnvelopeErrorPaths(t *testing.T) {
 	failed.Result = nil
 	if err := validateEnvelope(failed); err != nil {
 		t.Fatalf("FAILED envelope must be recorded, not rejected: %v", err)
+	}
+}
+
+func TestXApproval(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "approval.json")
+	a := Approval{CampaignID: "X-readcost-v1", Approved: true, RunnerSHA256: runtimeInfo().ExeSHA256, PlanSHA256: strings.Repeat("a", 64)}
+	b, _ := json.Marshal(a)
+	if err := os.WriteFile(path, b, 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, block := range []string{"X1", "X2", "X3", "ANCHOR"} {
+		if _, err := checkApproval(path, "X", block); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := checkApproval(path, "X", "E2"); err == nil {
+		t.Fatal("X approval authorized E2")
+	}
+	if _, err := checkApproval(path, "G4", "X1"); err == nil {
+		t.Fatal("X approval authorized G4")
+	}
+	a.PlanSHA256 = ""
+	b, _ = json.Marshal(a)
+	_ = os.WriteFile(path, b, 0644)
+	if _, err := checkApproval(path, "X", "X1"); err == nil {
+		t.Fatal("missing plan hash accepted")
 	}
 }

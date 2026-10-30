@@ -75,8 +75,16 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		Status:        "SUCCESS",
 	}
 
+	if spec.IsX() {
+		v := false
+		res.FixtureWALSync = &v
+	}
+	readPath, _ := spec.ResolveReadPath() // ResolveMode already validated treatment.
 	man, err := lsmengine.CreateManagerWithConfig(lsmengine.Config{
 		Mode:                   lsmMode,
+		ReadPath:               readPath,
+		ReadIODelay:            time.Duration(spec.ReadIODelayUs) * time.Microsecond,
+		DisableWALSync:         !spec.WalSync,
 		WalPath:                filepath.Join(spec.DataDir, "wal.log"),
 		DataDir:                spec.DataDir,
 		MemtableThresholdBytes: defaultMemtable, // large during fixture construction
@@ -90,12 +98,18 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	var syncCollector *SyncCollector
 	if spec.InstrumentSync {
 		syncCollector = NewSyncCollector()
+		if spec.IsX() {
+			syncCollector = NewSyncHistogramCollector()
+		}
 		if err := man.SetSyncObserver(syncCollector, qpcElapsedNanos); err != nil {
 			_ = man.Close()
 			return nil, fmt.Errorf("attach sync instrumentation: %w", err)
 		}
 	}
 
+	// Fixture durability is outside the measured treatment; re-enable the requested
+	// policy before pre-freeze and warmup, after all fixture writers have stopped.
+	man.SetWALSync(false)
 	fixStart := time.Now()
 	if err := buildFixture(man, spec, &res.FixtureManifest); err != nil {
 		_ = man.Close()
@@ -104,6 +118,7 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		return res, err
 	}
 	res.FixtureManifest.InitializationDurationMs = time.Since(fixStart).Milliseconds()
+	man.SetWALSync(spec.WalSync)
 	man.SetMemtableThresholdBytes(memtable)
 	initialSSTables := man.ActiveSSTableCount()
 	initialFlushes := man.FlushesCompleted()
@@ -163,6 +178,12 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	}
 
 	// ---- measurement window ----
+	// Warmup readers have joined and X2's pre-frozen pool is still gated, so
+	// observer callbacks are idle here. X measures its synchronization dose from
+	// this boundary through drain; retain the older blocks' whole-trial scope.
+	if spec.IsX() && syncCollector != nil {
+		syncCollector.Reset()
+	}
 	base := Now()
 	res.Timestamps.StartISO = time.Now().UTC().Format(time.RFC3339Nano)
 	res.Timestamps.WarmupDurationMs = spec.WarmupDurationMs
@@ -185,7 +206,12 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	shards := make([]*Shard, 0, spec.ReaderConcurrency+spec.WriterConcurrency)
 	var shardMu sync.Mutex
 	newShard := func(cap int) *Shard {
-		sh := NewShard(cap, trackResp, trackIssues)
+		var sh *Shard
+		if spec.IsX() {
+			sh = NewHistogramShard()
+		} else {
+			sh = NewShard(cap, trackResp, trackIssues)
+		}
 		shardMu.Lock()
 		shards = append(shards, sh)
 		shardMu.Unlock()
@@ -327,6 +353,10 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		res.LatencyResponseLate = Stats(respLate)
 	}
 
+	if spec.IsX() {
+		res.LatencyRead = MergeHistograms(shards, false)
+		res.LatencyReadLate = MergeHistograms(shards, true)
+	}
 	secs := float64(measured) / 1e9
 	if secs <= 0 {
 		secs = 1e-9
@@ -429,13 +459,12 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		inWin, lateEvents := rec.Events(windowNs)
 		res.Events = inWin
 		res.EventsLate = lateEvents
-		res.EventCond = ConditionEvents(res.Events, MergeIssues(shards), eventDeltaNs)
+		if !spec.IsX() {
+			res.EventCond = ConditionEvents(res.Events, MergeIssues(shards), eventDeltaNs)
+		}
 		res.LSMDiagnostics.PublicationEventsRealizedInWindow = len(inWin)
 		res.LSMDiagnostics.PublicationEventsRealizedLate = len(lateEvents)
-		if isPhysical && len(inWin) != targetEvents && res.Error == "" {
-			res.Status = "FAILED"
-			res.Error = fmt.Sprintf("E2 publication timing: expected %d in-window realized events, got %d (%d late)", targetEvents, len(inWin), len(lateEvents))
-		}
+		publicationTimingOutcome(res, spec, isPhysical, targetEvents, len(inWin), len(lateEvents))
 	}
 
 	// Shutdown. A non-nil error is a failed trial: for A-min a lease drain
@@ -744,5 +773,14 @@ func openLoopWorker(man *lsmengine.Manager, sh *Shard, sched []Arrival, base har
 			sh.RecordIssueLate(a.IntendedNs, issued, done)
 		}
 		recordRead(sh, v, err, a.ExpectHit, inWindow)
+	}
+}
+
+// X2 measures publication shortfall as an outcome. Preserve any existing fault;
+// E2's timing contract and failure wording remain exactly as before.
+func publicationTimingOutcome(res *TrialResult, spec Spec, physical bool, target, inWindow, late int) {
+	if spec.Block != string(BlockX2) && physical && inWindow != target && res.Error == "" {
+		res.Status = "FAILED"
+		res.Error = fmt.Sprintf("E2 publication timing: expected %d in-window realized events, got %d (%d late)", target, inWindow, late)
 	}
 }

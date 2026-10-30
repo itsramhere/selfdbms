@@ -301,9 +301,9 @@ func TestScheduleDeterministicAndRateAccurate(t *testing.T) {
 func TestConditionEventsBlockRatio(t *testing.T) {
 	events := []EventRecord{{Index: 0, BeginNs: 1_000_000, EndNs: 21_000_000, HoldNs: 20_000_000}}
 	issues := []Issue{
-		{IntendedNs: 0, IssuedNs: 0, CompleteNs: 19_000_000},        // overlaps, waited out
+		{IntendedNs: 0, IssuedNs: 0, CompleteNs: 19_000_000},          // overlaps, waited out
 		{IntendedNs: 0, IssuedNs: 25_000_000, CompleteNs: 30_000_000}, // starts after the window
-		{IntendedNs: 0, IssuedNs: 2_000_000, CompleteNs: 4_000_000},  // inside, short
+		{IntendedNs: 0, IssuedNs: 2_000_000, CompleteNs: 4_000_000},   // inside, short
 	}
 	// delta = 0: the 30 ms read is outside [1 ms, 21 ms] and must be excluded.
 	got := ConditionEvents(events, issues, 0)
@@ -377,6 +377,10 @@ func TestRunClosedLoopAllArms(t *testing.T) {
 
 func TestRunPublicationOnlyDriver(t *testing.T) {
 	spec := miniSpec(t, "E2", "pub_physical", "A")
+	// Keep the pool smaller than the keyspace and retain the historical scan cost.
+	spec.KeyspaceCardinality = 1000
+	spec.InitialKeysPerSSTable = 500
+	spec.ReadPath = "legacy_scan"
 	spec.PublicationMode = "physical"
 	spec.PublicationEvents = 2
 	spec.MeasurementDurationMs = 500
@@ -493,6 +497,10 @@ func TestE2_PhysicalVsNoneModeComparison(t *testing.T) {
 	// 2. Mode execution comparison
 	// PHYSICAL MODE
 	specPhys := miniSpec(t, "E2", "pub_physical", "A")
+	// Keep the pool smaller than the keyspace and retain the historical scan cost.
+	specPhys.KeyspaceCardinality = 1000
+	specPhys.InitialKeysPerSSTable = 500
+	specPhys.ReadPath = "legacy_scan"
 	specPhys.PublicationMode = "physical"
 	specPhys.PublicationEvents = 2
 	specPhys.MeasurementDurationMs = 500
@@ -546,6 +554,10 @@ func TestE2_PhysicalVsNoneModeComparison(t *testing.T) {
 
 	// NONE MODE (control: identical initial workload, zero releases during window)
 	specNone := miniSpec(t, "E2", "pub_none", "A")
+	// Keep the pool smaller than the keyspace and retain the historical scan cost.
+	specNone.KeyspaceCardinality = 1000
+	specNone.InitialKeysPerSSTable = 500
+	specNone.ReadPath = "legacy_scan"
 	specNone.PublicationMode = "none"
 	specNone.PublicationEvents = 2 // runlist specifies pre-frozen events
 	specNone.MeasurementDurationMs = 500
