@@ -20,4 +20,12 @@ research/experiments/phase_i7/**/_storage_probe.bin
 research/experiments/phase_i7/*.zip
 research/experiments/phase_i7/*.zip.sha256
 research/experiments/data/**/*.zip
-_work/ (scratch intermediates: probe roots, work CSVs, stub builds)
+# Scratch intermediates: probe roots, work CSVs, stub builds
+_work/
+
+/I7_FINAL_MANUSCRIPT_REVIEW.zip
+/I7_R1_1_SCIENTIFIC_REVIEW.zip
+
+# X-readcost-v1 evidence: smoke run, read-path probes, Codex briefs, and campaign output.
+# Kept locally until the final results are deliberately added (git add -f).
+research/experiments/phase_i7/X_READCOST/
