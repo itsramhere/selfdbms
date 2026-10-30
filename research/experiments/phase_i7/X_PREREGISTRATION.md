@@ -5,7 +5,7 @@ listed in §9 with its date and reason.
 **Supersedes for new data collection:** the R1.2e/R2 confirmatory protocol (never executed).
 Historical Phase I (WSL2) and Phase I7 G4 (Windows, 60 trials) data are not pooled with this campaign.
 
-## 1. Why this campaign exists
+## 1. Why this campaign existss
 
 Every earlier measurement used an SSTable point-read path that scanned from the target block to the
 end of the file, with about four unbuffered syscalls per record and no early stop. Measured on the
