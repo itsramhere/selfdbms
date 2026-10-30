@@ -63,8 +63,11 @@ var ErrUnsupportedSyncMode = errors.New("unsupported synchronization mode: Appro
 type Config struct {
 	Mode                   SyncMode
 	WalPath                string
-	DataDir                string // Optional directory for SSTables and WAL files
-	MemtableThresholdBytes int    // Optional flush threshold in bytes (default: 64MB if <= 0)
+	DataDir                string        // Optional directory for SSTables and WAL files
+	MemtableThresholdBytes int           // Optional flush threshold in bytes (default: 64MB if <= 0)
+	ReadPath               ReadPathMode  // Shared SSTable point-read path (default: block reads).
+	ReadIODelay            time.Duration // Experiment-only delay per block read; ignored by legacy scans.
+	DisableWALSync         bool          // Skip WAL fsync when true (default: sync each record).
 }
 
 func DefaultConfig() Config {
@@ -76,6 +79,9 @@ func DefaultConfig() Config {
 
 type Manager struct {
 	syncMode                    SyncMode
+	readPath                    ReadPathMode
+	readIODelay                 time.Duration
+	disableWALSync              atomic.Bool
 	CurrentSeqNo                atomic.Uint64
 	Mu                          *sync.RWMutex
 	compactionMu                sync.Mutex
@@ -168,6 +174,9 @@ func CreateManagerWithConfig(cfg Config) (*Manager, error) {
 	if cfg.Mode != SyncModeApproachA && cfg.Mode != SyncModeApproachB && cfg.Mode != SyncModeApproachAMin {
 		return nil, fmt.Errorf("unknown synchronization mode: %v", cfg.Mode)
 	}
+	if cfg.ReadPath != ReadPathBlock && cfg.ReadPath != ReadPathLegacyScan {
+		return nil, fmt.Errorf("unknown read path mode: %v", cfg.ReadPath)
+	}
 
 	walPath := cfg.WalPath
 	if walPath == "" {
@@ -179,6 +188,9 @@ func CreateManagerWithConfig(cfg Config) (*Manager, error) {
 
 	man := new(Manager)
 	man.syncMode = cfg.Mode
+	man.readPath = cfg.ReadPath
+	man.readIODelay = cfg.ReadIODelay
+	man.disableWALSync.Store(cfg.DisableWALSync)
 	man.dataDir = cfg.DataDir
 	man.memtableThresholdBytes = cfg.MemtableThresholdBytes
 	man.CurrentSeqNo.Store(0)
@@ -200,7 +212,7 @@ func CreateManagerWithConfig(cfg Config) (*Manager, error) {
 		SizeBytes: 0,
 	}
 
-	man.Log, _ = NewWal(walPath)
+	man.Log, _ = man.newWal(walPath)
 	man.initFlushWorkerLocked()
 
 	if cfg.Mode == SyncModeApproachB {
@@ -211,6 +223,38 @@ func CreateManagerWithConfig(cfg Config) (*Manager, error) {
 	}
 
 	return man, nil
+}
+
+// newSSTableReader configures point reads before the reader is published.
+func (m *Manager) newSSTableReader(filename string) (*SSTableReader, error) {
+	reader, err := NewSSTableReader(filename)
+	if err != nil {
+		return nil, err
+	}
+	reader.ReadPath = m.readPath
+	reader.ReadIODelay = m.readIODelay
+	return reader, nil
+}
+
+func (m *Manager) newWal(filename string) (*Wal, error) {
+	wal, err := NewWal(filename)
+	if err != nil {
+		return nil, err
+	}
+	wal.DisableSync.Store(m.disableWALSync.Load())
+	return wal, nil
+}
+
+// SetWALSync changes the policy for the current WAL and all subsequent rotations.
+// Call between writer phases; the manager lock serializes WAL replacement while
+// atomic flags keep Append's policy read race-free even during a toggle.
+func (m *Manager) SetWALSync(enabled bool) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	m.disableWALSync.Store(!enabled)
+	if m.Log != nil {
+		m.Log.DisableSync.Store(!enabled)
+	}
 }
 
 func CreateManager() *Manager {
@@ -979,7 +1023,7 @@ func (m *Manager) TriggerFlush() error {
 		if m.dataDir != "" {
 			newWalPath = filepath.Join(m.dataDir, newWalPath)
 		}
-		newWal, err := NewWal(newWalPath)
+		newWal, err := m.newWal(newWalPath)
 		if err != nil {
 			if m.flushErr == nil {
 				m.flushErr = fmt.Errorf("wal rotation failed: %w", err)
@@ -1054,7 +1098,7 @@ func (m *Manager) checkAndTriggerFlush() {
 		if m.dataDir != "" {
 			newWalPath = filepath.Join(m.dataDir, newWalPath)
 		}
-		newWal, err := NewWal(newWalPath)
+		newWal, err := m.newWal(newWalPath)
 		if err != nil {
 			if m.flushErr == nil {
 				m.flushErr = fmt.Errorf("wal rotation failed: %w", err)
@@ -1155,7 +1199,7 @@ func (m *Manager) flushToDisk(mem *Memtable) {
 		return
 	}
 
-	reader, err := NewSSTableReader(filename)
+	reader, err := m.newSSTableReader(filename)
 	if err != nil {
 		os.Remove(filename)
 		m.Mu.Lock()
@@ -1358,4 +1402,3 @@ func (m *Manager) SetMemtableThresholdBytes(threshold int) {
 	defer m.Mu.Unlock()
 	m.memtableThresholdBytes = threshold
 }
-

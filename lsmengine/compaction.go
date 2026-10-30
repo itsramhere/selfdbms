@@ -198,7 +198,7 @@ func (m *Manager) CompactAll() error {
 		return err
 	}
 
-	newReader, err := NewSSTableReader(newFilename)
+	newReader, err := m.newSSTableReader(newFilename)
 	if err != nil {
 		os.Remove(newFilename)
 		for _, openedIt := range iterators {
@@ -427,7 +427,7 @@ func (m *Manager) compactAllApproachB() error {
 		return err
 	}
 
-	newReader, err := NewSSTableReader(newFilename)
+	newReader, err := m.newSSTableReader(newFilename)
 	if err != nil {
 		os.Remove(newFilename)
 		m.snapshotMu.Lock()

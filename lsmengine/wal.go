@@ -3,13 +3,16 @@ package lsmengine
 import (
 	"encoding/binary"
 	"hash/crc32"
+	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 )
 
 type Wal struct {
-	File *os.File
-	mu   sync.Mutex // Protects concurrent writes to the file descriptor
+	File        *os.File
+	mu          sync.Mutex  // Protects concurrent writes to the file descriptor
+	DisableSync atomic.Bool // False preserves fsync after every record.
 }
 
 // opens the WAL file once with append-only permissions.
@@ -24,7 +27,7 @@ func NewWal(filename string) (*Wal, error) {
 	}, nil
 }
 
-// Append writes a KV pair to disk safely and returns an error if it fails.
+// Append writes a KV pair in one write and syncs it unless DisableSync is set.
 func (w *Wal) Append(internalKey []byte, value []byte) error {
 	// Lock the file so multiple transactions committing at the same millisecond don't interleave their bytes
 	w.mu.Lock()
@@ -33,37 +36,32 @@ func (w *Wal) Append(internalKey []byte, value []byte) error {
 	// metadata calculation (stateless)
 	keyLen := uint16(len(internalKey))
 	valLen := uint32(len(value))
+	record := make([]byte, 10+len(internalKey)+len(value))
+	binary.LittleEndian.PutUint16(record[4:6], keyLen)
+	binary.LittleEndian.PutUint32(record[6:10], valLen)
+	copy(record[10:], internalKey)
+	copy(record[10+len(internalKey):], value)
 
 	// checksum calculation (covers key length, key payload, value length, and value payload)
 	hash := crc32.NewIEEE()
-	binary.Write(hash, binary.LittleEndian, keyLen)
-	hash.Write(internalKey)
-	binary.Write(hash, binary.LittleEndian, valLen)
-	hash.Write(value)
-	checksum := hash.Sum32()
+	hash.Write(record[4:6])
+	hash.Write(record[10 : 10+len(internalKey)])
+	hash.Write(record[6:10])
+	hash.Write(record[10+len(internalKey):])
+	binary.LittleEndian.PutUint32(record[0:4], hash.Sum32())
 
-	// writing the header
-	if err := binary.Write(w.File, binary.LittleEndian, checksum); err != nil {
+	// Preserve the header and checksum layout while issuing one record write.
+	n, err := w.File.Write(record)
+	if err != nil {
 		return err
 	}
-	if err := binary.Write(w.File, binary.LittleEndian, keyLen); err != nil {
-		return err
-	}
-	if err := binary.Write(w.File, binary.LittleEndian, valLen); err != nil {
-		return err
-	}
-
-	// write the payload
-	if _, err := w.File.Write(internalKey); err != nil {
-		return err
-	}
-	if _, err := w.File.Write(value); err != nil {
-		return err
+	if n != len(record) {
+		return io.ErrShortWrite
 	}
 
 	// force the OS to flush the page cache to physical disk
-	if err := w.File.Sync(); err != nil {
-		return err
+	if !w.DisableSync.Load() {
+		return w.File.Sync()
 	}
 
 	return nil
