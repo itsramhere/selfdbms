@@ -183,3 +183,38 @@ func makeCompactionPlan(master uint64) Plan {
 	}
 	return p
 }
+
+func makeTablecountPlan(master uint64) Plan {
+	p := Plan{CampaignID: "X-tablecount-v1", MasterSeed: master,
+		SeedEncoding: "SHA256(decimal master|cell_id|decimal triplet), first 8 bytes big-endian int64"}
+	for _, n := range []int{4, 16, 64, 256} {
+		for _, r := range []int{4, 16} {
+			for _, w := range []int{0, 1} {
+				id := fmt.Sprintf("T1_n%03d_r%02d_w%d", n, r, w)
+				s := harness2.Spec{
+					Schema: "i7.trial-spec.v1", Block: "X1", Cell: id, WorkloadID: "X-tablecount",
+					ReaderConcurrency: r, WriterConcurrency: w,
+					KeyspaceCardinality: 10240, InitialSSTableCount: n, InitialKeysPerSSTable: 10240 / n,
+					ExpectedReaderSetSize: n, TargetReadHitRatio: .95, ReadDistribution: "uniform",
+					WarmupDurationMs: 2000, MeasurementDurationMs: 10000, CooldownDurationMs: 200,
+					WalSync: true, InstrumentSync: true, ReadPath: "block", MemtableThresholdBytes: 1 << 20,
+				}
+				p.Cells = append(p.Cells, Cell{id, s})
+			}
+		}
+	}
+	for k := 1; k <= 10; k++ {
+		order := rand.New(rand.NewSource(int64(master + uint64(k)))).Perm(len(p.Cells))
+		for _, i := range order {
+			c := p.Cells[i]
+			for pos, arm := range permutations[(k+i)%6] {
+				s := c.Spec
+				s.Triplet, s.Seed, s.Arm = k, pairedSeed(master, c.ID, k), arm
+				s.OrderPosition, s.RunlistPosition = pos+1, len(p.Trials)+1
+				s.TrialID = fmt.Sprintf("%s_t%02d_%s", c.ID, k, arm)
+				p.Trials = append(p.Trials, s)
+			}
+		}
+	}
+	return p
+}

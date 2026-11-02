@@ -69,3 +69,20 @@ Defaults: master seed 20261030, scratch root `<out>/data`, timeout 120s. Executi
 is sequential. Ctrl+C cancels the child process and records the interruption.
 The full dry-run estimate is 519 x 14s = 2h1m6s. A three-trial smoke invocation
 uses `-limit 3`; it consumes the first anchor triplet.
+
+## SSTable-count design
+
+`-design tablecount` selects `X-tablecount-v1`, with master seed 20261105 when
+`-master-seed` is unset. It has 16 cells (4/16/64/256 initial tables, 4/16 readers,
+0/1 writers), ten rounds and three arms: 480 trials with no anchors. It uses X1,
+10240 keys split into disjoint initial ranges, no compaction, and the existing
+gate X approval protocol. See [the preregistration](../../X_TABLECOUNT_PREREGISTRATION.md)
+for predictions, analysis and freeze requirements. Generate it without trials:
+
+```powershell
+go run ./research/experiments/phase_i7/cmd/xcampaign -design tablecount -runner .\i7trial.exe -out C:\scratch\tablecount -dry-run -allow-dirty
+```
+
+Analysis: `research/experiments/analysis/x_tablecount_analyze.py --data-dir <campaign>
+--output-dir <analysis> [--allow-partial]`. Optional `lifecycle_bench.txt` contains
+separate Go microbenchmark output; one-iteration rows are compile checks only.
