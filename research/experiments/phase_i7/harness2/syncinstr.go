@@ -8,7 +8,7 @@ package harness2
 // E/D aggregates retain their whole-trial scope. X trials reset after warmup,
 // so their observation scope starts at the measurement window and includes the
 // post-window drain. X additionally uses atomic histogram buckets for
-// percentiles; old blocks retain their original aggregation cost and schema.
+// percentiles; old blocks retain the original commit/read/flush aggregation cost.
 
 import (
 	"sync/atomic"
@@ -38,6 +38,10 @@ func siteIndex(site lsmengine.LockSite) int {
 		return 1
 	case lsmengine.LockSiteCompactionPublish:
 		return 2
+	case lsmengine.LockSiteCompactionStart:
+		return 3
+	case lsmengine.LockSiteCompactionSnapshotPublish:
+		return 4
 	}
 	return -1
 }
@@ -62,6 +66,10 @@ func siteSlotName(i int) string {
 		return lsmengine.LockSiteFlushPublish.String()
 	case 2:
 		return lsmengine.LockSiteCompactionPublish.String()
+	case 3:
+		return lsmengine.LockSiteCompactionStart.String()
+	case 4:
+		return lsmengine.LockSiteCompactionSnapshotPublish.String()
 	}
 	return "unknown"
 }
@@ -107,27 +115,47 @@ func (d *dist) add(v int64) {
 type SyncCollector struct {
 	readCS [3]dist
 
-	wait         [3]dist
-	waitHolders  [3]atomic.Int64 // sum of holder samples at arrival
-	waitArrivals [3]atomic.Int64 // number of holder samples folded into the sum
+	wait         [5]dist
+	waitHolders  [5]atomic.Int64 // sum of holder samples at arrival
+	waitArrivals [5]atomic.Int64 // number of holder samples folded into the sum
 
-	pub         [3]dist
-	pubHolders  [3]atomic.Int64
-	pubArrivals [3]atomic.Int64
+	pub              [5]dist
+	pubHolders       [5]atomic.Int64
+	pubArrivals      [5]atomic.Int64
+	compactionWall   dist
+	compactionInputs dist
+	retirementLag    dist
+	retired          atomic.Int64
+	retiredHighWater atomic.Int64
 }
 
 var _ lsmengine.SyncObserver = (*SyncCollector)(nil)
 
 // NewSyncCollector returns an empty collector.
-func NewSyncCollector() *SyncCollector { return &SyncCollector{} }
+func NewSyncCollector() *SyncCollector {
+	c := &SyncCollector{}
+	// Compaction lifecycle percentiles are available whenever sync is attached.
+	for i := 2; i < len(c.wait); i++ {
+		c.wait[i].histogram = new([histogramBuckets]atomic.Int64)
+		c.pub[i].histogram = new([histogramBuckets]atomic.Int64)
+	}
+	c.compactionWall.histogram = new([histogramBuckets]atomic.Int64)
+	c.retirementLag.histogram = new([histogramBuckets]atomic.Int64)
+	return c
+}
 
 // NewSyncHistogramCollector enables the X percentile view before observers run.
 func NewSyncHistogramCollector() *SyncCollector {
 	c := NewSyncCollector()
 	for i := 0; i < 3; i++ {
 		c.readCS[i].histogram = new([histogramBuckets]atomic.Int64)
-		c.wait[i].histogram = new([histogramBuckets]atomic.Int64)
 	}
+	for i := range c.wait {
+		c.wait[i].histogram = new([histogramBuckets]atomic.Int64)
+		c.pub[i].histogram = new([histogramBuckets]atomic.Int64)
+	}
+	c.compactionWall.histogram = new([histogramBuckets]atomic.Int64)
+	c.retirementLag.histogram = new([histogramBuckets]atomic.Int64)
 	return c
 }
 
@@ -152,6 +180,8 @@ func (d *dist) reset() {
 func (c *SyncCollector) Reset() {
 	for i := 0; i < 3; i++ {
 		c.readCS[i].reset()
+	}
+	for i := range c.wait {
 		c.wait[i].reset()
 		c.pub[i].reset()
 		c.waitHolders[i].Store(0)
@@ -159,6 +189,10 @@ func (c *SyncCollector) Reset() {
 		c.pubHolders[i].Store(0)
 		c.pubArrivals[i].Store(0)
 	}
+	c.compactionWall.reset()
+	c.compactionInputs.reset()
+	c.retirementLag.reset()
+	c.retiredHighWater.Store(c.retired.Load())
 }
 
 // OnReadCriticalSection implements lsmengine.SyncObserver.
@@ -207,6 +241,10 @@ type SyncInstrumentationSummary struct {
 	ReadCriticalSectionNanos map[string]SyncStats `json:"read_critical_section_nanos"`
 	WriterLockWaitNanos      map[string]SyncStats `json:"writer_lock_wait_nanos"`
 	PublicationNanos         map[string]SyncStats `json:"publication_nanos"`
+	CompactionWallNanos      *SyncStats           `json:"compaction_wall_nanos,omitempty"`
+	CompactionInputs         *InputStats          `json:"compaction_inputs,omitempty"`
+	RetirementLagNanos       *SyncStats           `json:"retirement_lag_nanos,omitempty"`
+	RetiredTablesHighWater   int64                `json:"retired_tables_high_water,omitempty"`
 }
 
 func (d *dist) stats(holdersSum, arrivals int64) SyncStats {
@@ -242,6 +280,8 @@ func (c *SyncCollector) Summary() SyncInstrumentationSummary {
 		if c.readCS[i].count.Load() > 0 {
 			out.ReadCriticalSectionNanos[modeSlotName(i)] = c.readCS[i].stats(0, 0)
 		}
+	}
+	for i := range c.wait {
 		if c.wait[i].count.Load() > 0 {
 			out.WriterLockWaitNanos[siteSlotName(i)] = c.wait[i].stats(c.waitHolders[i].Load(), c.waitArrivals[i].Load())
 		}
@@ -249,5 +289,43 @@ func (c *SyncCollector) Summary() SyncInstrumentationSummary {
 			out.PublicationNanos[siteSlotName(i)] = c.pub[i].stats(c.pubHolders[i].Load(), c.pubArrivals[i].Load())
 		}
 	}
+	if c.compactionWall.count.Load() > 0 {
+		st := c.compactionWall.stats(0, 0)
+		out.CompactionWallNanos = &st
+		out.CompactionInputs = &InputStats{Mean: float64(c.compactionInputs.sum.Load()) / float64(c.compactionInputs.count.Load()), Max: c.compactionInputs.max.Load()}
+	}
+	if c.retirementLag.count.Load() > 0 {
+		st := c.retirementLag.stats(0, 0)
+		out.RetirementLagNanos = &st
+	}
+	out.RetiredTablesHighWater = c.retiredHighWater.Load()
 	return out
 }
+
+// InputStats describes the fan-in of successful compactions that did work.
+type InputStats struct {
+	Mean float64 `json:"mean"`
+	Max  int64   `json:"max"`
+}
+
+func (c *SyncCollector) OnCompaction(durationNs int64, inputs int) {
+	c.compactionWall.add(durationNs)
+	c.compactionInputs.add(int64(inputs))
+}
+
+func (c *SyncCollector) OnTableRetired() {
+	n := c.retired.Add(1)
+	for {
+		old := c.retiredHighWater.Load()
+		if n <= old || c.retiredHighWater.CompareAndSwap(old, n) {
+			break
+		}
+	}
+}
+
+func (c *SyncCollector) OnTableRemoved(lagNs int64) {
+	c.retirementLag.add(lagNs)
+	c.retired.Add(-1)
+}
+
+var _ lsmengine.CompactionObserver = (*SyncCollector)(nil)

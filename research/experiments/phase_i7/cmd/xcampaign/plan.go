@@ -142,3 +142,44 @@ func makeInterventionPlan(master uint64) Plan {
 	}
 	return p
 }
+
+func makeCompactionPlan(master uint64) Plan {
+	p := Plan{CampaignID: "X-compaction-v1", MasterSeed: master,
+		SeedEncoding: "SHA256(decimal master|base_cell_id|decimal triplet), first 8 bytes big-endian int64"}
+	for _, r := range []int{4, 16} {
+		for _, d := range []int{0, 200, 2000} {
+			base := fmt.Sprintf("C1_r%02d_d%04d", r, d)
+			for _, condition := range []string{"off", "on"} {
+				// Inherit the X3 fixture and free-writer treatment byte for byte.
+				var s harness2.Spec
+				for _, c := range cells() {
+					if c.Spec.Block == "X3" && c.Spec.ReaderConcurrency == r {
+						s = c.Spec
+						break
+					}
+				}
+				s.Cell = base + "_" + condition
+				s.ReadIODelayUs = d
+				if condition == "on" {
+					s.CompactionTriggerMs = 250
+				}
+				p.Cells = append(p.Cells, Cell{s.Cell, s})
+			}
+		}
+	}
+	for k := 1; k <= 10; k++ {
+		order := rand.New(rand.NewSource(int64(master + uint64(k)))).Perm(len(p.Cells))
+		for _, i := range order {
+			c := p.Cells[i]
+			base := c.ID[:len("C1_r04_d0000")]
+			for pos, arm := range permutations[(k+i)%6] {
+				s := c.Spec
+				s.Triplet, s.Seed, s.Arm = k, pairedSeed(master, base, k), arm
+				s.OrderPosition, s.RunlistPosition = pos+1, len(p.Trials)+1
+				s.TrialID = fmt.Sprintf("%s_t%02d_%s", c.ID, k, arm)
+				p.Trials = append(p.Trials, s)
+			}
+		}
+	}
+	return p
+}

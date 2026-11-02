@@ -29,17 +29,13 @@ package lsmengine
 //     change arbitrarily. These limitations are restated in the checkpoint
 //     document that defines the EXP-2 arrival sampling semantics.
 //
-//  4. Scope. Only Manager.Mu participates: Approach B's snapshotMu pin count
-//     and Approach A-min's per-table lease counts are separate mechanisms and
-//     are NOT part of activeRLockHolders. Writer-lock wait and publication
-//     hold are instrumented at Transaction.Commit, the flush publication
-//     (all three modes) and the A/A-min compaction publication. Secondary
-//     writer sites (TriggerFlush, checkAndTriggerFlush, SetMemtableThresholdBytes,
-//     Close, Approach B compaction's snapshotMu swap) are deliberately
-//     uninstrumented and are listed as uncovered in the checkpoint.
+//  4. Scope. Reader-holder samples describe Manager.Mu only. Compaction
+//     additionally observes the A/A-min input-open section and B's snapshotMu
+//     publication. Lifecycle callbacks are optional and use the same clock.
 
 import (
 	"errors"
+	"sync/atomic"
 )
 
 // SyncObserver receives synchronization instrumentation from the Manager.
@@ -84,9 +80,12 @@ const (
 	// in flushToDisk (all synchronization modes).
 	LockSiteFlushPublish
 	// LockSiteCompactionPublish is CompactAll's identity-preserving swap-in
-	// for Approach A and A-min. The Approach B compaction publishes through
-	// snapshotMu and is not instrumented.
+	// for Approach A and A-min.
 	LockSiteCompactionPublish
+	// LockSiteCompactionStart covers A/A-min admission and input iterator opens.
+	LockSiteCompactionStart
+	// LockSiteCompactionSnapshotPublish covers B publication under snapshotMu.
+	LockSiteCompactionSnapshotPublish
 )
 
 func (s LockSite) String() string {
@@ -97,6 +96,10 @@ func (s LockSite) String() string {
 		return "flush_publish"
 	case LockSiteCompactionPublish:
 		return "compaction_publish"
+	case LockSiteCompactionStart:
+		return "compaction_start"
+	case LockSiteCompactionSnapshotPublish:
+		return "compaction_snapshot_publish"
 	default:
 		return "unknown"
 	}
@@ -172,25 +175,36 @@ type writerLockObs struct {
 }
 
 // writerLockArrival samples the active holder count and start time
-// immediately before a writer lock attempt.
+// immediately before a writer lock attempt. snapshotMu sites have no Mu holder sample.
 func (m *Manager) writerLockArrival(site LockSite) writerLockObs {
 	if m.syncObserver == nil {
 		return writerLockObs{}
 	}
+	holders := int32(0)
+	if site != LockSiteCompactionSnapshotPublish {
+		holders = m.activeRLockHolders.Load()
+	}
 	return writerLockObs{
 		site:     site,
 		startNs:  m.instrumentClock(),
-		holders:  m.activeRLockHolders.Load(),
+		holders:  holders,
 		observed: true,
 	}
 }
 
-// acquired reports the wait once Manager.Mu has been acquired for writing.
+// acquired reports the wait once the observed lock has been acquired.
 func (w *writerLockObs) acquired(m *Manager) {
 	if !w.observed {
 		return
 	}
-	d := m.instrumentClock() - w.startNs
+	w.acquiredAt(m, m.instrumentClock())
+}
+
+func (w *writerLockObs) acquiredAt(m *Manager, acquiredNs int64) {
+	if !w.observed {
+		return
+	}
+	d := acquiredNs - w.startNs
 	if d < 0 {
 		d = 0
 	}
@@ -231,4 +245,49 @@ func (p *publicationObs) end(m *Manager) {
 		d = 0
 	}
 	m.syncObserver.OnPublication(p.site, d, p.holders)
+}
+
+// CompactionObserver optionally extends SyncObserver with lifecycle observations.
+// Callbacks have the same non-blocking, thread-safe contract as SyncObserver.
+type CompactionObserver interface {
+	OnCompaction(durationNs int64, inputs int)
+	OnTableRetired()
+	OnTableRemoved(lagNs int64)
+}
+
+// retirementObs is installed before retirement is visible to releasing readers.
+// removed guards the observer only; it never participates in reclamation.
+type retirementObs struct {
+	observer CompactionObserver
+	clock    func() int64
+	startNs  int64
+	removed  atomic.Bool
+}
+
+func (m *Manager) observeRetirement() *retirementObs {
+	if m.syncObserver == nil {
+		return nil
+	}
+	obs, ok := m.syncObserver.(CompactionObserver)
+	if !ok {
+		return nil
+	}
+	r := &retirementObs{observer: obs, clock: m.instrumentClock, startNs: m.instrumentClock()}
+	obs.OnTableRetired()
+	return r
+}
+
+func (r *retirementObs) removal() {
+	if r == nil || !r.removed.CompareAndSwap(false, true) {
+		return
+	}
+	r.observer.OnTableRemoved(r.clock() - r.startNs)
+}
+
+func (m *Manager) observeCompaction(startNs int64, inputs int) {
+	if m.syncObserver != nil {
+		if obs, ok := m.syncObserver.(CompactionObserver); ok {
+			obs.OnCompaction(m.instrumentClock()-startNs, inputs)
+		}
+	}
 }

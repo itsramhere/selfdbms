@@ -278,6 +278,7 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		}
 	}
 
+	var compactions compactionCounts
 	// Compaction trigger.
 	if spec.CompactionTriggerMs > 0 {
 		wg.Add(1)
@@ -290,7 +291,15 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 				case <-stop:
 					return
 				case <-tk.C:
-					_ = man.CompactAll()
+					before := man.CompactionsCompleted()
+					err := man.CompactAll()
+					stopping := false
+					select {
+					case <-stop:
+						stopping = true
+					default:
+					}
+					compactions.record(err, man.CompactionsCompleted() > before, ElapsedNs(base) <= windowNs, stopping)
 				}
 			}
 		}()
@@ -322,6 +331,7 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	measured := SleepWindow(base, window)
 	close(stop)
 	wg.Wait()
+	compactions.outcome(res, spec)
 	res.Timestamps.MeasuredWindowNs = measured
 	res.Timestamps.FinishISO = time.Now().UTC().Format(time.RFC3339Nano)
 
@@ -416,11 +426,10 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		res.Error = "transaction ledger: " + ledgerErr.Error()
 	}
 
-	if syncCollector != nil {
+	if !spec.IsX() && syncCollector != nil {
 		s := syncCollector.Summary()
 		res.Sync = &s
 	}
-
 	finalFrozen := man.PendingFlushes()
 	finalSSTables := man.ActiveSSTableCount()
 	flushesCompleted := man.FlushesCompleted() - initialFlushes
@@ -446,6 +455,9 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		TopologyNote:              topoNote,
 		MeasuredFlushes:           flushesCompleted,
 		MeasuredCompactions:       compactionsCompleted,
+		CompactionErrors:          compactions.errors,
+		CompactionSuccesses:       compactions.successes,
+		CompactionNoOps:           compactions.noOps,
 		MeasuredSSTableReads:      man.SSTablePointReads(),
 		MeasuredMemtableReads:     man.MemtablePointReads(),
 		SnapshotSeq:               man.SnapshotSeq(),
@@ -456,6 +468,9 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		PendingFlushesAtEnd:       man.PendingFlushes(),
 	}
 
+	if spec.IsX() && spec.CompactionTriggerMs > 0 {
+		res.LSMDiagnostics.CompactionsInWindow = &compactions.inWindow
+	}
 	if rec != nil {
 		inWin, lateEvents := rec.Events(windowNs)
 		res.Events = inWin
@@ -473,6 +488,10 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	if err := man.Close(); err != nil {
 		res.Status = "FAILED"
 		res.Error = "close: " + err.Error()
+	}
+	if spec.IsX() && syncCollector != nil {
+		s := syncCollector.Summary()
+		res.Sync = &s
 	}
 	res.LSMDiagnostics.PendingCleanupCount = man.PendingCleanupCount()
 

@@ -30,7 +30,7 @@ def require(condition, message):
         raise ValueError(message)
 
 
-def paired_stats(d, level=.95):
+def paired_stats(d, level=.95, seed=SEED):
     """Summarize paired log-ratios; both CIs are on the ratio scale."""
     d = np.asarray(d, dtype=float)
     n = len(d)
@@ -46,7 +46,7 @@ def paired_stats(d, level=.95):
     sd = float(np.std(d, ddof=1))
     half = float(stats.t.ppf((1 + level) / 2, n - 1)) * sd / math.sqrt(n)
     bounds = [mean - half, mean + half]
-    rng = np.random.default_rng(SEED)
+    rng = np.random.default_rng(seed)
     boot = np.mean(d[rng.integers(0, n, size=(10000, n))], axis=1)
     tail = (1 - level) * 50
     out.update(sd_log=sd, t_ci_log=bounds, t_ci=[math.exp(v) for v in bounds],
@@ -54,8 +54,8 @@ def paired_stats(d, level=.95):
     return out
 
 
-def tost(d):
-    out = paired_stats(d, .90)
+def tost(d, seed=SEED):
+    out = paired_stats(d, .90, seed)
     out.update(p_lower=None, p_upper=None, p_tost=None)
     if out['n'] < 2:
         return out
@@ -161,9 +161,10 @@ def outcomes(t):
     return out
 
 
-def load_campaign(root, allow_partial):
+def load_campaign(root, allow_partial, campaign_id='X-readcost-v1',
+                  config_reader=cell_config, outcome_reader=outcomes):
     plan = load_json(root / 'plan.json')
-    require(plan['campaign_id'] == 'X-readcost-v1', 'wrong campaign_id')
+    require(plan['campaign_id'] == campaign_id, 'wrong campaign_id')
     require(isinstance(plan['cells'], list) and isinstance(plan['trials'], list) and plan['trials'], 'invalid plan schema')
     cell_specs = {c['id']: c['spec'] for c in plan['cells']}
     specs, groups, seeds = {}, {}, {}
@@ -172,8 +173,8 @@ def load_campaign(root, allow_partial):
         require(isinstance(tid, str) and re.fullmatch(r'[A-Za-z0-9_-]+', tid), 'invalid trial_id')
         require(tid not in specs and s['arm'] in ARMS, f'duplicate trial or invalid arm {tid}')
         require(type(s['triplet']) is int and type(s['seed']) is int, f'invalid triplet/seed {tid}')
-        cfg = cell_config(s['cell'])
-        require(s['block'] == ('X1' if s['cell'] == 'ANCHOR' else s['cell'][:2]), f'block mismatch {tid}')
+        cfg = config_reader(s['cell'])
+        require(s['block'] == cfg.get('block', 'X1' if s['cell'] == 'ANCHOR' else s['cell'][:2]), f'block mismatch {tid}')
         require(s['cell'] == 'ANCHOR' or s['cell'] in cell_specs, f'missing planned cell {tid}')
         for k, v in cfg.items():
             require(s.get(k, cell_specs.get(s['cell'], {}).get(k, v)) == v, f'plan config mismatch {tid}: {k}')
@@ -239,9 +240,9 @@ def load_campaign(root, allow_partial):
                     require(isinstance(rev, str) and rev, f'invalid git revision {tid}')
                     revisions.add(rev)
                     cfg = t['result']['config']
-                    for k, v in cell_config(s['cell']).items():
+                    for k, v in config_reader(s['cell']).items():
                         require(cfg[k] == s.get(k, cell_specs.get(s['cell'], {}).get(k, v)), f'config disagrees with plan {tid}: {k}')
-                    values = outcomes(t)
+                    values = outcome_reader(t)
             if final is not None and not success:
                 detail = dict(trial_id=tid, attempt=attempt, status=final['status'], artifact_present=present)
                 if t is not None:

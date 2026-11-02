@@ -241,25 +241,29 @@ type ThroughputInfo struct {
 // Diagnostics carries engine activity plus the accounting needed to keep
 // per-trial work visible (audit AF-4: composition shifts must not be hidden).
 type Diagnostics struct {
-	InitialSSTables                   int    `json:"initial_sstables"`
-	FinalSSTables                     int    `json:"final_sstables"`
-	InitialFrozenMemtables            int    `json:"initial_frozen_memtables"`
-	FinalFrozenMemtables              int    `json:"final_frozen_memtables"`
-	PublicationEventsTarget           int    `json:"publication_events_target"`
-	PublicationEventsReleased         int    `json:"publication_events_released"`
-	PublicationEventsRealizedInWindow int    `json:"publication_events_realized_in_window"`
-	PublicationEventsRealizedLate     int    `json:"publication_events_realized_late"`
-	PublicationEventsRealized         uint64 `json:"publication_events_realized"`
-	TopologyNote                      string `json:"topology_note,omitempty"`
-	MeasuredFlushes                   uint64 `json:"measured_flushes"`
-	MeasuredCompactions               uint64 `json:"measured_compactions"`
-	MeasuredSSTableReads              uint64 `json:"measured_sstable_point_reads"`
-	MeasuredMemtableReads             uint64 `json:"measured_memtable_point_reads"`
-	SnapshotSeq                       uint64 `json:"snapshot_seq"`
-	ActiveSnapshotPins                int64  `json:"active_snapshot_pins"`
-	RetiredSnapshots                  int    `json:"retired_snapshots_count"`
-	PendingCleanupCount               int    `json:"pending_cleanup_count"`
-	LivePhysicalReaders               int    `json:"live_physical_readers"`
+	CompactionNoOps                   uint64  `json:"compaction_no_ops,omitempty"`
+	CompactionErrors                  uint64  `json:"compaction_errors,omitempty"`
+	CompactionSuccesses               uint64  `json:"compaction_successes,omitempty"`
+	CompactionsInWindow               *uint64 `json:"compactions_in_window,omitempty"`
+	InitialSSTables                   int     `json:"initial_sstables"`
+	FinalSSTables                     int     `json:"final_sstables"`
+	InitialFrozenMemtables            int     `json:"initial_frozen_memtables"`
+	FinalFrozenMemtables              int     `json:"final_frozen_memtables"`
+	PublicationEventsTarget           int     `json:"publication_events_target"`
+	PublicationEventsReleased         int     `json:"publication_events_released"`
+	PublicationEventsRealizedInWindow int     `json:"publication_events_realized_in_window"`
+	PublicationEventsRealizedLate     int     `json:"publication_events_realized_late"`
+	PublicationEventsRealized         uint64  `json:"publication_events_realized"`
+	TopologyNote                      string  `json:"topology_note,omitempty"`
+	MeasuredFlushes                   uint64  `json:"measured_flushes"`
+	MeasuredCompactions               uint64  `json:"measured_compactions"`
+	MeasuredSSTableReads              uint64  `json:"measured_sstable_point_reads"`
+	MeasuredMemtableReads             uint64  `json:"measured_memtable_point_reads"`
+	SnapshotSeq                       uint64  `json:"snapshot_seq"`
+	ActiveSnapshotPins                int64   `json:"active_snapshot_pins"`
+	RetiredSnapshots                  int     `json:"retired_snapshots_count"`
+	PendingCleanupCount               int     `json:"pending_cleanup_count"`
+	LivePhysicalReaders               int     `json:"live_physical_readers"`
 	// New in I7.
 	PendingFlushesAtEnd  int   `json:"pending_flushes_at_end"`
 	MaxOutstandingLeases int32 `json:"max_outstanding_leases"`

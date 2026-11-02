@@ -599,7 +599,7 @@ func checkApproval(approvalPath, gate, block string) (*Approval, error) {
 		return nil, errors.New("approval file does not set approved=true")
 	}
 	if gate == "X" {
-		if a.CampaignID != "X-readcost-v1" && a.CampaignID != "X-intervention-v1" {
+		if a.CampaignID != "X-readcost-v1" && a.CampaignID != "X-intervention-v1" && a.CampaignID != "X-compaction-v1" {
 			return nil, errors.New("X approval campaign_id mismatch")
 		}
 		if !containsFold([]string{"X1", "X2", "X3", "ANCHOR"}, block) {

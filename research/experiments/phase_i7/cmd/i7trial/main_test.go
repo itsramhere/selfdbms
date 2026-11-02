@@ -187,7 +187,7 @@ func TestValidateEnvelopeErrorPaths(t *testing.T) {
 func TestXApproval(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "approval.json")
 	a := Approval{CampaignID: "X-readcost-v1", Approved: true, RunnerSHA256: runtimeInfo().ExeSHA256, PlanSHA256: strings.Repeat("a", 64)}
-	for _, campaign := range []string{"X-readcost-v1", "X-intervention-v1"} {
+	for _, campaign := range []string{"X-readcost-v1", "X-intervention-v1", "X-compaction-v1"} {
 		a.CampaignID = campaign
 		b, _ := json.Marshal(a)
 		if err := os.WriteFile(path, b, 0644); err != nil {

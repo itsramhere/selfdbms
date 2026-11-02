@@ -117,14 +117,15 @@ func (s SharedReaderState) String() string {
 // SharedReader wraps an SSTableReader with an independent reference count, physical state, and safe retirement metadata.
 // Multiple snapshots or compaction routines can concurrently hold references to the same SharedReader.
 type SharedReader struct {
-	Reader    *SSTableReader
-	Path      string
-	refCount  atomic.Int64 // Guarded by Manager.snapshotMu for compound transitions; atomic for read diagnostics
-	state     atomic.Int32 // Stores SharedReaderState; guarded by Manager.snapshotMu for state transitions
-	obsolete  atomic.Bool  // Guarded by Manager.snapshotMu; marked true post-commit
-	closeOnce sync.Once
-	closeErr  error
-	unlinkErr error
+	retirement *retirementObs
+	Reader     *SSTableReader
+	Path       string
+	refCount   atomic.Int64 // Guarded by Manager.snapshotMu for compound transitions; atomic for read diagnostics
+	state      atomic.Int32 // Stores SharedReaderState; guarded by Manager.snapshotMu for state transitions
+	obsolete   atomic.Bool  // Guarded by Manager.snapshotMu; marked true post-commit
+	closeOnce  sync.Once
+	closeErr   error
+	unlinkErr  error
 }
 
 // NewSharedReader constructs a new SharedReader around an open SSTableReader.
@@ -613,6 +614,7 @@ func (m *Manager) drainSingleReaderCleanup(sr *SharedReader) error {
 		}
 	}
 
+	sr.retirement.removal()
 	sr.SetState(SharedReaderReclaimed)
 	return nil
 }
@@ -794,7 +796,7 @@ func (m *Manager) closeApproachB() error {
 	}
 	m.flushQueueMu.Unlock()
 	m.DisableFlushInjectionGate() // never let shutdown block on the E2 gate
-	m.flushWg.Wait() // Waits for admitted flushes (publishFlushLocked succeeds in EngineClosing!)
+	m.flushWg.Wait()              // Waits for admitted flushes (publishFlushLocked succeeds in EngineClosing!)
 
 	// 4. Retire current published snapshot and wait for query pins
 	m.snapshotMu.Lock()

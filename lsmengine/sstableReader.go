@@ -39,6 +39,7 @@ type SSTableReader struct {
 	// retired is set exactly once, under Manager.Mu, at the instant the table is
 	// removed from Manager.ActiveSSreaders. freeOnce guards close+unlink.
 	// Approaches A and B never increment leaseCount, so these fields are inert there.
+	retirement  *retirementObs
 	leaseCount  atomic.Int32
 	retired     atomic.Bool
 	freeOnce    sync.Once
@@ -78,6 +79,7 @@ func (sst *SSTableReader) reclaim() error {
 		for attempt := 0; attempt < 3; attempt++ {
 			unlinkErr = os.Remove(path)
 			if unlinkErr == nil || errors.Is(unlinkErr, os.ErrNotExist) {
+				sst.retirement.removal()
 				return
 			}
 			time.Sleep(10 * time.Millisecond)

@@ -70,8 +70,9 @@ func replaceCompactedReaders(current []*SSTableReader, inputs []*SSTableReader, 
 }
 
 func (m *Manager) CompactAll() error {
+	startNs := m.readCSStart()
 	if m.syncMode == SyncModeApproachB {
-		return m.compactAllApproachB()
+		return m.compactAllApproachBObserved(startNs)
 	}
 
 	// Serialize all compaction lifetimes to prevent overlapping compaction races (E-006).
@@ -79,13 +80,18 @@ func (m *Manager) CompactAll() error {
 	m.compactionMu.Lock()
 	defer m.compactionMu.Unlock()
 
+	startArrival := m.writerLockArrival(LockSiteCompactionStart)
 	m.Mu.Lock()
+	startHold := m.beginPublication(LockSiteCompactionStart, startArrival.holders)
+	startArrival.acquiredAt(m, startHold.startNs)
 	if m.isClosed || m.state != EngineOpen {
+		startHold.end(m)
 		m.Mu.Unlock()
 		return errors.New("compaction aborted: engine is closed")
 	}
 
 	if len(m.ActiveSSreaders) <= 1 {
+		startHold.end(m)
 		m.Mu.Unlock()
 		return nil // Nothing to compact
 	}
@@ -104,6 +110,7 @@ func (m *Manager) CompactAll() error {
 	for _, fname := range filenames {
 		it, err := NewSSTableIterator(fname)
 		if err != nil {
+			startHold.end(m)
 			m.Mu.Unlock()
 			for _, openedIt := range iterators {
 				openedIt.Close()
@@ -112,6 +119,7 @@ func (m *Manager) CompactAll() error {
 		}
 		iterators = append(iterators, it)
 	}
+	startHold.end(m)
 	m.Mu.Unlock()
 
 	// Deterministic concurrency test hook: pause during merge outside m.Mu
@@ -248,12 +256,18 @@ func (m *Manager) CompactAll() error {
 	amin := m.syncMode == SyncModeApproachAMin
 	if amin {
 		for _, r := range readersToCompact {
+			r.retirement = m.observeRetirement()
 			r.retired.Store(true)
 			// Track retired tables so shutdown can drain leases on them and
 			// finish their reclamation (see Manager.countOutstandingLeasesLocked).
 			m.retiredReaders = append(m.retiredReaders, r)
 		}
 		m.pruneRetiredReadersLocked()
+	}
+	if !amin {
+		for _, r := range readersToCompact {
+			r.retirement = m.observeRetirement()
+		}
 	}
 	pub.end(m)
 	m.Mu.Unlock()
@@ -268,17 +282,21 @@ func (m *Manager) CompactAll() error {
 		for _, r := range readersToCompact {
 			m.reclaimIfDrained(r)
 		}
+		m.observeCompaction(startNs, len(readersToCompact))
 		return nil
 	}
 	for _, r := range readersToCompact {
 		r.Close()
-		os.Remove(r.File.Name())
+		if err := os.Remove(r.File.Name()); err == nil {
+			r.retirement.removal()
+		}
 	}
 
+	m.observeCompaction(startNs, len(readersToCompact))
 	return nil
 }
 
-func (m *Manager) compactAllApproachB() error {
+func (m *Manager) compactAllApproachBObserved(startNs int64) error {
 	m.compactionMu.Lock()
 	defer m.compactionMu.Unlock()
 
@@ -446,8 +464,12 @@ func (m *Manager) compactAllApproachB() error {
 	}
 
 	// 4. Protected publication under snapshotMu
+	arrival := m.writerLockArrival(LockSiteCompactionSnapshotPublish)
 	m.snapshotMu.Lock()
+	pub := m.beginPublication(LockSiteCompactionSnapshotPublish, 0)
+	arrival.acquiredAt(m, pub.startNs)
 	if m.snapshotPhase >= SnapshotPhaseClosed {
+		pub.end(m)
 		m.snapshotMu.Unlock()
 		m.rollbackUnpublishedReader(newSR)
 		m.snapshotMu.Lock()
@@ -462,6 +484,7 @@ func (m *Manager) compactAllApproachB() error {
 	// Validate that readersToCompact still forms a contiguous prefix of m.currentSnapshot.readers
 	currSnap := m.currentSnapshot
 	if currSnap == nil || len(currSnap.readers) < len(readersToCompact) {
+		pub.end(m)
 		m.snapshotMu.Unlock()
 		m.rollbackUnpublishedReader(newSR)
 		m.snapshotMu.Lock()
@@ -475,6 +498,7 @@ func (m *Manager) compactAllApproachB() error {
 
 	for i := range readersToCompact {
 		if currSnap.readers[i] != readersToCompact[i] {
+			pub.end(m)
 			m.snapshotMu.Unlock()
 			m.rollbackUnpublishedReader(newSR)
 			m.snapshotMu.Lock()
@@ -512,6 +536,7 @@ func (m *Manager) compactAllApproachB() error {
 
 	// Mark superseded input readers obsolete
 	for _, sr := range readersToCompact {
+		sr.retirement = m.observeRetirement()
 		sr.MarkObsoleteLocked()
 		sr.UnrefLocked() // Drop compaction lease
 		m.checkCleanupEligibilityLocked(sr)
@@ -522,7 +547,11 @@ func (m *Manager) compactAllApproachB() error {
 	// before closeApproachB's final cleanupWg.Wait() (CP3a-V.2 / E-013).
 	m.scheduleAsyncCleanupLocked()
 
+	pub.end(m)
 	m.snapshotMu.Unlock()
 
+	m.observeCompaction(startNs, len(readersToCompact))
 	return nil
 }
+
+func (m *Manager) compactAllApproachB() error { return m.compactAllApproachBObserved(m.readCSStart()) }
