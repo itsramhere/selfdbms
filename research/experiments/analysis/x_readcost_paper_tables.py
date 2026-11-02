@@ -2,7 +2,7 @@
 """Generate manuscript table bodies and exploratory mechanism arithmetic.
 
 No trials or inferential analyses are run. Existing CIs/classifications are copied
-from --results. Mechanism summaries are arithmetic means of per-trial quantities;
+from --results and --intervention-results. Mechanism summaries are arithmetic means of per-trial quantities;
 cycle = measured_window_ns / in-window commits. Wait instrumentation also includes
 the post-window drain, as specified by the protocol. No late operation counts enter
 the admission ratio. Anchors are excluded from cell summaries.
@@ -27,7 +27,8 @@ ARMS = ('A', 'AMIN', 'B')
 DOSES = ('d0000', 'd0020', 'd0200', 'd2000', 'legacy')
 TABLE_MACROS = {'arms': 'TblArmsRows', 'x1': 'TblXOneRows',
                 'mechanism': 'TblMechanismRows', 'h2_publication': 'TblHTwoPubRows',
-                'x2': 'TblXTwoRows', 'x3': 'TblXThreeRows'}
+                'x2': 'TblXTwoRows', 'x3': 'TblXThreeRows',
+                'intervention': 'TblInterventionRows'}
 
 
 def digest(path):
@@ -112,6 +113,20 @@ def magnitude_number(x, small_places):
 
 def cycle_number(x):
     return (f'{x:.3f}' if x < 10 else f'{x:,.1f}').replace(',', '{,}')
+
+
+def descriptive_geometric_ratio(pairs):
+    """Geometric mean of paired positive ratios, used for raw-trial p99 checks.
+
+    The intervention results JSON omits p99, so this descriptive calculation
+    takes (inline p99, second p99) pairs from trial JSON. It supplies no new CI
+    or test and is distinct from a ratio of arithmetic means.
+    """
+    pairs = list(pairs)
+    if not pairs or any(not math.isfinite(x) or not math.isfinite(y) or
+                        x <= 0 or y <= 0 for x, y in pairs):
+        raise ValueError('geometric ratios require nonempty positive finite pairs')
+    return math.exp(st.mean(math.log(x) - math.log(y) for x, y in pairs))
 
 
 def ratio(x, ci='t_ci', places=3):
@@ -211,9 +226,29 @@ def generate_tables(data, mech, directory):
         r'\newcommand{\DriftLog}{' + num(abs(data['drift']['ln_D'])) + '}'])
 
 
+def generate_intervention_table(data, directory):
+    """Copy pre-registered estimates/CIs; q uses arithmetic condition means."""
+    rows = []
+    previous_r = None
+    for cell, cs in sorted(data['cells'].items()):
+        r = reader(cell)
+        if previous_r is not None and r != previous_r:
+            rows.append(r'\midrule')
+        previous_r = r
+        second, inline = [cs['conditions'][c] for c in ('second', 'inline')]
+        qs = [num(condition['arms'][arm]['q']['mean'])
+              for arm in ('A', 'AMIN') for condition in (second, inline)]
+        writer = ratio(cs['ratios_inline_over_second']['A']['W'])
+        ss = [num(condition['ratios_A_over_AMIN']['W']['geometric_mean_ratio'])
+              for condition in (second, inline)]
+        reads = [ratio(condition['ratios_A_over_AMIN']['R']) for condition in (second, inline)]
+        rows.append(' & '.join([str(r), dose(cell)] + qs + [writer] + ss + reads) + r' \\')
+    write_body(directory, 'intervention', rows)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    for arg in ('results', 'trials-dir', 'tables-dir', 'mechanism-out'):
+    for arg in ('results', 'trials-dir', 'tables-dir', 'mechanism-out', 'intervention-results'):
         p.add_argument('--' + arg, type=Path, required=True)
     args = p.parse_args()
     data = json.loads(args.results.read_text(encoding='utf-8'))
@@ -256,10 +291,12 @@ def main():
     mech['sources'] = dict(results_sha256=digest(args.results),
                            trials_sha256={f.name: digest(f) for f in files})
     generate_tables(data, mech, args.tables_dir)
+    intervention = json.loads(args.intervention_results.read_text(encoding='utf-8'))
+    generate_intervention_table(intervention, args.tables_dir)
     args.mechanism_out.parent.mkdir(parents=True, exist_ok=True)
     args.mechanism_out.write_text(json.dumps(mech, indent=2, sort_keys=True, allow_nan=False) + '\n',
                                   encoding='utf-8', newline='\n')
-    print(f'Generated 7 table/macro bodies; mechanism from {len(trials)} trial envelopes.')
+    print(f'Generated 8 table/macro bodies; mechanism from {len(trials)} trial envelopes.')
     print(json.dumps(mech['h2_bootstrap_check'], sort_keys=True))
 
 

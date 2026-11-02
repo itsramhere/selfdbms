@@ -55,6 +55,8 @@ The protocol is the same as X-readcost-v1 section 8: AC power; Windows power mod
 
 On 2026-11-02, after the predictions above were fixed in writing, a mechanical smoke run executed the first 8 rows of the plan from a dirty tree with an earlier build of the runner. All 8 trials succeeded. The operator saw their per-trial values, one trial per condition-arm in two cells. These trials are excluded from analysis, and no design value or prediction was changed because of them. Their output is kept in the git-ignored `X_READCOST/intervention_smoke` folder. No other trial precedes the freeze.
 
+2026-11-02, post-data note: the campaign completed from commit `4c2749b` with 160 of 160 trials succeeding on the first attempt, with no retries or dropped units. No prediction, test or criterion was changed. Findings beyond the predictions are reported as descriptive.
+
 ## Analysis implementation
 
 The deterministic script is research/experiments/analysis/x_intervention_analyze.py. It reads the authoritative ledger and latest attempts, checks envelopes and provenance, and writes x_intervention_results.json and x_intervention_tables.md. Optional --tex-out writes the TblInterventionRows LaTeX macro to the explicit path. It does not modify paper sources or existing generated tables by default.

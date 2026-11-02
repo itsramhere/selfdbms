@@ -14,6 +14,7 @@
 \input{paper/generated/h2_publication}
 \input{paper/generated/x2}
 \input{paper/generated/x3}
+\input{paper/generated/intervention}
 \begin{document}
 \raggedbottom
 \title{How Long May a Reader Hold the Lock? A Controlled Read-Cost Study of Coarse Locking, Descriptor Leasing, and Immutable Snapshots in an LSM Engine}
@@ -25,28 +26,28 @@ Email: ram.iyer200722@gmail.com}
 
 \maketitle
 \begin{abstract}
-We evaluated coarse locking (A), descriptor leasing (A-min), and immutable reader-set snapshots (B) in a Go LSM engine in a pre-registered 519-trial campaign. All \CampaignSuccess{} trials succeeded on the first attempt. Across ten matched triplets per cell, A's write-throughput ratio to A-min decreased with injected read cost (Page's $L=294$, exact one-sided $p=\HOneP$ at both reader counts). At four readers, the ratio was 0.988 without delay, 0.758 at 200~$\mu$s, and 0.361 at 2~ms. Unexpectedly, A completed more reads than both alternatives through 200~$\mu$s; A/A-min read ratios were 1.19--1.45 at four readers and 1.09--1.43 at sixteen. An exploratory analysis found approximately two reads per reader per commit under A, consistent with two exclusive acquisitions per commit and Go's reader-admission policy. A-min and B met the pre-registered throughput equivalence criterion in all ten write and fourteen read cells; publication lock-wait equivalence was not established. Churn results did not isolate snapshot lifecycle cost. These findings describe this engine and workload, including a writer that retained conflict validation and WAL synchronization under the exclusive lock.
+We evaluated coarse locking (A), descriptor leasing (A-min), and immutable reader-set snapshots (B) in a Go LSM engine in a pre-registered 519-trial campaign. All \CampaignSuccess{} trials succeeded on the first attempt. Across ten matched triplets per cell, A's write-throughput ratio to A-min decreased with injected read cost (Page's $L=294$, exact one-sided $p=\HOneP$ at both reader counts). At four readers, the ratio was 0.988 without delay, 0.758 at 200~$\mu$s, and 0.361 at 2~ms. Unexpectedly, A completed more reads than both alternatives through 200~$\mu$s; A/A-min read ratios were 1.19--1.45 at four readers and 1.09--1.43 at sixteen. Exploratory counters showed approximately two reads per reader per commit under A, consistent with two exclusive acquisitions and Go's reader-admission policy. A separately pre-registered 160-trial intervention removed the second acquisition below threshold: A's reads per reader per commit fell from about 2.00 to 1.00 in all eight cells, and its low-cost read advantage was no longer detectable. Read throughput also fell in both arms, so the second acquisition was not simply waste. A-min and B met the throughput equivalence criterion in all ten write and fourteen read cells; publication lock-wait equivalence was not established. Churn did not isolate snapshot lifecycle cost. Findings are bounded by this engine and workload, including exclusive writer conflict validation and WAL synchronization.
 \end{abstract}
 \begin{IEEEkeywords}
 LSM tree, reader-writer lock, descriptor leasing, immutable snapshots, controlled experiment.
 \end{IEEEkeywords}
 
 \section{Introduction}
-LSM trees buffer writes in memory and organize persistent data in sorted runs~\cite{oneil1996lsm}. Readers must safely access files while writers and flushers update engine state. Holding a shared manager lock across a lookup provides a simple lifetime guarantee but delays exclusive acquisition. Capturing stable file references before releasing the lock separates lifetime from I/O duration. Performance also depends on the commit path and lock-admission policy.
+LSM trees buffer writes in memory and persist them as sorted runs~\cite{oneil1996lsm}. Point readers must access those files safely while flushes and compactions change the set of files. Holding a shared manager lock across a lookup gives a simple lifetime guarantee but delays anyone who needs the lock exclusively; capturing stable file references first separates file lifetime from I/O duration. How much this matters depends on how long the lock is held, on the commit path, and on the lock's admission policy.
 
-We compared three arms in one engine: A retained the read lock across SSTable I/O; A-min leased individual table readers; B pinned an immutable reader-set descriptor. We asked how A's write cost changed with read cost (RQ1), whether leasing matched snapshots within a declared margin (RQ2), and how these arms compared during reader-set churn (RQ3). We varied a delay before block reads and retained the defective earlier reader as a separate historical operating point.
+We compared three approaches in one engine: A holds the read lock across SSTable I/O, A-min leases individual table readers, and B pins an immutable reader-set descriptor. We varied read cost with an injected delay before block reads and kept the engine's defective earlier reader as a separate historical operating point. We asked how A's write penalty changes with read cost (RQ1), whether leasing matches snapshots within a declared margin (RQ2), and how the approaches compare under reader-set churn (RQ3).
 
-The contributions were:
+This paper makes the following contributions:
 \begin{itemize}
 \item A pre-registered, paired, dose-controlled comparison across 17 cells and 519 trials, spanning measured read critical sections from about 14~$\mu$s to 430~ms under A.
 \item A write-penalty trend that was small at tens of microseconds and severe at milliseconds, and an unpredicted read-throughput crossover.
-\item An exploratory account relating A's read throughput to exclusive acquisitions per commit and Go's reader admission, with reads per reader per commit near 2.00 in every non-legacy cell.
+\item An exploratory account relating A's read throughput to exclusive acquisitions per commit and Go's reader admission, with reads per reader per commit near 2.00 in every non-legacy cell, then tested by a separately pre-registered 160-trial intervention.
 \item Bounded evidence on leasing versus snapshots: throughput equivalence within 10\% in all tested X1/X2 cells, no established publication lock-wait equivalence, and correction of an earlier attribution of churn cost to snapshot lifecycle.
 \end{itemize}
-The mechanism requires intervention testing; these results do not establish that snapshots are unnecessary in other engines.
+The intervention supported the account while exposing a read/write trade-off; neither campaign establishes that snapshots are unnecessary in other engines.
 
 \section{Background and Earlier Measurements}
-LSM buffering and compaction tradeoffs are surveyed by Luo and Carey~\cite{luo2020}. Reader-set lifetime management preserves files until readers finish. LevelDB and RocksDB provide production reference points~\cite{leveldb,rocksdb}; our arms were implementations in a smaller engine, not measurements of those systems.
+Luo and Carey survey LSM buffering and compaction~\cite{luo2020}. LevelDB and RocksDB provide production reference points~\cite{leveldb,rocksdb}; our arms were implementations in a smaller engine, not measurements of those systems.
 
 The earlier SSTable reader scanned from the target block toward the file's data end, with about four unbuffered syscalls per record and no early stop after passing the target key. This was a defect, now retained only as \texttt{legacy\_scan}. A 960-trial WSL2 campaign comparing A and B and a Windows campaign truncated by a stopping rule (60 of 330 planned trials, 18 complete triplets) used it. They reported B completing 3.3--18.5 times A's writes, and churn throughput B/A of 0.63--0.74 at $r\leq4$. These runs motivated this study; they were not pooled with it and no inference was carried forward. This study supersedes the earlier claims, including the withdrawn $\pm5\%$ equivalence claim and any claim about A-min under churn.
 
@@ -57,12 +58,12 @@ The memtable used a skip list~\cite{pugh1990}, promotion probability 0.5 and max
 Data blocks used a 4~KiB flush threshold; a whole record could take a block beyond it. A flat sparse index stored block first keys and offsets, with an index-location footer. The corrected reader checked the cached per-table user-key range, binary-searched the index, and used one \texttt{ReadAt} per visited block. It stopped at a visible version or greater user key. Versions could straddle blocks, requiring further block reads. Open-time range-metadata reads bypassed delay. The path had no application block cache.
 
 \subsection{Lifetime management and commit path}
-All arms searched active and frozen memory under \texttt{Mu.RLock}. A retained it through SSTable I/O. A-min copied active reader pointers into reusable scratch storage and took atomic per-table leases in that read-lock interval. It searched outside \texttt{Mu}, then released leases. Superseded readers remained tracked until reclamation. Shutdown closed admission and drained leases on active and retired readers; a timeout returned an error and left leased descriptors open.
+All arms searched active and frozen memory under \texttt{Mu.RLock}; A retained it through SSTable I/O. A-min copied reader pointers into reusable scratch storage and took atomic per-table leases under that lock, searched outside \texttt{Mu}, then released leases. Shutdown closed admission and drained active and retired leases; timeout returned an error and preserved leased descriptors.
 
-B pinned the current immutable reader set under the short manager read lock and \texttt{snapshotMu}, then searched outside both locks. Release also acquired \texttt{snapshotMu}. Publication allocated a new set, assigned \texttt{currentSnapshot} under mutexes, and retired the old set. Drained sets released constituent references; eligible closure and unlinking ran outside \texttt{Mu} and \texttt{snapshotMu}. This was mutex-coordinated management, not a lock-free atomic pointer swap (Table~\ref{tab:arms}).
+B pinned the reader set under the short manager read lock and \texttt{snapshotMu}, then searched outside both. Release acquired \texttt{snapshotMu}. Publication allocated a set, assigned \texttt{currentSnapshot} under mutexes, and retired the old set. Drained sets released constituent references; eligible closure/unlinking ran outside both mutexes. This was mutex-coordinated, not a lock-free pointer swap (Table~\ref{tab:arms}).
 
 \begin{table}[t]
-\caption{Synchronization arms, audited against the implementation.}
+\caption{Synchronization arms in the main campaign (default commit path), audited against the implementation.}
 \label{tab:arms}\centering\scriptsize\setlength{\tabcolsep}{2pt}
 \begin{tabular}{p{0.50\columnwidth}ccc}\toprule
 Property & A & A-min & B\\\midrule
@@ -70,7 +71,7 @@ Property & A & A-min & B\\\midrule
 \bottomrule\end{tabular}
 \end{table}
 
-\texttt{Transaction.Commit} acquired \texttt{Mu.Lock}, validated conflicts via \texttt{latestValueLocked}, appended and synchronized the WAL, and updated memory. It unlocked, then called \texttt{checkAndTriggerFlush}, which reacquired the exclusive lock even without a flush. Each successful campaign commit therefore made two exclusive acquisitions. Only the first wait was instrumented. Conflict validation could read delayed SSTable blocks under the exclusive lock in all arms. A-min and B shortened the reader's hold, not the writer's.
+\texttt{Transaction.Commit} acquired \texttt{Mu.Lock}, validated conflicts via \texttt{latestValueLocked}, appended and synchronized the WAL, and updated memory. It unlocked, then called \texttt{checkAndTriggerFlush}, which reacquired the exclusive lock even without a flush. Each successful main-campaign commit therefore made two exclusive acquisitions. Only the first wait was instrumented. Conflict validation could read delayed SSTable blocks under the exclusive lock in all arms. A-min and B shortened the reader's hold, not the writer's.
 
 \begin{figure}[t]
 \centering
@@ -123,18 +124,18 @@ Property & A & A-min & B\\\midrule
 \subsection{Host, workload, and controlled dose}
 The host was an AMD Ryzen 7 7445HS (6 cores, 12 logical CPUs), 15.2~GiB RAM, and Samsung MZVL8512HFLU NVMe SSD, running Windows 11 Home build 26200 on NTFS. The runner used Go 1.26.3 and \texttt{GOMAXPROCS=12}. AC power, the Best performance overlay on the Balanced base plan, and enabled Defender real-time protection were retained. Timing used QueryPerformanceCounter.
 
-Each fixture had 10,000 keys in four SSTables of 2,500 disjoint-range keys, with 128-byte values. Reads were uniform with target hit ratio 0.95. Workers were closed-loop. Trials had 2~s warmup, a 10~s measurement window, and 200~ms cooldown. WAL fsync was enabled during measurement, disabled during fixture construction; synchronization instrumentation was enabled in all arms.
+Fixtures had 10,000 keys, four disjoint SSTables of 2,500 keys, and 128-byte values. Closed-loop uniform reads targeted 0.95 hit ratio. Trials used 2~s warmup, 10~s measurement, 200~ms cooldown, and synchronization instrumentation. WAL fsync was enabled during measurement and disabled during fixture construction.
 
-The 17 cells were X1: $r\in\{4,16\}$ crossed with $d=0$, 20~$\mu$s, 200~$\mu$s, 2~ms, and legacy (ten cells), one free-running writer and a 1~MiB memtable; X2: $r=16$, $d=0$, 200~$\mu$s, 2~ms, or legacy (four cells), no writer and twenty pre-frozen memtables released for physical publication every 0.5~s from 0.25 to 9.75~s; X3: $r\in\{1,4,16\}$, $d=0$, one writer and a 16~KiB memtable (three cells). Legacy used the retained scan without added delay.
+The 17 cells comprised X1: $r\in\{4,16\}$, $d\in\{0,20,200\}\,\mu$s, 2~ms, or legacy (ten cells), one free-running writer, 1~MiB memtable; X2: $r=16$, $d=0$, 200~$\mu$s, 2~ms, or legacy (four cells), no writer, twenty pre-frozen memtables released for physical publication every 0.5~s from 0.25 to 9.75~s; X3: $r\in\{1,4,16\}$, $d=0$, one writer, 16~KiB memtable (three cells). Legacy used the retained scan without added delay.
 
 Delay ran immediately before each point-read \texttt{ReadAt}, including conflict-validation reads. Sub-millisecond doses used a CPU-yielding spin; 2~ms used sleep then spin for the final 0.5~ms. The earlier single-goroutine probe measured approximately 9~$\mu$s, 35~$\mu$s, 215~$\mu$s, and 2.25~ms per read. These probe costs differed from concurrent lock holds, reported separately.
 
 \subsection{Pairing, scope, and analysis}
-The protocol was frozen in git before the first non-smoke trial. Ten triplets per cell paired A, A-min, and B on the same seed and operation-index request streams; completion-dependent stream prefixes could differ. Seeds used the first eight SHA-256 bytes of decimal master seed 20261030, cell ID, and triplet index separated by vertical bars, interpreted as a big-endian signed integer. Ten rounds randomized cell order using master seed plus round; arm order cycled through all six permutations. Three same-seed anchor triplets ran at the start, after round five, and at the end: 510 cell trials plus nine anchors.
+The protocol was frozen in git before non-smoke trials. Ten triplets per cell paired arms on seed and operation-index streams; completion-dependent prefixes could differ. Seeds were the first eight SHA-256 bytes of decimal master 20261030, cell ID, and triplet index separated by vertical bars, interpreted as big-endian int64. Ten rounds randomized cells using master plus round; arms cycled through six permutations. Same-seed anchors ran at start, after round five, and end: 510 cell trials plus nine anchors.
 
 $W$ and $R$ counted only in-window write and read completions. Latency histograms recorded all in-window completions without sample drops; late completions were separate. Synchronization counters reset at window start and included post-window drain, excluding fixture construction and warmup. Flush diagnostics also included drain and were not strictly in-window counts.
 
-H1 used a one-sided exact Page trend test~\cite{page1963} on $S=W_A/W_{\mathrm{A\text{-}min}}$ across non-legacy doses, blocking by triplet index. H2 used TOST~\cite{schuirmann1987} on paired $\ln(\mathrm{A\text{-}min}/B)$, 90\% paired-$t$ CIs, margin $\pm\ln(1/0.90)$ (ratio $[0.90,1.11]$, rounded), and Holm correction~\cite{holm1979} separately for W (ten cells), R (fourteen), and publication lock-wait p99 (four). Adjusted $p<0.05$ established equivalence; a CI wholly beyond a margin meant not equivalent; otherwise the result was inconclusive. H3 used two-sided 95\% paired-$t$ CIs without a directional prediction. Descriptive ratios had 95\% CIs. Percentile bootstrap sensitivity used 10,000 resamples, seed 20261030. Cells were not pooled. The planned write-zero adjustment was never needed.
+H1 used one-sided exact Page testing~\cite{page1963} on $S=W_A/W_{\mathrm{A\text{-}min}}$ across non-legacy doses, blocking by triplet. H2 used TOST~\cite{schuirmann1987} on paired $\ln(\mathrm{A\text{-}min}/B)$, 90\% paired-$t$ CIs, margin $\pm\ln(1/0.90)$ (rounded ratio $[0.90,1.11]$), and Holm correction~\cite{holm1979} within W (ten cells), R (fourteen), and publication lock-wait p99 (four). Adjusted $p<0.05$ established equivalence; a CI wholly beyond a margin meant not equivalent; otherwise inconclusive. H3 used two-sided 95\% paired-$t$ CIs, without directional prediction; descriptive ratios also had 95\% CIs. Bootstrap sensitivity used 10,000 percentile resamples, seed 20261030. Cells were not pooled; no planned write-zero adjustment was needed.
 
 \begin{figure*}[t]
 \centering\includegraphics[width=0.90\textwidth]{fig_x1_writes.pdf}
@@ -146,9 +147,9 @@ H1 used a one-sided exact Page trend test~\cite{page1963} on $S=W_A/W_{\mathrm{A
 \subsection{RQ1: dose-response}
 All 519 trials succeeded on the first attempt: no retries, exclusions, or zero adjustments. Execution ran on 2026-11-02, 12:41--14:35 UTC, about 1~h 54~min. Table~\ref{tab:x1} reports rates, paired ratios, and A's measured critical sections; Fig.~\ref{fig:writes} shows writes. All pairwise ratios with 95\% CIs for every cell are in the analysis output in the repository.
 
-At both reader counts, Page's $L=294$, exact one-sided $p=\HOneP$, $n=10$. Geometric write ratios $S$ at 0, 20~$\mu$s, 200~$\mu$s, and 2~ms were 0.988, 0.926, 0.758, 0.361 at $r=4$, and 0.937, 0.944, 0.705, 0.311 at $r=16$. Legacy ratios were 0.0042 and 0.0017. The trend did not distinguish every adjacent dose: at $r=16$, zero and 20~$\mu$s had mean ranks 3.4 and 3.6, with no descriptive separation established between them.
+At both reader counts, Page's $L=294$, exact one-sided $p=\HOneP$, $n=10$. Across non-legacy doses, geometric $S$ decreased from 0.988 to 0.361 at $r=4$ and 0.937 to 0.311 at $r=16$ (Table~\ref{tab:x1}). Legacy ratios were 0.0042 and 0.0017. The trend did not distinguish all adjacent doses: at $r=16$, zero and 20~$\mu$s had mean ranks 3.4 and 3.6, without descriptive separation.
 
-Mean A read critical sections were 13.6, 33.6, 163~$\mu$s, 1.89~ms, and 125~ms (legacy) at $r=4$; at $r=16$: 21.2, 39.3, 173~$\mu$s, 1.91~ms, and 430~ms. A-min and B cell means stayed between 1.5 and 4.9~$\mu$s throughout X1. Nominal dose was not interchangeable with measured lock hold.
+Mean A read critical sections ranged from 13.6~$\mu$s to 125~ms at $r=4$ and 21.2~$\mu$s to 430~ms at $r=16$; Table~\ref{tab:x1} gives every measured dose. A-min/B cell means remained 1.5--4.9~$\mu$s. Nominal delay differed from measured hold.
 
 \begin{table*}[t]
 \caption{X1, ten triplets per cell. Rates: geometric means (operations/s). CS: arithmetic mean of A's trial mean read critical sections ($\mu$s). Paired ratios have 95\% $t$ CIs.}
@@ -173,7 +174,7 @@ Post-data source review identified two exclusive acquisitions per commit. Go's R
 \begin{equation}R_A\simeq2rW_A.\label{eq:coupling}\end{equation}
 Across ten trials in each of eleven non-legacy X1/X3 cells, individual ratios $R/(rW)$ ranged from 2.002 to 2.015. Legacy ratios ranged from 1.98 to 2.29, with only about 26 commits per trial at $r=4$ and six at $r=16$. Non-legacy coupling stayed approximately unchanged with dose or reader count.
 
-A-min and B cell mean ratios fell from about 1.7 at zero delay to about 1.3 at 20 and 200~$\mu$s, about 1.0 at 2~ms, and 0.007--0.018 in legacy (Table~\ref{tab:mechanism}). Their I/O occurred outside the lock, so the writer's short second acquisition did not wait for it. A reader still doing I/O could miss that admission and block behind the next commit. This was consistent with the counters and Fig.~\ref{fig:timeline}, but was not tested by intervention.
+A-min and B cell mean ratios fell from about 1.7 at zero delay to about 1.3 at 20 and 200~$\mu$s, about 1.0 at 2~ms, and 0.007--0.018 in legacy (Table~\ref{tab:mechanism}). Their I/O occurred outside the lock, so the writer's short second acquisition did not wait for it. A reader still doing I/O could miss that admission and block behind the next commit. This account was consistent with the counters and Fig.~\ref{fig:timeline}; the pre-registered follow-up in Section~\ref{sec:intervention} tested it.
 
 A descriptive commit-cycle check used $T=1/W$ and A's measured mean first-acquisition wait $w_A$:
 \begin{equation}\widehat T_A=T_{\mathrm{A\text{-}min}}+2w_A.\label{eq:cycle}\end{equation}
@@ -191,6 +192,30 @@ Block & $r$ & Nominal $d$ & $q_A$ & $q_{\mathrm{A\text{-}min}}$ & $q_B$ & $T_A$ 
 The dose also reached the writer: \texttt{latestValueLocked} read delayed SSTable blocks during conflict validation under exclusive \texttt{Mu} in every arm. This explained decreasing writes in A-min and B too. A-min's mean cycles at $r=4$ were 1.07, 1.06, 1.23, and 2.79~ms. The denominator of $S$ also degraded; leasing and snapshots removed only the reader's I/O hold.
 
 Read p50 was unstable. At $r=4,d=0$, geometric mean trial p50 was 45~$\mu$s under A versus 808~$\mu$s under A-min, but p99 was 2.27 versus 2.31~ms. Reader cycles mixed a fast read with one blocked behind a roughly 1~ms commit. Bimodality was inferred from percentiles and counters; no full histogram was reported. Throughput and p99 were more informative than p50 alone.
+
+\subsection{Intervention test (pre-registered follow-up)}
+\label{sec:intervention}
+A separately pre-registered follow-up campaign, X-intervention-v1, tested the admission account on new data. An experiment-only flag, off by default, moved the threshold check inside the first critical section: below threshold, \texttt{inline} skipped the second acquisition; rotation and flush behavior remained unchanged.
+
+Eight X1-shaped cells ($r=4,16$; $d=0$, 20~$\mu$s, 200~$\mu$s, 2~ms) compared \texttt{second} (default) and \texttt{inline} in A and A-min over five randomized rounds, sharing one seed across each four-run cell-round unit (160 trials; rates used the fixed 10~s window). The baseline was rerun in the same session; B was omitted.
+
+P1 required A's arithmetic mean $q$ in $[1.90,2.10]$ under \texttt{second} and $[0.90,1.10]$ under \texttt{inline}, in all eight cells. P2 required the exponentiated 95\% paired log-$t$ CI for the inline/second ratio of $R_A/R_{\mathrm{A\text{-}min}}$ wholly below one in the six cells at $d\leq200~\mu$s ($n=5$, no multiplicity correction; descriptive strength only). P3 required cycle errors within $\pm15\%$ in all sixteen condition-cells, using $T_{\mathrm{A\text{-}min}}+2w_A$ under \texttt{second} and $T_{\mathrm{A\text{-}min}}+w_A$ under \texttt{inline}, plus write-ratio CIs wholly above one at 200~$\mu$s and 2~ms for both reader counts.
+
+All 160 trials succeeded on the first attempt on 2026-11-02, with no retries or dropped units. P1 was supported in 16/16 condition-cells: individual A trial $q$ ranged from 2.002--2.013 under \texttt{second} and 1.001--1.006 under \texttt{inline}. P2 was supported in 6/6 cells: at $d=0$, 20, 200~$\mu$s, the ratio of read ratios was 0.823 $[0.716,0.946]$, 0.659 $[0.595,0.730]$, 0.755 $[0.707,0.807]$ at $r=4$; and 0.895 $[0.822,0.975]$, 0.755 $[0.632,0.903]$, 0.824 $[0.781,0.869]$ at $r=16$. Inline read-ratio CIs included one at $d\leq20~\mu$s and lay below one at 200~$\mu$s (Table~\ref{tab:intervention}): A's low-cost read advantage was no longer detectable and reversed at 200~$\mu$s. P3 was supported: cycle errors ranged from $-3.7\%$ to $+7.5\%$ under \texttt{second} and $-2.0\%$ to $+8.4\%$ under \texttt{inline}; all four predicted write-ratio CIs exceeded one.
+
+\begin{table*}[t]
+\caption{Intervention, $n=5$ paired four-run units per cell. $q$ is an arithmetic mean; W and R ratios are paired geometric means. Shown CIs are exponentiated 95\% paired log-$t$ CIs. Conditions: s = second, i = inline. $S=W_A/W_{\mathrm{A\text{-}min}}$.}
+\label{tab:intervention}\centering\scriptsize\setlength{\tabcolsep}{2pt}
+\begin{tabular}{rl rrrr l rr ll}\toprule
+ & & \multicolumn{2}{c}{$q_A$} & \multicolumn{2}{c}{$q_{\mathrm{A\text{-}min}}$} & $W_{A,i}/W_{A,s}$ & \multicolumn{2}{c}{$S$} & \multicolumn{2}{c}{$R_A/R_{\mathrm{A\text{-}min}}$ [95\% CI]}\\
+$r$ & Nominal $d$ & s & i & s & i & [95\% CI] & s & i & s & i\\\midrule
+\TblInterventionRows
+\bottomrule\end{tabular}
+\end{table*}
+
+Unpredicted findings qualified these results. The second wait accounted for a substantial part of A's write penalty at 200~$\mu$s and 2~ms, but a penalty remained (Table~\ref{tab:intervention}, $S$). Inline gave both arms $q\simeq1.00$ through 200~$\mu$s, so the read ratio essentially equalled $S$. Absolute reads fell: inline/second ratios were 0.507--0.763 (A) and 0.608--0.850 (A-min). A-min write ratios were 0.970--1.044, all CIs including one. Its second-condition $q$ was 1.655--1.722 at zero delay, about 1.28--1.32 at 20/200~$\mu$s, and 1.00 at 2~ms; inline gave about 1.00 through 200~$\mu$s and 0.857--0.858 at 2~ms. The latter was not investigated. Read p99 rose in both arms: geometric mean paired inline/second trial-p99 ratios from raw trial JSON were 1.330--2.049 (A) and 1.578--2.125 (A-min).
+
+Baseline $q$ reproduced the main pattern, but $S$ at $r=16,d=20~\mu$s was 0.855 versus 0.944 in the main campaign; the $n=5$ and $n=10$ data were not pooled. The intervention supported A's read/commit coupling to acquisition count in this engine and workload. The second acquisition was not simply waste: it provided another reader admission. Removing it traded reads and read tail latency for A's writes, without a detectable A-min write increase; this is not a general optimization recommendation.
 
 \subsection{RQ2: A-min versus B}
 All ten X1 write cells and fourteen X1/X2 read cells met H2 equivalence after Holm correction (Fig.~\ref{fig:equivalence}). All corresponding bootstrap intervals lay inside the same margin, agreeing with the throughput classifications; no bootstrap TOST replaced the planned test. Equivalence did not imply identity: X2 at $d=0$ had read ratio 0.970, 90\% CI $[0.962,0.978]$, a detectable roughly 3\% difference inside the margin.
@@ -226,7 +251,7 @@ $d$ & A & A-min & B & A & A-min & B & A & A-min & B\\\midrule
 \end{table*}
 
 \subsection{RQ3: churn}
-With 16~KiB memtables, mean measured flush counts ranged from 38.8 to 73.2 per trial (10~s window plus drain). Table~\ref{tab:x3} reports rates and both interval methods. A-min/B read ratios at $r=1,4,16$ were 0.956, 1.005, 0.970; write ratios were 0.957, 1.004, 0.968. All 95\% paired-$t$ CIs included one. Bootstrap intervals at $r=1$ and $r=16$ narrowly excluded one for both outcomes, e.g., $[0.909,0.997]$ for reads at $r=1$. Small differences favoring B could not be ruled out.
+With 16~KiB memtables, mean measured flushes ranged from 38.8 to 73.2 per trial (10~s plus drain). Table~\ref{tab:x3} gives rates and paired ratios. All 95\% paired-$t$ CIs included one, but bootstrap intervals at $r=1,16$ narrowly excluded one for both outcomes, e.g., $[0.909,0.997]$ for reads at $r=1$. Small B-favoring differences could not be ruled out.
 
 A/B read ratios were 1.66, 1.53, 1.29; write ratios were 0.89, 0.84, 0.71. The read deficit relative to A also occurred in A-min at the same size. A-min did not allocate reader-set snapshot descriptors, so these data did not support attributing the deficit to snapshot lifecycle cost or claiming A-min avoided a churn penalty. This was consistent with admission ratios near 2.01 under A and about 1.1 under both alternatives.
 
@@ -247,40 +272,35 @@ $r$ & Outcome & A & A-min & B & A-min/B [95\% $t$ CI] & Bootstrap CI & Flushes A
 
 Pre-registered anchor drift was $D=R_{\mathrm{A\text{-}min}}(t10)/R_{\mathrm{A\text{-}min}}(t00)=\DriftD$, $|\ln D|=\DriftLog$, below the 0.10 threat threshold. For transparency, A and B end/start ratios were both about 1.09, log ratios 0.087 and 0.090: below, but near, that threshold. Each anchor arm/time was a single trial.
 
-\begin{figure}[t]
-\centering\includegraphics[width=0.96\columnwidth]{fig_x1_ratio.pdf}
-\caption{X1 write ratio A/A-min, $n=10$ triplets per cell. Points: paired geometric means; bars: exponentiated 95\% paired log-$t$ CIs.}
-\label{fig:ratio}
-\end{figure}
 
 \section{Discussion}
-The write penalty grew as A's shared critical section lengthened and was small at tens of microseconds. Its low-cost read advantage showed that admission policy and exclusive acquisitions per commit could determine read throughput more than critical-section length alone. File lifetime and admission frequency should be evaluated together.
+The write penalty grew as A's shared critical section lengthened and was small at tens of microseconds. The intervention supported the acquisition-count account of its low-cost read advantage: the second acquisition gave readers another admission. File lifetime and admission frequency should be evaluated together.
 
-Leasing matched snapshots within the declared throughput margin in X1/X2. This established no advantage of A-min over B and removed neither exclusive conflict validation nor fsync. Churn did not isolate descriptor allocation as the cause of A's read advantage. Publication wait required a separate conclusion from throughput.
+Leasing matched snapshots within the declared throughput margin in X1/X2. This established no advantage of A-min over B and removed neither exclusive conflict validation nor fsync. Under churn, the read deficit relative to A appeared at the same size in A-min and B, so it could not be attributed to descriptor allocation. Publication wait required a separate conclusion from throughput.
 
-Implications for this class of engine are conditional. Measure lock-held read duration before replacing a coarse lock: here, at tested holds below about 40~$\mu$s, point-estimate write penalties were within 8\%, and A completed more reads. At nominal 20~$\mu$s, however, the 95\% CIs for $S$ were $[0.881,0.974]$ at $r=4$ and $[0.887,1.004]$ at $r=16$; 8\% was not a confidence bound. At tested holds above about 150~$\mu$s, point-estimate penalties were at least 24\%. Shorter reader holds left the writer's exclusive work, which set the A-min/B commit cycle; a writer-side change may be the next step. Admission policy can be part of the performance model. These implications do not establish transfer to other engines.
+These implications are conditional on this class of engine. Measure lock-held read duration before replacing a coarse lock: in the main campaign, below about 40~$\mu$s of measured hold, point-estimate write penalties were within 8\% and A completed more reads. At nominal 20~$\mu$s, the 95\% CIs for $S$ were $[0.881,0.974]$ at $r=4$ and $[0.887,1.004]$ at $r=16$, so 8\% is not a confidence bound. Above about 150~$\mu$s, point-estimate penalties were at least 24\%. Shortening reader holds did not remove the writer's own exclusive work, which set the commit cycle in A-min and B. The number of exclusive acquisitions per commit changed both reader admission and A's writes, and removing one reduced reads and raised read p99, so it is not a general optimization. A lock's admission policy belongs in the performance model. We did not establish that these results transfer to other engines.
 
-Future work should remove the second acquisition, for example by an atomic size check, and test the coupling by intervention. Moving fsync and conflict validation out of the exclusive lock, group commit, other lock policies, larger datasets, and multiple writers would test the account's boundaries. Such changes require correctness validation as well as performance measurement.
+Future work includes moving fsync and conflict validation outside the exclusive lock, other lock policies, group commit, larger datasets, and multiple writers, with correctness validation as well as performance measurement.
 
 \section{Threats to Validity}
 Injected delay was a controlled proxy, not a device model. Every visited point-read SSTable block incurred delay without application block-cache hits. Sub-millisecond delays spun while yielding; sixteen readers exceeded twelve logical CPUs, so CPU contention was part of those cells. The 10,000-key dataset was likely in the OS page cache. Uniform, closed-loop access and one writer restricted workload scope.
 
 WAL fsync remained under the exclusive lock without group commit, setting an approximately 1~ms commit floor in low-cost cells. LevelDB releases its mutex during log writing and synchronization~\cite{leveldb}; results do not transfer directly to engines with group commit. The optional WAL-sync-off run was not performed; the X harness rejected \texttt{wal\_sync=false}. Two acquisitions and Go's policy were engine-specific: Eq.~\ref{eq:coupling} should not be generalized.
 
-The mechanism and read-side interpretation were post hoc. The protocol's statement that A-min and B did not hold the lock across delay applied to readers only; delayed writer conflict checks were noticed after collection. The cycle model assumed an unmeasured second wait, and bimodality was inferred without reporting a full histogram. One laptop, OS, and file system, with Defender enabled, limited external validity.
+The mechanism was found post hoc and tested on new data with predictions frozen in git before real trials. The intervention had $n=5$ per cell, no multiplicity correction for P2, and omitted B. Eight smoke trials were seen before the freeze and excluded; predictions were written before those trials. The intervention applies to one engine and one lock implementation. The original protocol's statement that A-min and B did not hold the lock across delay applied to readers only; delayed writer conflict checks were noticed after collection. The cycle model assumed an unmeasured second wait; inline removed this assumption below threshold. Bimodality was inferred without a full histogram. One laptop, OS, and file system, with Defender enabled, limited external validity.
 
 An operator stopped the first start at 38 of 519 trials for power-supply reasons unrelated to results. It was discarded unanalysed; only status lines were seen. A 21-trial smoke run was seen before analysis rules were fixed and was excluded; no design value changed because of it. Fixtures were built without fsync. Race detection passed on Linux under WSL2 with Go 1.27.3, not on Windows. The author was sole experimenter and analyst; there was no independent replication.
 
 \section{Related Work}
-The LSM-tree~\cite{oneil1996lsm} and survey~\cite{luo2020} frame the storage organization. LevelDB and RocksDB~\cite{leveldb,rocksdb} provide reference implementations; Dong et al.~\cite{dong2021} describe RocksDB's evolving development priorities. Our arms do not reproduce their production designs or workloads. Golan-Gueta et al.~\cite{golan2015} propose cLSM, an algorithm for scalable concurrency in LSM data stores. SILK~\cite{balmau2019} addresses latency spikes in LSM stores.
+The LSM-tree~\cite{oneil1996lsm} and survey~\cite{luo2020} frame the organization; LevelDB and RocksDB~\cite{leveldb,rocksdb} are reference implementations. Dong et al.~\cite{dong2021} describe RocksDB's evolving priorities. Our arms do not reproduce production designs. Golan-Gueta et al.~\cite{golan2015} propose cLSM, an algorithm for scalable concurrency in LSM data stores. SILK~\cite{balmau2019} addresses LSM latency spikes.
 
 Courtois et al.~\cite{courtois1971} pose the readers--writers problem, Mellor-Crummey and Scott~\cite{mellor1991} give scalable reader-writer algorithms, and Brandenburg and Anderson~\cite{brandenburg2009} propose phase-fair locks. Go's RWMutex documentation~\cite{goRWMutex} supplies the policy here. Page's ordered-rank test~\cite{page1963}, Schuirmann's TOST~\cite{schuirmann1987}, and Holm's correction~\cite{holm1979} supplied the pre-registered methods.
 
 \section{Conclusion}
-Across the completed 519-trial campaign, coarse read locking's write penalty increased with measured critical-section length and was small at tens of microseconds. A nevertheless completed more reads than A-min and B through nominal 200~$\mu$s. Exploratory counters were consistent with two reader admissions per commit under A, suggesting that lock policy and exclusive-acquisition count shaped the low-cost regime. Leasing matched snapshots within the declared throughput margin in all ten X1 write and fourteen X1/X2 read cells; publication lock-wait equivalence was not established. Neither removed the writer's exclusive work. Churn did not isolate snapshot lifecycle cost. These findings are bounded by this engine, host, and workload.
+Across the 519-trial campaign, coarse read locking's write penalty increased with measured critical-section length and was small at tens of microseconds; A completed more reads through nominal 200~$\mu$s. A separately pre-registered 160-trial intervention supported the admission mechanism: removing the second acquisition reduced A's reads per reader per commit from about two to one and removed its detectable low-cost read advantage. It improved A's writes at higher cost while reducing both arms' reads and increasing p99, without a detectable A-min write increase. Leasing matched snapshots within the declared throughput margin in all ten X1 write and fourteen X1/X2 read cells; publication lock-wait equivalence was not established. Neither removed writer exclusive work, and churn did not isolate snapshot lifecycle cost. Findings remain bounded by this engine, host, and workload.
 
 \section*{Data Availability}
-Source, plan, frozen protocol, analysis and figure scripts are in \url{https://github.com/itsramhere/selfdbms}, branch \texttt{research/x-readcost}; trial records are archived with the repository. The measured revision was \texttt{c53ee5b}. Plan SHA-256 began \texttt{68ad96f878c1}; runner SHA-256 began \texttt{22060ffc4885}. Tables came from final results and trial envelopes via \texttt{x\_readcost\_paper\_tables.py}. A claim-to-evidence map is at \texttt{paper/CLAIM\_EVIDENCE\_MAP\_X.md}.
+Source, plan, frozen protocol, analysis and figure scripts are in \url{https://github.com/itsramhere/selfdbms}, branch \texttt{research/x-readcost}; trial records are archived with the repository. The main measured revision was \texttt{c53ee5b}, plan SHA-256 prefix \texttt{68ad96f878c1}, runner \texttt{22060ffc4885}. The intervention used \texttt{4c2749b}, plan prefix \texttt{2e44fcacb3e7}, runner \texttt{5dc57e7d85d7}, and frozen protocol \path{research/experiments/phase_i7/X_INTERVENTION_PREREGISTRATION.md}. Tables came from final results and trial envelopes via \texttt{x\_readcost\_paper\_tables.py}. A claim-to-evidence map is at \texttt{paper/CLAIM\_EVIDENCE\_MAP\_X.md}.
 
 \begin{thebibliography}{15}
 \bibitem{oneil1996lsm} P. O'Neil, E. Cheng, D. Gawlick, and E. O'Neil, ``The log-structured merge-tree (LSM-tree),'' \emph{Acta Informatica}, vol. 33, no. 4, pp. 351--385, 1996.

@@ -1,5 +1,6 @@
 """Small arithmetic checks; no engine execution or inferential recomputation."""
 import copy
+import math
 import unittest
 
 import x_readcost_paper_tables as p
@@ -19,6 +20,14 @@ def trial(arm, index, reads, commits, wait_ns):
 
 
 class MechanismTests(unittest.TestCase):
+    def test_paired_geometric_p99_ratio_is_not_arithmetic_aggregation(self):
+        # Ratios 2 and 4.5 have geometric mean 3, arithmetic mean 3.25;
+        # the ratio of arithmetic means is 11/3. None may be interchanged.
+        self.assertAlmostEqual(p.descriptive_geometric_ratio([(2, 1), (9, 2)]), 3)
+        for pairs in ([], [(0, 1)], [(1, -1)], [(math.inf, 1)]):
+            with self.assertRaises(ValueError):
+                p.descriptive_geometric_ratio(pairs)
+
     def test_per_trial_mean_window_counts_and_model(self):
         rows = [trial('A', 1, 800, 100, 2_000_000),
                 trial('A', 2, 600, 50, 4_000_000),

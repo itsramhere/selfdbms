@@ -11,6 +11,13 @@ All reported CIs are copied from J, not recalculated by the paper generator.
 Rounded prose is supported by the unrounded fields below.
 Table files define row macros loaded in the manuscript preamble. Number formatting
 rounds each source value directly; it does not change any stored estimate or CI.
+For the intervention, `I` denotes
+`research/experiments/phase_i7/X_READCOST/analysis_intervention/x_intervention_results.json`,
+`D` its sibling `paper_descriptive_checks.json`, and `U` raw envelopes in
+`research/experiments/phase_i7/X_READCOST/intervention/trials/`.
+Original engine line references refer to measured revision `c53ee5b`; intervention
+implementation references below refer to `4c2749b`. Original-campaign mechanism
+claims remain exploratory; the new intervention evidence is mapped separately.
 
 ## Abstract
 
@@ -34,7 +41,7 @@ rounds each source value directly; it does not change any stored estimate or CI.
 |---|---|---|
 | I1 | Pre-registered, paired, dose-controlled three-arm comparison: 17 cells, 519 trials; measured A read critical sections about 14 us to 430 ms | A1–A3; J `cells` has 17 entries; `cells[X1*].arms.A.read_cs_mean.mean` spans 13.572311324976088 us to 430.129751… ms (arithmetic means of trial means); protocol §3; T paired seeds |
 | I2 | Write penalty small at tens of microseconds, severe at milliseconds; unpredicted read crossover | R3–R10; J X1 non-legacy S is 0.926–0.988 at 0/20 us nominal and 0.311–0.361 at 2 ms; corresponding measured A means are reported in R6. “Severe” describes the latter point estimates, not a universal threshold |
-| I3 | Exploratory account connects read throughput, exclusive-acquisition count and Go admission; q near 2.00 in every non-legacy cell | R11–R20; M `cells[X1 nonlegacy/X3].arms.A.reads_per_reader_per_commit.mean` ranges 2.002678694…–2.012826606…; individual extrema in R13; no formal mechanism/intervention claim |
+| I3 | Exploratory account connects read throughput, exclusive-acquisition count and Go admission; q near 2.00 in every non-legacy main cell; then tested by a separately pre-registered160-trial intervention | R11–R20; M `cells[X1 nonlegacy/X3].arms.A.reads_per_reader_per_commit.mean` ranges 2.002678694…–2.012826606…; individual extrema in R13. Follow-up evidence F1–F18 below; no claim of formal proof or transfer |
 | I4 | Bounded throughput equivalence within 10% in tested X1/X2 cells, no publication-wait equivalence, correction of churn attribution | R25–R30 and R38–R43; protocol's log-symmetric margin is exactly `[0.90,1/0.90]`, displayed `[0.90,1.11]`; “within 10%” is the requested shorthand for this declared margin, not identity. W applies to X1 only; R to X1 and X2 |
 
 ## Results and their tables/figure captions
@@ -58,7 +65,7 @@ rounds each source value directly; it does not change any stored estimate or CI.
 | R14 | Legacy individual q=1.98–2.29, about 26/6 commits per trial | M `summary.A_admission_legacy`; M `cells['X1_r04_legacy'/'X1_r16_legacy'].arms.A.commits_in_window.mean` (26.1/6.0) and per-trial records |
 | R15 | Coupling roughly invariant with r/d | M `cells[X1 nonlegacy/X3].arms.A.reads_per_reader_per_commit`; generated `mechanism.tex`; descriptive inference from narrow q range |
 | R16 | A-min/B q≈1.7, 1.3, 1.0, then .007–.018 | M X1 `arms['AMIN'/'B'].reads_per_reader_per_commit.mean`; generated `mechanism.tex` |
-| R17 | Outside-lock I/O can miss the second admission and block behind next commit | `manager.go:498` A-min reader; `snapshot.go:676` B reader; E6/E7. Explanation consistent with R13/R16, not tested by intervention |
+| R17 | Outside-lock I/O can miss the second admission and block behind next commit | `manager.go:498` A-min reader; `snapshot.go:676` B reader; E6/E7. Initially exploratory in the main campaign (R13/R16); the manuscript now forwards to the separately pre-registered intervention, F1–F18 |
 | R18 | Cycle formula T=1/W and predicted T_A=T_A-min+2w_A; arithmetic trial means | M `definitions`, `cells[X1*].arms[*].trials[*].cycle_ms/first_commit_wait_ms`; T `result.timestamps.measured_window_ns`, operations in-window commits, sync commit mean wait |
 | R19 | All ten observed/predicted X1 cycles and errors, −13.8% to +10.6% | M `cells[X1*].cycle_model`; `summary.X1_cycle_error_percent`; generated `mechanism.tex`; errors are prediction/observation−1, not the reverse |
 | R20 | Equal second wait assumed; model not validated | Second acquisition uninstrumented (R11); formula in generator; no intervention trials or validation fit were run |
@@ -87,7 +94,7 @@ rounds each source value directly; it does not change any stored estimate or CI.
 | R43 | X3 qA≈2.01, A-min/B≈1.1 | M X3 `arms[*].reads_per_reader_per_commit.mean`; generated `mechanism.tex` |
 | R44 | DriftD=.979, abslog=.021, below.10 threat threshold | J `drift.{D,ln_D,threat_to_validity}`; protocol §7; generated `facts.tex` |
 | R45 | Other-arm anchors≈1.09, logs.087/.090, near but below threshold; single observations | J `drift.arms.A/B.t10.{ratio,log_ratio}`; T `ANCHOR_t00/t10_A/B` one envelope per time/arm |
-| R46 | Figure error bars and points | `x_readcost_figures.py:arm_summary`, `dose_plot`, `ratio_plot`, `publication_plot`, `forest` (function names are stable locators): X1 per-arm geometric means/95% log-t; ratio paired geometric/95%; X2 counts arithmetic mean/min–max and waits geometric/95%; forest paired geometric, H2 90%, H3 95% |
+| R46 | Figure error bars and points | `x_readcost_figures.py:arm_summary`, `dose_plot`, `publication_plot`, `forest` (function names are stable locators): X1 per-arm geometric means/95% log-t; X2 counts arithmetic mean/min–max and waits geometric/95%; forest paired geometric, H2 90%, H3 95% |
 | R46a | Fig.2: most X1 write intervals are smaller than the markers | J X1 arm W CIs; `x_readcost_figures.py:dose_plot`, `point`, and `setup` (marker size 5, log y axes); visual assessment of `analysis/figures/fig_x1_writes.png`, not an additional numerical outcome |
 | R47 | Four-lane timeline is schematic, not a measured trace; A has two reads per commit, A-min fewer | Authored schematic based on E1/E2/E6/E7 and exploratory R13/R16; caption states it is not a measured trace, time arrow says not to scale. A's twice-per-commit statement illustrates the approximate admission mechanism, not an exact guarantee or a measured duration |
 
@@ -98,7 +105,7 @@ rounds each source value directly; it does not change any stored estimate or CI.
 | P1 | At tested measured A holds below about 40 us, point-estimate write penalties were within 8%, and A completed more reads | J X1 r4/r16, d0/d20: mean A CS 13.572311324976088, 33.64641440878266, 21.242431197594833, 39.307049746154846 us; S respectively 0.9881629426676402, 0.9261103918684351, 0.9369902606032205, 0.9437725029773809. Largest `100*(1-S)` = 7.388960813156487%; “within 7%” would be false. Read ratios in R8/R9 |
 | P2 | At nominal20 us, 95% S CIs [.881,.974] (r4), [.887,1.004] (r16); 8% is not a confidence bound | J `cells.X1_r04_d0020.ratios.W['A/AMIN'].t_ci` = [0.8805717794774917,0.9740040254703959]; r16 equivalent path = [0.8868023450993953,1.004402550690546]. Lower bounds allow approximately 11.94%/11.32% penalties; r16 upper bound includes1 |
 | P3 | At tested holds above about150 us, point-estimate penalties at least24% | J X1 r4/r16 d200: holds163.30421513923807/173.41273815260965 us and S0.7584648925415418/0.7052009047246135, i.e. penalties24.153510745845818%/29.479909527538652%. The d2ms S0.36107640524550244/0.31055297495148 and legacy S0.004249913816751241/0.0016963173749270188 imply larger penalties. This is a statement about tested point estimates, not a continuous or CI-supported threshold |
-| P4 | Shorter reader holds did not remove writer exclusive work; writer-side change may be next step; admission policy belongs in performance model | R11–R24; E6/E7; low-dose A-min/B cycles approximately1ms, with delayed conflict validation at larger dose. Suggested design implications, not intervention evidence; text explicitly denies established transfer to other engines |
+| P4 | Shorter reader holds did not remove writer exclusive work; writer-side change may be next step; admission policy belongs in performance model | R11–R24; E6/E7; low-dose A-min/B cycles approximately1ms, with delayed conflict validation at larger dose. Original main-campaign implications; F4?F17 add the acquisition-count intervention, without testing fsync/group-commit changes or establishing transfer to other engines |
 
 ## Conclusion
 
@@ -107,11 +114,44 @@ rounds each source value directly; it does not change any stored estimate or CI.
 | C1 | Completed519-trial campaign | A2/R1 |
 | C2 | Write penalty increased with measured critical-section length; small at tens of us | R3–R7; nominal dose trend tested, measured CS reported descriptively; no threshold test claimed |
 | C3 | A completed more reads through nominal200 us | R8–R10 |
-| C4 | Exploratory two-admission account consistent with counters; policy/acquisition count shaped low-cost behavior | R11–R20; bounded interpretation, no intervention or general law |
+| C4 | Separately pre-registered160-trial intervention supported coupling; A q≈2→1, low-cost read advantage no longer detectable | F1–F8 below; bounded support in this engine/workload, not proof or a general law |
 | C5 | Leasing matched B within declared margin in10write/14read cells; not publication wait | R25–R30; explicit X1/X2 scope, not an H2 claim about X3 |
 | C6 | Neither removed writer exclusive work | A11/R21; E6 |
 | C7 | Churn did not isolate snapshot lifecycle cost | R38–R43; E2 |
 | C8 | Bounded by engine/host/workload | Protocol design and Threats; one host, one writer, closed-loop small uniform workload, no independent replication |
+| C9 | Intervention improved A writes at higher cost but reduced reads/increased p99 in both arms, without a detectable A-min write increase | F8–F14 below; W_A improvement is pre-registered at200us/2ms, other throughput/p99 outcomes descriptive; all A-min write CIs include1 |
+
+## X-intervention-v1: new abstract, Results, Discussion, Conclusion, and availability claims
+
+| ID | Claim | Evidence |
+|---|---|---|
+| F1 | Separate pre-registration;160/160 first-attempt success, no retries/dropped units; measured4c2749b, date2026-11-02 | I `campaign_id`, `counts`, `partial=false`, `dropped_units=[]`, `git_revision`; `platform.checked_utc`; U `timing.started_utc/finished_utc`; `intervention/ledger.jsonl` has160 FINISHED SUCCESS events, all attempt1. Freeze commit4c2749b contains the intervention protocol before real trials |
+| F2 | Threshold check moved under first exclusive hold; inline skips second below threshold, flag false by default, rotation/flush unchanged | `research/experiments/phase_i7/X_INTERVENTION_PREREGISTRATION.md` Intervention and design; at4c2749b, `lsmengine/transaction.go:114` conditional check before unlock, `:116` branch; `lsmengine/manager.go:1067` threshold helper and `:1076` unchanged recheck/rotation path; `manager.go:70` config flag. No engine file edited for this paper update |
+| F3 | Eight cells, r4/16×d0/20/200/2000us, second/inline, A/A-min, five rounds, paired seed over four runs,160trials; baseline rerun same session, B omitted | I `cells[*].nominal`, `n_complete=5`, `complete_rounds=[1,2,3,4,5]`, `master_seed=20261103`; `intervention/plan.json.cells/trials`; U `spec.{seed,arm,inline_flush_check}` and `triplet`; protocol Intervention and design. Audit verifies same seed across each four-run unit. Rates use fixed10s (I `notes[3]`), not the main campaign's measured-window denominator |
+| F4 | P1 primary: A arithmetic mean q in[1.90,2.10] second and[.90,1.10] inline, all16 condition-cells; supported16/16 | Protocol Outcomes and fixed predictions P1; I `P1`, `cells[*].conditions[second/inline].P1`, `.arms.A.q.mean`. `q` is in-window reads/(r×commits); no late completions |
+| F5 | A per-trial q2.002–2.013 second,1.001–1.006 inline; approximate2→1 in every cell (new abstract/conclusion) | I `trials[*].q` filtered by `arm=A`, cell suffix; D `summary.q_A_second` min2.0015290519877675/max2.012816245006658; `.q_A_inline` min1.000758472694983/max1.0059621485614265. Cell arithmetic means in generated intervention table; not claims of exact integer q |
+| F6 | P2:95% paired-t CI of inline/second ratio of read ratios wholly below1 at0/20/200us, six cells, n5, no multiplicity correction; supported6/6 | Protocol P2 and analysis rules; I `P2`, `cells[I1_r04/r16_d0000/d0020/d0200].P2.{applicable,supported,ratio_of_read_ratios.{geometric_mean_ratio,t_ci}}`. Criterion is equivalently log-CI wholly below0; descriptive strength only |
+| F7 | All six P2 point estimates and CIs printed in new subsection | Same I paths as F6, r4 .823[.716,.946], .659[.595,.730], .755[.707,.807]; r16 .895[.822,.975], .755[.632,.903], .824[.781,.869]. Audited against supplied values with direct three-decimal rounding; D `mismatches=[]` |
+| F8 | Under inline, A read advantage not detectable atd≤20us (CIs include1) and reversed at200us (CIs below1) | I `cells[I1_r04/r16_d0000/d0020/d0200].conditions.inline.ratios_A_over_AMIN.R.{geometric_mean_ratio,t_ci}`; generated `intervention.tex`. No crossing prediction was preregistered; the change is reported alongside P2 but not as a new prediction |
+| F9 | P3 models use arithmetic mean times/waits,2 waits second/1 inline; errors within±15% in all16; errors−3.7%…+7.5% second,−2.0%…+8.4% inline | Protocol P3; I `P3.cycle_verdict`, `cells[*].conditions[second/inline].cycle.{T_AMIN,w_A,waits,predicted_T_A,observed_T_A,relative_error,supported}`; D `summary.cycle_error_percent_second/inline`. Error sign is(predicted−observed)/observed; output percentages=100×relative_error |
+| F10 | P3 predicted writer-improvement CIs wholly above1 at200us/2ms for both r; supported4/4; all eight W_A inline/second estimates/CIs in table | I `P3.writer_improvement_verdict`, `cells[I1_r04/r16_d0200/d2000].P3_writer_improvement`, `.ratios_inline_over_second.A.W.{geometric_mean_ratio,t_ci}`; all cells displayed in intervention table. No predicted writer improvement at0/20us is claimed |
+| F11 | Descriptive S second/inline pairs: r4 .965/.963,.946/.974,.731/.864,.356/.539; r16 .945/.987,.855/.983,.662/.848,.310/.479; substantial part of high-dose write penalty from second wait, residual penalty remained | I `cells[*].conditions[second/inline].ratios_A_over_AMIN.W.geometric_mean_ratio`; generated table. Causal interpretation is bounded to this flag intervention, engine, workload; not “simply waste” or a general optimization recommendation |
+| F12 | Inline q≈1 in both arms atd≤200us, so R_A/R_A-min essentially S | I corresponding `.conditions.inline.arms[A/AMIN].q.{mean,geometric_mean}`, `.ratios_A_over_AMIN.{R,W}.geometric_mean_ratio`; identity R_A/R_AMIN=(q_A/q_AMIN)×(W_A/W_AMIN) per trial. “Essentially” does not claim exact equality (q differs slightly) |
+| F13 | Absolute R fell in both arms: A.507–.763, A-min.608–.850 inline/second; A-min W.970–1.044, all CIs include1 | I `cells[*].ratios_inline_over_second[A/AMIN][R/W].{geometric_mean_ratio,t_ci}`; D `summary.{A_cross_R,AMIN_cross_R,AMIN_cross_W}`. No equivalence test for the intervention's A-min W or detectable increase is claimed |
+| F14 | A-min q second1.655–1.722 atd0,≈1.28–1.32 at20/200us,≈1 at2ms; inline≈1 atd≤200us and.857–.858 at2ms; last effect uninvestigated | I `cells[*].conditions[second/inline].arms.AMIN.q.mean`; generated table. Protocol explicitly makes A-min q descriptive, with no prediction |
+| F15 | Read p99 rose in both arms; geometric mean paired inline/second ratios1.330–2.049 A,1.578–2.125 A-min | Analysis I omits latency percentiles (its “p99” keys concern platform timer selftests). U `result.latency_read_nanos.p99` is the source. D `cells[*].trial_p99_ns[A/AMIN][inline/second]`, `.p99_inline_over_second[A/AMIN]`, `summary.p99_A/p99_AMIN`; formula exp(mean(log(inline p99)−log(second p99))) over the five complete rounds. No p99 CI/test was preregistered or added. Helper `descriptive_geometric_ratio` is unit-tested against arithmetic-aggregation alternatives |
+| F16 | Re-run baseline reproduced q pattern but ratios differed; r16,d20 S.855 vs main.944; cohorts not pooled | I `cells.I1_r16_d0020.conditions.second.ratios_A_over_AMIN.W.geometric_mean_ratio`=.8553326342800859 vs J `cells.X1_r16_d0020.ratios.W['A/AMIN'].geometric_mean_ratio`=.9437725029773809; I `n_complete=5` vs J10. Text does not assume identical throughput or infer a new drift cause |
+| F17 | Intervention supported A coupling to acquisition count and low-cost advantage's dependence on second acquisition; extra admission traded reads/p99 for A writes | F4–F16. Supported here, not “proven.” Scope remains one engine/Go lock implementation. Default-path figure remains schematic; threshold-reaching commits may still acquire twice under inline. No recommendation to remove the acquisition generally |
+| F18 | New threats: found post hoc, predictions frozen before real trials; n5, no P2 correction, no B;8smoke runs seen/excluded after predictions written but before freeze | Intervention protocol Deviations and pilot log; commit4c2749b; I `cells[*].n_complete`, `P2.note`, plan arm sets. Main discovery retains its exploratory label; smoke data not pooled. Inline removes the equal-second-wait assumption only below threshold, F2/F9; bimodality/full-histogram caveat unchanged |
+| F19 | Data statement intervention revision4c2749b, plan2e44fcacb3e7, runner5dc57e7d85d7, preregistration path | I `git_revision`, `plan_sha256`, `runner_sha256`; `research/experiments/phase_i7/X_INTERVENTION_PREREGISTRATION.md` exists. Audit checks plan/ledger digests and trial revisions/runner hashes. Remote archival status remains unverified as in D13 |
+| F20 | Intervention table q arithmetic, W/R ratios geometric, CIs95% paired-t, n5, units paired across four runs | I `.conditions[*].arms[*].q.mean` for q; `.ratios_inline_over_second.A.W` for writer gain; `.conditions[*].ratios_A_over_AMIN.W.geometric_mean_ratio` for S; `.conditions[*].ratios_A_over_AMIN.R` for read ratios/CIs. No CI recalculated by the table generator; three-decimal formatting only |
+
+The descriptive audit parsed all160 trial envelopes and the plan/ledger without
+running either analyzer on campaign data. It verified raw in-window counts/q,
+paired seeds, first-attempt success and provenance, and the supplied rounded P2,
+inline read-ratio, writer-ratio and S values (`D.mismatches=[]`). The p99 ranges
+required raw trial JSON because the analysis JSON omits them; this source limitation
+is disclosed rather than modifying the frozen analyzer or its output.
 
 ## Engine audit and other manuscript provenance
 
