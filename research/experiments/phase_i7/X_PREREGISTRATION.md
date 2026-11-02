@@ -130,3 +130,19 @@ records the git revision, runner SHA-256, timer self-test and power scheme in `p
   about 1 h 55 min. No design value was changed because of these data.
 - **Change to the old E blocks:** fixture construction now runs without WAL fsync in all blocks.
   E blocks are not re-run in this campaign, so no X outcome is affected.
+- **2026-10-31, aborted first start (discarded).** The campaign was started from commit `afdfb67` and
+  stopped by the operator after 38 of 519 trials (all SUCCESS; the 39th was interrupted) because
+  continuous mains power could not be guaranteed. The reason was unrelated to the results. All partial
+  output was deleted without being analysed. The only values seen were the driver's per-trial
+  status lines. The full plan is re-run from the start with the same plan and seeds.
+- **2026-11-02, analysis rules fixed before any campaign data exists.** These make §5 precise and do not
+  change any test or margin:
+  - A cell is `equivalent` if its Holm-adjusted TOST p is below 0.05, `not_equivalent` if its 90% CI lies
+    wholly outside the margin, and `inconclusive` otherwise.
+  - The Holm families for H2 are W (10 X1 cells), R (10 X1 and 4 X2 cells) and publication lock-wait p99
+    (4 X2 cells).
+  - H1 uses triplets complete across all four delay levels, ordered d = 0, 20, 200, 2000 µs, with predicted
+    ranks 4, 3, 2, 1.
+  - A zero in an outcome other than W is excluded for that triplet and reported.
+  - The percentile bootstrap uses seed 20261030.
+  - The analysis is implemented in `research/experiments/analysis/x_readcost_analyze.py`.
