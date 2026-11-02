@@ -1,0 +1,148 @@
+# X-readcost-v1 claim–evidence map
+
+Paths are relative to the repository root. `J` denotes
+`research/experiments/phase_i7/X_READCOST/analysis/x_readcost_results.json`;
+`M` denotes the generated sibling `mechanism.json`; `T` denotes an envelope in
+`research/experiments/phase_i7/X_READCOST/campaign/trials/*.json`.
+JSON paths below use bracketed keys (including slashes) literally; `*` means the
+specified cells/arms, not pooling. `r04/r16` mean the separate four-/sixteen-reader
+cells. Rates and ratios are geometric means unless explicitly described otherwise.
+All reported CIs are copied from J, not recalculated by the paper generator.
+Rounded prose is supported by the unrounded fields below.
+Table files define row macros loaded in the manuscript preamble. Number formatting
+rounds each source value directly; it does not change any stored estimate or CI.
+
+## Abstract
+
+| ID | Claim | Evidence |
+|---|---|---|
+| A1 | Completed pre-registered campaign in a Go LSM engine, comparing A, A-min, B | J `campaign_id`, `partial=false`, `git_revision`; `X_PREREGISTRATION.md` §§2–5; freeze commit `ffd1db6`, preceding measured `c53ee5b`; arm implementation rows E1–E8 below |
+| A2 | All 519 trials succeeded on first attempt | J `counts`: planned/attempted/attempts/successful = 519, retried/failed/dropped/missing = 0; `failed_attempts_detail=[]` |
+| A3 | Ten matched triplets per cell | J `cells[*].n_complete=10`, `complete_triplets`; `campaign/plan.json` `trials[*].seed`, arm, cell, triplet; generator validates envelope pairing against J |
+| A4 | Write dose trend, L=294, exact one-sided p=7.86e-9, both reader counts | J `H1['4'/'16'].{L,p,method,n,levels_us}`; `paper/generated/facts.tex` `HOneP`; H1 direction in protocol §5 |
+| A5 | Four-reader S=0.988, 0.758, 0.361 at 0, 200 us, 2 ms | J `cells['X1_r04_d0000/d0200/d2000'].ratios.W['A/AMIN'].geometric_mean_ratio`; generated `x1.tex` |
+| A6 | A completed more reads than both alternatives through 200 us; A/A-min ranges 1.19–1.45 (r4), 1.09–1.43 (r16) | J `cells[X1_r04/r16_d0000/d0020/d0200].ratios.R['A/AMIN' and 'A/B'].{geometric_mean_ratio,t_ci}`; generated `x1.tex`; every relevant ratio/CI >1 |
+| A7 | Read advantage was unpredicted; mechanism exploratory | Protocol §5 specifies a write trend, not a directional read test; dated post-data addendum; brief's post-data disclosure; this manuscript labels the explanation post hoc |
+| A8 | Approximately two reads per reader per commit under A, consistent with two acquisitions and Go admission | M `summary.A_admission_nonlegacy`, `cells[*].arms.A.reads_per_reader_per_commit`; code E6/E7; inference, not intervention evidence |
+| A9 | Throughput equivalence in ten write/fourteen read cells; publication equivalence not established | J `H2.W`, `H2.R`, `H2.publication_lock_wait_p99` classifications; M `h2_bootstrap_check`; generated `h2_publication.tex` |
+| A10 | Churn did not isolate snapshot lifecycle cost | J `H3`, X3 `ratios.R['A/AMIN'/'A/B']`; A-min has no reader-set descriptor allocation (E2); inference is explicitly limited |
+| A11 | Writer retained conflict validation and WAL sync under exclusive lock; limited engine/workload scope | `lsmengine/transaction.go:61`, `:72`, `:97`; `lsmengine/wal.go:61`; `lsmengine/manager.go:776`; T `spec.wal_sync=true`; E6 |
+
+## Introduction contributions
+
+| ID | Claim | Evidence |
+|---|---|---|
+| I1 | Pre-registered, paired, dose-controlled three-arm comparison: 17 cells, 519 trials; measured A read critical sections about 14 us to 430 ms | A1–A3; J `cells` has 17 entries; `cells[X1*].arms.A.read_cs_mean.mean` spans 13.572311324976088 us to 430.129751… ms (arithmetic means of trial means); protocol §3; T paired seeds |
+| I2 | Write penalty small at tens of microseconds, severe at milliseconds; unpredicted read crossover | R3–R10; J X1 non-legacy S is 0.926–0.988 at 0/20 us nominal and 0.311–0.361 at 2 ms; corresponding measured A means are reported in R6. “Severe” describes the latter point estimates, not a universal threshold |
+| I3 | Exploratory account connects read throughput, exclusive-acquisition count and Go admission; q near 2.00 in every non-legacy cell | R11–R20; M `cells[X1 nonlegacy/X3].arms.A.reads_per_reader_per_commit.mean` ranges 2.002678694…–2.012826606…; individual extrema in R13; no formal mechanism/intervention claim |
+| I4 | Bounded throughput equivalence within 10% in tested X1/X2 cells, no publication-wait equivalence, correction of churn attribution | R25–R30 and R38–R43; protocol's log-symmetric margin is exactly `[0.90,1/0.90]`, displayed `[0.90,1.11]`; “within 10%” is the requested shorthand for this declared margin, not identity. W applies to X1 only; R to X1 and X2 |
+
+## Results and their tables/figure captions
+
+| ID | Claim | Evidence |
+|---|---|---|
+| R1 | 519/519, no retry/exclusion/zero adjustment | J `counts`, `outcome_exclusions=[]`, `dropped_triplets=[]`, `cells[*].zero_adjusted=false`, `zero_adjusted_triplets=[]` |
+| R2 | 2026-11-02 12:41–14:35 UTC, about 1 h 54 min | M `campaign_timing`: extrema of T `timing.started_utc/finished_utc`; elapsed 6806.566649 s (about 113.44 min; rounded duration) |
+| R3 | Both H1 tests: L=294, p=7.86e-9, n=10 | J `H1['4'/'16'].{L,p,n,method}` |
+| R4 | Eight non-legacy S values, two legacy values | J `H1['4'/'16'].geometric_mean_S`, `.legacy.geometric_mean_ratio`; full 95% CIs in J `cells[X1*].ratios.W['A/AMIN'].t_ci` and `paper/generated/x1.tex` |
+| R5 | r16 zero/20 us not separated by these summaries; mean ranks 3.4/3.6 | J `H1['16'].mean_ranks[0:2]`; J corresponding S CIs overlap substantially. No adjacent-dose hypothesis test was performed; the wording is descriptive |
+| R6 | Measured A mean critical sections: 13.6/33.6/163 us, 1.89/125 ms (r4); 21.2/39.3/173 us, 1.91/430 ms (r16) | J `cells[X1*].arms.A.read_cs_mean.mean` in ns; divided by 1000 for `x1.tex` (us), by 1e6 for prose ms. These are arithmetic means of trial means |
+| R7 | A-min/B X1 mean critical sections 1.5–4.9 us | Min/max of J `cells[X1*].arms['AMIN'/'B'].read_cs_mean.mean / 1000` = 1.451353741…/4.892153541… |
+| R8 | Ten read ratios: 1.193/1.452/1.187/.725/.489 and 1.097/1.432/1.093/.625/.522, with CIs | J `cells[X1*].ratios.R['A/AMIN'].{geometric_mean_ratio,t_ci}`; `x1.tex` |
+| R9 | A had higher read throughput through 200 us, crossover by 2 ms, small low-dose write cost | J X1 `ratios.R['A/AMIN'/'A/B']`, `ratios.W['A/AMIN']`; 0/20 us write ratios 0.926–0.988, 200 us 0.705–0.758. “Modest” is confined to low dose, not asserted for the entire sweep |
+| R10 | Read analysis descriptive/unpredicted | Protocol §5 H1 tests W; post-data disclosure, not a new confirmatory hypothesis |
+| R11 | Two exclusive acquisitions in each successful campaign commit, only first wait instrumented | `lsmengine/transaction.go:60` observer arrival and `:61` Lock; unlock and call to flush check at `:113`; `lsmengine/manager.go:1063` second Lock with no wait observer |
+| R12 | Waiting writer blocks new readers; Unlock releases queued readers | [Go RWMutex documentation](https://pkg.go.dev/sync#RWMutex); [Go source](https://github.com/golang/go/blob/master/src/sync/rwmutex.go), Lock/RLock and Unlock; installed Go source was also inspected. This policy supports an approximate prediction, not a universal one-read guarantee |
+| R12a | With a continually waiting writer, alternating admission phases resemble phase-fair behaviour; not formally characterized here | R11–R13 and Go policy in R12; Brandenburg and Anderson, [ECRTS 2009 paper](https://people.mpi-sws.org/~bbb/papers/pdf/ecrts09.pdf), §3.2, printed p.4, lists alternating reader/writer phases and batch admission among phase-fair properties. “Resembles” is an analogy; Go's RWMutex is not asserted to satisfy all formal phase-fair properties |
+| R13 | R≈2rW under A; individual non-legacy trial q range 2.002–2.015 across eleven cells | M `summary.A_admission_nonlegacy`: min 2.001712328… max 2.015425403…, cells 11; M `cells[X1 nonlegacy/X3].arms.A.trials[*]`; generator uses T in-window operation counts, never total or late completions |
+| R14 | Legacy individual q=1.98–2.29, about 26/6 commits per trial | M `summary.A_admission_legacy`; M `cells['X1_r04_legacy'/'X1_r16_legacy'].arms.A.commits_in_window.mean` (26.1/6.0) and per-trial records |
+| R15 | Coupling roughly invariant with r/d | M `cells[X1 nonlegacy/X3].arms.A.reads_per_reader_per_commit`; generated `mechanism.tex`; descriptive inference from narrow q range |
+| R16 | A-min/B q≈1.7, 1.3, 1.0, then .007–.018 | M X1 `arms['AMIN'/'B'].reads_per_reader_per_commit.mean`; generated `mechanism.tex` |
+| R17 | Outside-lock I/O can miss the second admission and block behind next commit | `manager.go:498` A-min reader; `snapshot.go:676` B reader; E6/E7. Explanation consistent with R13/R16, not tested by intervention |
+| R18 | Cycle formula T=1/W and predicted T_A=T_A-min+2w_A; arithmetic trial means | M `definitions`, `cells[X1*].arms[*].trials[*].cycle_ms/first_commit_wait_ms`; T `result.timestamps.measured_window_ns`, operations in-window commits, sync commit mean wait |
+| R19 | All ten observed/predicted X1 cycles and errors, −13.8% to +10.6% | M `cells[X1*].cycle_model`; `summary.X1_cycle_error_percent`; generated `mechanism.tex`; errors are prediction/observation−1, not the reverse |
+| R20 | Equal second wait assumed; model not validated | Second acquisition uninstrumented (R11); formula in generator; no intervention trials or validation fit were run |
+| R21 | Writer-side delay in all arms explains denominator degradation | `transaction.go:72`, `manager.go:776` disk branches, `sstableReader.go:202`, `:232`; J per-arm W. Code observation plus limited mechanism interpretation |
+| R22 | A-min r4 cycles 1.07, 1.06, 1.23, 2.79 ms | M `cells['X1_r04_d0000/d0020/d0200/d2000'].arms.AMIN.cycle_ms.mean` |
+| R23 | r4,d0 p50 45/808 us, p99 2.27/2.31 ms A/A-min | J `cells.X1_r04_d0000.arms['A'/'AMIN'].read_p50/read_p99.geometric_mean`; unit conversion ns→us/ms |
+| R24 | Fast/blocked cycles and roughly 1 ms commit; inferred bimodality, no full histogram reported | R13/R16/R22/R23, M cycles; inference explicitly labeled; manuscript provides percentiles/counters, no full histogram |
+| R25 | All ten W/fourteen R H2 classifications equivalent after Holm | J `H2.W[*].classification/p_holm`, `H2.R[*].classification/p_holm`; protocol §5/§9 |
+| R26 | Bootstrap agrees on within-margin status for W/R | M `h2_bootstrap_check.{W,R}.all_bootstrap_intervals_within_margin=true`; J `H2.{W,R}[*].bootstrap_ci`; no bootstrap TOST p-values are claimed |
+| R27 | X2 d0 R ratio .970 [.962,.978], detectable ≈3% within margin | J `H2.R.X2_r16_d0000.{geometric_mean_ratio,t_ci}`; 100(1−ratio); CI excludes 1; equivalence margin in J `equivalence_margin_log` |
+| R28 | Publication H2 d0 3.11 [1.54,6.30], not equivalent; other three inconclusive | J `H2.publication_lock_wait_p99[*].{geometric_mean_ratio,t_ci,classification}`; generated `h2_publication.tex` |
+| R29 | Both short-lock arms' cell geometric p99s below 42 us | J `cells[X2*].arms['AMIN'/'B'].publication_lock_wait_p99.geometric_mean /1000`; maximum 41.5988… us. This is not an assertion about every individual trial |
+| R30 | p99 over 20 events close to maximum/noisy | T X2 `sync_instrumentation.writer_lock_wait_nanos.flush_publish.count=20` including drain; J `notes[0]`; wide H2 CIs. Qualitative caution, not quantified noise attribution |
+| R31 | All non-legacy X2 arm/trials completed 20/20 in window | M `cells['X2_r16_d0000/d0200/d2000'].arms[*].publications_in_window.{min,max}=20`; T `result.lsm_diagnostics.publication_events_realized_in_window` |
+| R32 | Legacy X2 A median 10.5, range 9–11; A-min/B all20 | M `cells.X2_r16_legacy.arms[*].publications_in_window`; generated `x2.tex` |
+| R33 | Publication deadline failure only at legacy in X2 | R31/R32; conclusion restricted to scheduled twenty-publication, ten-second X2 windows |
+| R34 | A publication geometric p99 247/450 us, 3.89 ms, 1.05 s; legacy arithmetic mean1.06 s | J X2 A `publication_lock_wait_p99.geometric_mean` and legacy `.mean`; generated `x2.tex`. Legacy: geometric 1.054655258… s, arithmetic 1.0594811904 s |
+| R35 | X2 d0 A-min/B p99 41.6/13.4 us | J `cells.X2_r16_d0000.arms['AMIN'/'B'].publication_lock_wait_p99.geometric_mean /1000` |
+| R36 | X2 A/A-min reads1.05/1.00/1.00/.65 | J X2 `ratios.R['A/AMIN'].geometric_mean_ratio` |
+| R37 | X3 memtable16 KiB; mean measured flushes38.8–73.2 | T X3 `spec.memtable_threshold_bytes=16384`; M `summary.X3_flushes.cell_arm_mean_min/max`; generated `x3.tex`; diagnostic scope includes drain, not strictly ten-second completions |
+| R38 | X3 all arm W/R rates | J `cells[X3*].arms[*].{W,R}.geometric_mean`; generated `x3.tex` |
+| R39 | X3 A-min/B read .956/1.005/.970, write .957/1.004/.968; all t CIs include1 | J `H3['X3_r01/r04/r16'].{W,R}.{geometric_mean_ratio,t_ci}`; `x3.tex` |
+| R40 | X3 bootstrap r1/r16 exclude1 narrowly for W/R; example .909–.997 | J corresponding `H3.*.*.bootstrap_ci`; `x3.tex`; small B-favoring differences cannot be ruled out (limited inference) |
+| R41 | X3 A/B R1.66/1.53/1.29, W.89/.84/.71 | J `cells[X3*].ratios.{R,W}['A/B'].geometric_mean_ratio` |
+| R42 | A-min also below A in reads at same size; no snapshot-cost attribution/claim of avoiding churn penalty | J X3 `ratios.R['A/AMIN']` >1 with CI>1; E2 (no set descriptors); inference, not evidence of allocation causality |
+| R43 | X3 qA≈2.01, A-min/B≈1.1 | M X3 `arms[*].reads_per_reader_per_commit.mean`; generated `mechanism.tex` |
+| R44 | DriftD=.979, abslog=.021, below.10 threat threshold | J `drift.{D,ln_D,threat_to_validity}`; protocol §7; generated `facts.tex` |
+| R45 | Other-arm anchors≈1.09, logs.087/.090, near but below threshold; single observations | J `drift.arms.A/B.t10.{ratio,log_ratio}`; T `ANCHOR_t00/t10_A/B` one envelope per time/arm |
+| R46 | Figure error bars and points | `x_readcost_figures.py:arm_summary`, `dose_plot`, `ratio_plot`, `publication_plot`, `forest` (function names are stable locators): X1 per-arm geometric means/95% log-t; ratio paired geometric/95%; X2 counts arithmetic mean/min–max and waits geometric/95%; forest paired geometric, H2 90%, H3 95% |
+| R46a | Fig.2: most X1 write intervals are smaller than the markers | J X1 arm W CIs; `x_readcost_figures.py:dose_plot`, `point`, and `setup` (marker size 5, log y axes); visual assessment of `analysis/figures/fig_x1_writes.png`, not an additional numerical outcome |
+| R47 | Four-lane timeline is schematic, not a measured trace; A has two reads per commit, A-min fewer | Authored schematic based on E1/E2/E6/E7 and exploratory R13/R16; caption states it is not a measured trace, time arrow says not to scale. A's twice-per-commit statement illustrates the approximate admission mechanism, not an exact guarantee or a measured duration |
+
+## Discussion: implications for this class of engine
+
+| ID | Claim | Evidence |
+|---|---|---|
+| P1 | At tested measured A holds below about 40 us, point-estimate write penalties were within 8%, and A completed more reads | J X1 r4/r16, d0/d20: mean A CS 13.572311324976088, 33.64641440878266, 21.242431197594833, 39.307049746154846 us; S respectively 0.9881629426676402, 0.9261103918684351, 0.9369902606032205, 0.9437725029773809. Largest `100*(1-S)` = 7.388960813156487%; “within 7%” would be false. Read ratios in R8/R9 |
+| P2 | At nominal20 us, 95% S CIs [.881,.974] (r4), [.887,1.004] (r16); 8% is not a confidence bound | J `cells.X1_r04_d0020.ratios.W['A/AMIN'].t_ci` = [0.8805717794774917,0.9740040254703959]; r16 equivalent path = [0.8868023450993953,1.004402550690546]. Lower bounds allow approximately 11.94%/11.32% penalties; r16 upper bound includes1 |
+| P3 | At tested holds above about150 us, point-estimate penalties at least24% | J X1 r4/r16 d200: holds163.30421513923807/173.41273815260965 us and S0.7584648925415418/0.7052009047246135, i.e. penalties24.153510745845818%/29.479909527538652%. The d2ms S0.36107640524550244/0.31055297495148 and legacy S0.004249913816751241/0.0016963173749270188 imply larger penalties. This is a statement about tested point estimates, not a continuous or CI-supported threshold |
+| P4 | Shorter reader holds did not remove writer exclusive work; writer-side change may be next step; admission policy belongs in performance model | R11–R24; E6/E7; low-dose A-min/B cycles approximately1ms, with delayed conflict validation at larger dose. Suggested design implications, not intervention evidence; text explicitly denies established transfer to other engines |
+
+## Conclusion
+
+| ID | Claim | Evidence |
+|---|---|---|
+| C1 | Completed519-trial campaign | A2/R1 |
+| C2 | Write penalty increased with measured critical-section length; small at tens of us | R3–R7; nominal dose trend tested, measured CS reported descriptively; no threshold test claimed |
+| C3 | A completed more reads through nominal200 us | R8–R10 |
+| C4 | Exploratory two-admission account consistent with counters; policy/acquisition count shaped low-cost behavior | R11–R20; bounded interpretation, no intervention or general law |
+| C5 | Leasing matched B within declared margin in10write/14read cells; not publication wait | R25–R30; explicit X1/X2 scope, not an H2 claim about X3 |
+| C6 | Neither removed writer exclusive work | A11/R21; E6 |
+| C7 | Churn did not isolate snapshot lifecycle cost | R38–R43; E2 |
+| C8 | Bounded by engine/host/workload | Protocol design and Threats; one host, one writer, closed-loop small uniform workload, no independent replication |
+
+## Engine audit and other manuscript provenance
+
+| ID | Claim / correction | Source |
+|---|---|---|
+| E1 | A reads memory and disk under manager RLock | `lsmengine/manager.go:278` (Get, defer unlock and table loop) |
+| E2 | A-min short lock, pointer copy, atomic table leases, scratch reuse; no reader-set snapshot allocation | `lsmengine/manager.go:371`, `:498`, `:547`, `:565`; `lsmengine/sstableReader.go:51` |
+| E3 | Active+retired lease shutdown barrier, preserve leased handles on timeout | `manager.go:437` drainReaderLeases, `:462` countOutstandingLeasesLocked, `:672` Close |
+| E4 | B pin/release use snapshotMu, memory under manager lock, I/O outside | `lsmengine/snapshot.go:297` acquireSnapshotLocked, `:340` ReleaseSnapshot, `:676` getApproachB |
+| E5 | B descriptor publication/retirement, constituent references, eligible async cleanup outside manager/snapshot locks | `snapshot.go:622` publishFlushLockedApproachB, `:387` reclaimSnapshotLocked, `:505` scheduleAsyncCleanupLocked, `:524` drainPendingCleanups; pointer assignment at `:658`, not atomic pointer swap |
+| E6 | Two acquisitions; exclusive conflict validation and WAL sync in every arm | `transaction.go:61`, `:72`, `:97`, `:113`; `manager.go:776`, `:1063`; `wal.go:61` |
+| E7 | RWMutex admission mechanics | [Go docs](https://pkg.go.dev/sync#RWMutex), [source](https://github.com/golang/go/blob/master/src/sync/rwmutex.go); describes Go, not all reader-writer locks |
+| E8 | Skiplist.5/max32; 56-bit packed sequence/eight-byte suffix; block threshold and flat index; range/binary-search/ReadAt/early-stop/multi-block behavior | `lsmengine/memtable.go:31`; `manager.go:205`; `keys.go:9`; `sstableBuilder.go:24`, `:51`, `:73`; `sstableReader.go:155`, `:212`, `:232`, `:275` |
+| D1 | Frozen before first non-smoke trial | `git log -- X_PREREGISTRATION.md`: freeze `ffd1db6`; rules/addendum commit `c53ee5b` is measured revision in all T; protocol still has historical DRAFT header, which was not edited |
+| D2 | Host hardware/build15.2GiB/6C12T, Go1.26.3/GOMAXPROCS12 | `research/experiments/phase_i7/13_G1_REVIEW_EVIDENCE.md:6`; T `runtime`; `campaign/platform.json` |
+| D3 | AC, Best performance overlay, Balanced base plan, Defender enabled | Protocol §8 and operator report in task brief; `campaign/platform.json.power_scheme` confirms only Balanced base plan. Overlay/Defender were not populated in trial manifests (Defender null); do not present as independently machine-verified |
+| D4 | Workload/cells/seeds/order/anchors/publication schedule | `campaign/plan.json` (master_seed, seed_encoding, cells, trials); `research/experiments/phase_i7/cmd/xcampaign/plan.go:35`, `:70`, `:72`; `harness2/run.go:298` midpoint schedule. Those directories were read only |
+| D4a | X2 release every0.5s from0.25s to9.75s | `research/experiments/phase_i7/harness2/run.go:307`: `intended=(2*i+1)*windowNs/(2*targetEvents)`; `:308` waits until that intended time; `:316` releases one flush. T X2 spec has measurement_duration_ms10000 and publication_events20, giving i=0…19 → .25+.5i seconds. This is the intended release schedule, not a claim of exact physical publication times |
+| D5 | Delay implementation and probe9/35/215us/2.25ms | `sstableReader.go:212`, `:232`; X_READCOST/README.md probe table (means of per-table values, approximately rounded); QueryPerformanceCounter in `lsmengine/hrclock_windows.go:13` |
+| D6 | No-drop histogram/window/drain/flush scope | `harness2/run.go:185`, `:319`, `:415`, `:425`; `harness2/histogram.go:8`; initial flush baseline in `run.go:124` (before read-only warmup); counters may include drain/cooldown activity |
+| D7 | Analysis plan/statistics/bootstrap | Protocol §§4–7/dated rules; `x_readcost_analyze.py:33`, `:57`, `:74`, `:85`, `:291` (unchanged); J `bootstrap_seed`, `bootstrap_resamples`, `equivalence_margin_log` |
+| D8 | Earlier960trials, write3.3–18.5x, churn.63–.74 | `research/experiments/analysis/comparative_tables.md:2`; sibling `comparative_analysis.json` `WORKLOAD_B1_NATURAL_WRITE_PROGRESS.cells['32'/'8'].writes_ratio`, `WORKLOAD_D_READER_CHURN.cells['1'/'4'].ratio_median`; historical summary only |
+| D9 | Earlier60of330/18triplets; withdrawn5% claim | `research/experiments/analysis/i7_reproduced_metrics.json` `total_g4_trials`, `complete_experimental_triplets`; `research/experiments/phase_i7/06_TRIAL_INVENTORY.md:267` planned330; `r1_2a_sensitivity_results.json.cohort_1_all_18.metrics`; stopping-rule account supplied in brief; no old results regenerated |
+| D10 | Aborted38/519, smoke21, no design change; Linux raceGo1.27.3 | Protocol §9; X_READCOST/README.md aborted start and verification sections; no race run performed for this rewrite |
+| D11 | No optional WAL-sync-off sensitivity; X blocks reject it | Dated post-data addendum; `harness2/spec.go:122`; no such trials in plan/envelopes |
+| D12 | fsync≈1ms floor and LevelDB contrast | M low-dose A-min cycles ≈1.06–1.07ms; code E6. Attribution to fsync is a source-informed interpretation without sync-off intervention. [LevelDB DBImpl::Write](https://github.com/google/leveldb/blob/main/db/db_impl.cc) releases mutex around AddRecord/Sync (lines1151–1163 at review) |
+| D13 | Revision/plan/runner hashes and repository statement | J `git_revision`, `plan_sha256`, `runner_sha256`; T platform/runtime matches; `campaign/platform.json`. Local X_READCOST remains git-ignored: archiving statement follows requested repository availability text, but remote archival status was not verified or changed |
+| D14 | Data statement names branch research/x-readcost and paper/CLAIM_EVIDENCE_MAP_X.md | `git branch --show-current` returned `research/x-readcost`; claim-map file exists at the stated path. No remote push or archival action was performed |
+| D15 | Golan-Gueta et al. propose cLSM for scalable LSM concurrency | [Author-hosted EuroSys 2015 paper](https://iditkeidar.com/wp-content/uploads/files/ftp/clsm.pdf), abstract, printed p.1. Related Work uses the requested general description and makes no performance claim about cLSM |
+| D16 | Courtois pose readers-writers problem; Mellor-Crummey/Scott give scalable reader-writer algorithms; Brandenburg/Anderson propose phase-fair locks | Cited paper titles; [Brandenburg/Anderson ECRTS2009 paper](https://people.mpi-sws.org/~bbb/papers/pdf/ecrts09.pdf), printed p.1 Related Work and abstract, and §3.2. No claim of a formal classification of this engine's lock |
+
+No current-campaign numerical result was untraceable. Inferences (admission,
+bimodality, fsync floor, CPU/page-cache effects) are distinguished from direct
+measurements. Operator-only metadata and archival status are identified above.

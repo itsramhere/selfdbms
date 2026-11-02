@@ -167,7 +167,8 @@ def ratio_plot(data, directory):
                                             [s.get('t_ci') for s in values], style, 4, offset))
         handles.append(Line2D([], [], **style))
     ax.axhline(1, color='#555555', linewidth=1)
-    ax.text(.02, 1, 'no penalty', transform=ax.get_yaxis_transform(), va='bottom', fontsize=7)
+    ax.annotate('no penalty', xy=(.98, 1), xycoords=ax.get_yaxis_transform(),
+                xytext=(0, 3), textcoords='offset points', ha='right', va='bottom', fontsize=7)
     ax.axvline(3.8, color='#aaaaaa', linewidth=.7, linestyle='--')
     ax.set(yscale='log', xticks=X, xticklabels=LEVELS, xlabel='Nominal read delay', ylabel='Write ratio A / A-min')
     ax.yaxis.set_major_formatter(FuncFormatter(plain_number))

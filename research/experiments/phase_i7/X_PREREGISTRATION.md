@@ -146,3 +146,12 @@ records the git revision, runner SHA-256, timer self-test and power scheme in `p
   - A zero in an outcome other than W is excluded for that triplet and reported.
   - The percentile bootstrap uses seed 20261030.
   - The analysis is implemented in `research/experiments/analysis/x_readcost_analyze.py`.
+
+
+### 2026-11-02, post-data notes (no test or margin changed)
+
+- Campaign completed 2026-11-02 from `c53ee5b`: 519/519 first-attempt success.
+- Post-data finding: commit conflict validation performs delayed SSTable block reads under the exclusive lock in all arms, so section 1's statement that A-min and B do not hold the lock across the delay applies to readers only.
+- Post-data finding: two exclusive acquisitions per commit and R = 2rW under A; exploratory.
+- The optional WAL-sync-off run was not performed; the harness rejects `wal_sync=false` for X blocks.
+- No test, margin, or exclusion was changed.
