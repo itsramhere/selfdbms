@@ -1,0 +1,16 @@
+{"event":"STARTED","trial_id":"I1_r16_d0200_second_t01_AMIN","attempt":1,"start_utc":"2026-11-02T15:37:05.4962504Z","exit_code":-1,"status":"STARTED","wall_ms":0}
+{"event":"FINISHED","trial_id":"I1_r16_d0200_second_t01_AMIN","attempt":1,"start_utc":"2026-11-02T15:37:05.4962504Z","end_utc":"2026-11-02T15:37:17.9599499Z","exit_code":0,"status":"SUCCESS","wall_ms":12463}
+{"event":"STARTED","trial_id":"I1_r16_d0200_second_t01_A","attempt":1,"start_utc":"2026-11-02T15:37:17.9681619Z","exit_code":-1,"status":"STARTED","wall_ms":0}
+{"event":"FINISHED","trial_id":"I1_r16_d0200_second_t01_A","attempt":1,"start_utc":"2026-11-02T15:37:17.9681619Z","end_utc":"2026-11-02T15:37:30.4716827Z","exit_code":0,"status":"SUCCESS","wall_ms":12503}
+{"event":"STARTED","trial_id":"I1_r16_d0200_inline_t01_AMIN","attempt":1,"start_utc":"2026-11-02T15:37:30.4764744Z","exit_code":-1,"status":"STARTED","wall_ms":0}
+{"event":"FINISHED","trial_id":"I1_r16_d0200_inline_t01_AMIN","attempt":1,"start_utc":"2026-11-02T15:37:30.4764744Z","end_utc":"2026-11-02T15:37:42.933227Z","exit_code":0,"status":"SUCCESS","wall_ms":12456}
+{"event":"STARTED","trial_id":"I1_r16_d0200_inline_t01_A","attempt":1,"start_utc":"2026-11-02T15:37:42.9379219Z","exit_code":-1,"status":"STARTED","wall_ms":0}
+{"event":"FINISHED","trial_id":"I1_r16_d0200_inline_t01_A","attempt":1,"start_utc":"2026-11-02T15:37:42.9379219Z","end_utc":"2026-11-02T15:37:55.3465518Z","exit_code":0,"status":"SUCCESS","wall_ms":12408}
+{"event":"STARTED","trial_id":"I1_r04_d0020_inline_t01_AMIN","attempt":1,"start_utc":"2026-11-02T15:37:55.3981911Z","exit_code":-1,"status":"STARTED","wall_ms":0}
+{"event":"FINISHED","trial_id":"I1_r04_d0020_inline_t01_AMIN","attempt":1,"start_utc":"2026-11-02T15:37:55.3981911Z","end_utc":"2026-11-02T15:38:07.8582783Z","exit_code":0,"status":"SUCCESS","wall_ms":12460}
+{"event":"STARTED","trial_id":"I1_r04_d0020_inline_t01_A","attempt":1,"start_utc":"2026-11-02T15:38:07.9110568Z","exit_code":-1,"status":"STARTED","wall_ms":0}
+{"event":"FINISHED","trial_id":"I1_r04_d0020_inline_t01_A","attempt":1,"start_utc":"2026-11-02T15:38:07.9110568Z","end_utc":"2026-11-02T15:38:20.371111Z","exit_code":0,"status":"SUCCESS","wall_ms":12460}
+{"event":"STARTED","trial_id":"I1_r04_d0020_second_t01_A","attempt":1,"start_utc":"2026-11-02T15:38:20.4239521Z","exit_code":-1,"status":"STARTED","wall_ms":0}
+{"event":"FINISHED","trial_id":"I1_r04_d0020_second_t01_A","attempt":1,"start_utc":"2026-11-02T15:38:20.4239521Z","end_utc":"2026-11-02T15:38:32.8370249Z","exit_code":0,"status":"SUCCESS","wall_ms":12413}
+{"event":"STARTED","trial_id":"I1_r04_d0020_second_t01_AMIN","attempt":1,"start_utc":"2026-11-02T15:38:32.9012369Z","exit_code":-1,"status":"STARTED","wall_ms":0}
+{"event":"FINISHED","trial_id":"I1_r04_d0020_second_t01_AMIN","attempt":1,"start_utc":"2026-11-02T15:38:32.9012369Z","end_utc":"2026-11-02T15:38:45.4312025Z","exit_code":0,"status":"SUCCESS","wall_ms":12529}

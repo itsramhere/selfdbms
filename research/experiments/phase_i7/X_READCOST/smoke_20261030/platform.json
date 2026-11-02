@@ -1,0 +1,90 @@
+{
+  "runner_path": "C:\\Users\\ramst\\AppData\\Local\\Temp\\claude\\C--Users-ramst--claude-spares-spare-1eC2Cz\\c4daef8c-329e-45ab-9d62-3e83c9298e35\\scratchpad\\smoke\\bin\\i7trial.exe",
+  "data_root": "C:\\Users\\ramst\\AppData\\Local\\Temp\\claude\\C--Users-ramst--claude-spares-spare-1eC2Cz\\c4daef8c-329e-45ab-9d62-3e83c9298e35\\scratchpad\\smoke\\out\\data",
+  "trial_timeout": "2m0s",
+  "campaign_id": "X-readcost-v1",
+  "git_head": "4a9a798cfb4e79a12cf7f3fd83f2eefcfa15f9ec",
+  "git_status": "M lsmengine/compaction.go\n M lsmengine/manager.go\n M lsmengine/sstableReader.go\n M lsmengine/wal.go\n M research/experiments/phase_i7/cmd/i7trial/main.go\n M research/experiments/phase_i7/cmd/i7trial/main_test.go\n M research/experiments/phase_i7/harness2/metrics.go\n M research/experiments/phase_i7/harness2/run.go\n M research/experiments/phase_i7/harness2/run_test.go\n M research/experiments/phase_i7/harness2/spec.go\n M research/experiments/phase_i7/harness2/syncinstr.go\n?? I7_FINAL_MANUSCRIPT_REVIEW.zip\n?? I7_R1_1_SCIENTIFIC_REVIEW.zip\n?? lsmengine/doc.go\n?? lsmengine/hrclock_other.go\n?? lsmengine/hrclock_windows.go\n?? lsmengine/race_disabled_test.go\n?? lsmengine/race_enabled_test.go\n?? lsmengine/read_delay_test.go\n?? lsmengine/read_path_test.go\n?? lsmengine/wal_sync_test.go\n?? research/experiments/phase_i7/X_IMPLEMENTATION_REPORT.md\n?? research/experiments/phase_i7/X_PREREGISTRATION.md\n?? research/experiments/phase_i7/cmd/xcampaign/\n?? research/experiments/phase_i7/harness2/histogram.go\n?? research/experiments/phase_i7/harness2/x_test.go",
+  "git_dirty": true,
+  "allow_dirty": true,
+  "runner_sha256": "cbd7b2568984272255e087cb63080f22452bb6c9f2e74cd27d2c97b047f1adac",
+  "plan_sha256": "68ad96f878c19bcb24c4c7f68e39e8f371420274c76c483f7dab54618c088136",
+  "selftest": {
+    "affinity": {
+      "actual": "0xfff",
+      "actual_cores": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "expected": "unset",
+      "match": true
+    },
+    "cgo_enabled": "",
+    "protocol": "1.2.0-windows",
+    "runtime": {
+      "go_version": "go1.26.3",
+      "goos": "windows",
+      "goarch": "amd64",
+      "gomaxprocs": 12,
+      "num_cpu": 12,
+      "affinity_mask": "0xfff",
+      "exe_sha256": "cbd7b2568984272255e087cb63080f22452bb6c9f2e74cd27d2c97b047f1adac",
+      "exe_path": "C:\\Users\\ramst\\AppData\\Local\\Temp\\claude\\C--Users-ramst--claude-spares-spare-1eC2Cz\\c4daef8c-329e-45ab-9d62-3e83c9298e35\\scratchpad\\smoke\\bin\\i7trial.exe",
+      "protocol_version": "1.2.0-windows"
+    },
+    "schedule": {
+      "clock": "QueryPerformanceCounter",
+      "interval_us": 5000,
+      "max_abs_err_us": 184.5,
+      "n": 200,
+      "p50_abs_err_us": 0.6,
+      "p95_abs_err_us": 22.9,
+      "p99_abs_err_us": 62.8
+    },
+    "schema": "i7.selftest.v1",
+    "separate": [
+      "E7"
+    ],
+    "supported": [
+      "E1",
+      "E2",
+      "E3",
+      "E4",
+      "E5",
+      "D3",
+      "PF",
+      "SMOKE",
+      "X1",
+      "X2",
+      "X3",
+      "ANCHOR"
+    ],
+    "timers": {
+      "now_distinct_values": 53,
+      "now_effective_hz": 1028.9903469056512,
+      "now_min_positive_delta_ns": 199600,
+      "now_window_ns": 51506800,
+      "qpc_burst_ns": 3132900,
+      "qpc_freq_hz": 10000000,
+      "qpc_min_positive_delta_ns": 100,
+      "sleep1ms_max_abs_err_ns": 1285200,
+      "sleep1ms_mean_ns": 1695305
+    },
+    "tmp_dir": "C:\\Users\\ramst\\AppData\\Local\\Temp"
+  },
+  "power_scheme": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+  "free_disk_bytes": 82419494912,
+  "checked_utc": "2026-10-30T07:22:25.1780335Z",
+  "goos": "windows",
+  "goarch": "amd64"
+}

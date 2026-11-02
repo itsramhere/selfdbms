@@ -1,0 +1,20 @@
+{
+  "attempted": 21,
+  "campaign_id": "X-readcost-v1",
+  "eta_seconds": 6985,
+  "failed": 0,
+  "last": {
+    "event": "FINISHED",
+    "trial_id": "X2_r16_legacy_t01_B",
+    "attempt": 1,
+    "start_utc": "2026-10-30T07:27:04.0571612Z",
+    "end_utc": "2026-10-30T07:27:21.3136124Z",
+    "exit_code": 0,
+    "status": "SUCCESS",
+    "wall_ms": 17256
+  },
+  "remaining": 498,
+  "success": 21,
+  "total": 519,
+  "updated_utc": "2026-10-30T07:27:21.3164145Z"
+}

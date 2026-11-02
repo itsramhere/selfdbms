@@ -1,0 +1,20 @@
+{
+  "attempted": 160,
+  "campaign_id": "X-intervention-v1",
+  "eta_seconds": 0,
+  "failed": 0,
+  "last": {
+    "event": "FINISHED",
+    "trial_id": "I1_r04_d2000_second_t05_AMIN",
+    "attempt": 1,
+    "start_utc": "2026-11-02T16:13:45.8098094Z",
+    "end_utc": "2026-11-02T16:13:58.1666089Z",
+    "exit_code": 0,
+    "status": "SUCCESS",
+    "wall_ms": 12355
+  },
+  "remaining": 0,
+  "success": 160,
+  "total": 160,
+  "updated_utc": "2026-11-02T16:13:58.1723379Z"
+}

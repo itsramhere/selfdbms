@@ -1,0 +1,20 @@
+{
+  "attempted": 519,
+  "campaign_id": "X-readcost-v1",
+  "eta_seconds": 0,
+  "failed": 0,
+  "last": {
+    "event": "FINISHED",
+    "trial_id": "ANCHOR_t10_AMIN",
+    "attempt": 1,
+    "start_utc": "2026-11-02T14:34:55.7645823Z",
+    "end_utc": "2026-11-02T14:35:08.1018805Z",
+    "exit_code": 0,
+    "status": "SUCCESS",
+    "wall_ms": 12337
+  },
+  "remaining": 0,
+  "success": 519,
+  "total": 519,
+  "updated_utc": "2026-11-02T14:35:08.1060544Z"
+}

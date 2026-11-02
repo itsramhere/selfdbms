@@ -1,0 +1,90 @@
+{
+  "runner_path": "C:\\Users\\ramst\\Documents\\Projects\\selfdbms\\research\\experiments\\phase_i7\\X_READCOST\\intervention_smoke_bin\\i7trial.exe",
+  "data_root": "C:\\Users\\ramst\\Documents\\Projects\\selfdbms\\research\\experiments\\phase_i7\\X_READCOST\\intervention_smoke\\data",
+  "trial_timeout": "2m0s",
+  "campaign_id": "X-intervention-v1",
+  "git_head": "c53ee5b18404320eb29b76f50e3dc913992f0383",
+  "git_status": "M lsmengine/manager.go\n M lsmengine/transaction.go\n M paper.tex\n M research/experiments/analysis/x_readcost_figures.py\n M research/experiments/phase_i7/X_PREREGISTRATION.md\n M research/experiments/phase_i7/cmd/i7trial/main.go\n M research/experiments/phase_i7/cmd/i7trial/main_test.go\n M research/experiments/phase_i7/cmd/xcampaign/execution.go\n M research/experiments/phase_i7/cmd/xcampaign/main.go\n M research/experiments/phase_i7/cmd/xcampaign/main_test.go\n M research/experiments/phase_i7/cmd/xcampaign/plan.go\n M research/experiments/phase_i7/harness2/run.go\n M research/experiments/phase_i7/harness2/spec.go\n?? lsmengine/inline_flush_check_test.go\n?? paper/CLAIM_EVIDENCE_MAP_X.md\n?? paper/figures/x_readcost/\n?? paper/generated/\n?? research/experiments/analysis/test_x_intervention_analyze.py\n?? research/experiments/analysis/test_x_readcost_paper_tables.py\n?? research/experiments/analysis/x_intervention_analyze.py\n?? research/experiments/analysis/x_readcost_paper_tables.py\n?? research/experiments/phase_i7/X_INTERVENTION_PREREGISTRATION.md\n?? research/experiments/phase_i7/cmd/xcampaign/intervention_test.go",
+  "git_dirty": true,
+  "allow_dirty": true,
+  "runner_sha256": "10c2ebdb033c2f2ac596727969a0f662a9281a593e4dbd591d4bac48160c15af",
+  "plan_sha256": "2e44fcacb3e79dbddc079508cf663a5f794bd6c1f749567d115b2082adf83573",
+  "selftest": {
+    "affinity": {
+      "actual": "0xfff",
+      "actual_cores": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "expected": "unset",
+      "match": true
+    },
+    "cgo_enabled": "",
+    "protocol": "1.2.0-windows",
+    "runtime": {
+      "go_version": "go1.26.3",
+      "goos": "windows",
+      "goarch": "amd64",
+      "gomaxprocs": 12,
+      "num_cpu": 12,
+      "affinity_mask": "0xfff",
+      "exe_sha256": "10c2ebdb033c2f2ac596727969a0f662a9281a593e4dbd591d4bac48160c15af",
+      "exe_path": "C:\\Users\\ramst\\Documents\\Projects\\selfdbms\\research\\experiments\\phase_i7\\X_READCOST\\intervention_smoke_bin\\i7trial.exe",
+      "protocol_version": "1.2.0-windows"
+    },
+    "schedule": {
+      "clock": "QueryPerformanceCounter",
+      "interval_us": 5000,
+      "max_abs_err_us": 238.6,
+      "n": 200,
+      "p50_abs_err_us": 0.4,
+      "p95_abs_err_us": 11.5,
+      "p99_abs_err_us": 64
+    },
+    "schema": "i7.selftest.v1",
+    "separate": [
+      "E7"
+    ],
+    "supported": [
+      "E1",
+      "E2",
+      "E3",
+      "E4",
+      "E5",
+      "D3",
+      "PF",
+      "SMOKE",
+      "X1",
+      "X2",
+      "X3",
+      "ANCHOR"
+    ],
+    "timers": {
+      "now_distinct_values": 51,
+      "now_effective_hz": 996.9582997755866,
+      "now_min_positive_delta_ns": 523800,
+      "now_window_ns": 51155600,
+      "qpc_burst_ns": 2835000,
+      "qpc_freq_hz": 10000000,
+      "qpc_min_positive_delta_ns": 100,
+      "sleep1ms_max_abs_err_ns": 1510400,
+      "sleep1ms_mean_ns": 1673482
+    },
+    "tmp_dir": "C:\\Users\\ramst\\AppData\\Local\\Temp"
+  },
+  "power_scheme": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+  "free_disk_bytes": 157993410560,
+  "checked_utc": "2026-11-02T15:37:03.8302026Z",
+  "goos": "windows",
+  "goarch": "amd64"
+}
