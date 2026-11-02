@@ -85,6 +85,7 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		ReadPath:               readPath,
 		ReadIODelay:            time.Duration(spec.ReadIODelayUs) * time.Microsecond,
 		DisableWALSync:         !spec.WalSync,
+		InlineFlushCheck:       spec.InlineFlushCheck,
 		WalPath:                filepath.Join(spec.DataDir, "wal.log"),
 		DataDir:                spec.DataDir,
 		MemtableThresholdBytes: defaultMemtable, // large during fixture construction

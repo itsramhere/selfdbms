@@ -5,7 +5,6 @@ import (
 	"fmt"
 )
 
-
 type Transaction struct {
 	WriteSet       map[string]PendingWrite
 	ReadTs         uint64
@@ -59,6 +58,9 @@ func (t *Transaction) Commit() error {
 	// from this arrival at Manager.Mu to completed acquisition.
 	lockArrival := t.Man.writerLockArrival(LockSiteCommit)
 	t.Man.Mu.Lock()
+	if t.Man.commitAcquisitionHook != nil {
+		t.Man.commitAcquisitionHook()
+	}
 	lockArrival.acquired(t.Man)
 
 	if t.Man.state != EngineOpen {
@@ -82,7 +84,6 @@ func (t *Transaction) Commit() error {
 			return errors.New("Write-write conflict detected. Transaction aborted.")
 		}
 	}
-
 
 	if t.Man.Log == nil || t.Man.Log.File == nil {
 		t.Man.Mu.Unlock()
@@ -110,9 +111,11 @@ func (t *Transaction) Commit() error {
 
 	// Unlock before triggering the flush check to prevent deadlocks
 	// with the background worker
+	needFlushCheck := !t.Man.inlineFlushCheck || t.Man.memtableAtThresholdLocked()
 	t.Man.Mu.Unlock()
-
-	t.Man.checkAndTriggerFlush()
+	if needFlushCheck {
+		t.Man.checkAndTriggerFlush()
+	}
 
 	return nil
 }

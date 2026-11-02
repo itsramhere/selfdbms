@@ -175,21 +175,21 @@ func TestApprovalAndPlanResume(t *testing.T) {
 	if err := writeJSON(path, a); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkApproval(path, runnerHash, planHash); err != nil {
+	if err := checkApproval(path, runnerHash, planHash, campaignID); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkApproval(path, runnerHash, strings.Repeat("0", 64)); err == nil {
+	if err := checkApproval(path, runnerHash, strings.Repeat("0", 64), campaignID); err == nil {
 		t.Fatal("plan mismatch accepted")
 	}
-	if err := checkApproval(path, strings.Repeat("0", 64), planHash); err == nil {
+	if err := checkApproval(path, strings.Repeat("0", 64), planHash, campaignID); err == nil {
 		t.Fatal("runner mismatch accepted")
 	}
-	if err := checkApproval("", runnerHash, planHash); err == nil {
+	if err := checkApproval("", runnerHash, planHash, campaignID); err == nil {
 		t.Fatal("missing approval accepted")
 	}
 	a.Approved = false
 	_ = writeJSON(path, a)
-	if err := checkApproval(path, runnerHash, planHash); err == nil {
+	if err := checkApproval(path, runnerHash, planHash, campaignID); err == nil {
 		t.Fatal("unapproved accepted")
 	}
 	arbitrary := t.TempDir()

@@ -220,7 +220,7 @@ func execute(ctx context.Context, o options, plan Plan, p platform, w io.Writer)
 		success, failed, attempted := counts(plan, latest)
 		remaining := len(pending(plan, latest))
 		eta := time.Duration(float64(time.Since(started)) / float64(executed) * float64(remaining)).Round(time.Second)
-		progress := map[string]any{"campaign_id": campaignID, "updated_utc": time.Now().UTC().Format(time.RFC3339Nano), "total": len(plan.Trials), "attempted": attempted, "success": success, "failed": failed, "remaining": remaining, "last": final, "eta_seconds": eta.Seconds()}
+		progress := map[string]any{"campaign_id": plan.CampaignID, "updated_utc": time.Now().UTC().Format(time.RFC3339Nano), "total": len(plan.Trials), "attempted": attempted, "success": success, "failed": failed, "remaining": remaining, "last": final, "eta_seconds": eta.Seconds()}
 		if err = writeJSON(filepath.Join(o.out, "progress.json"), progress); err != nil {
 			return err
 		}

@@ -187,13 +187,16 @@ func TestValidateEnvelopeErrorPaths(t *testing.T) {
 func TestXApproval(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "approval.json")
 	a := Approval{CampaignID: "X-readcost-v1", Approved: true, RunnerSHA256: runtimeInfo().ExeSHA256, PlanSHA256: strings.Repeat("a", 64)}
-	b, _ := json.Marshal(a)
-	if err := os.WriteFile(path, b, 0644); err != nil {
-		t.Fatal(err)
-	}
-	for _, block := range []string{"X1", "X2", "X3", "ANCHOR"} {
-		if _, err := checkApproval(path, "X", block); err != nil {
+	for _, campaign := range []string{"X-readcost-v1", "X-intervention-v1"} {
+		a.CampaignID = campaign
+		b, _ := json.Marshal(a)
+		if err := os.WriteFile(path, b, 0644); err != nil {
 			t.Fatal(err)
+		}
+		for _, block := range []string{"X1", "X2", "X3", "ANCHOR"} {
+			if _, err := checkApproval(path, "X", block); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	if _, err := checkApproval(path, "X", "E2"); err == nil {
@@ -203,9 +206,16 @@ func TestXApproval(t *testing.T) {
 		t.Fatal("X approval authorized G4")
 	}
 	a.PlanSHA256 = ""
-	b, _ = json.Marshal(a)
+	b, _ := json.Marshal(a)
 	_ = os.WriteFile(path, b, 0644)
 	if _, err := checkApproval(path, "X", "X1"); err == nil {
 		t.Fatal("missing plan hash accepted")
+	}
+	a.PlanSHA256 = strings.Repeat("a", 64)
+	a.CampaignID = "X-other-v1"
+	b, _ = json.Marshal(a)
+	_ = os.WriteFile(path, b, 0644)
+	if _, err := checkApproval(path, "X", "X1"); err == nil {
+		t.Fatal("unknown X campaign accepted")
 	}
 }

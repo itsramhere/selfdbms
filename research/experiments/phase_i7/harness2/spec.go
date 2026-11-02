@@ -99,7 +99,8 @@ type Spec struct {
 	// trial and the aggregate is reported in
 	// TrialResult.Sync. Default off: the observer costs one nil check on
 	// uninstrumented paths and the trial schema gains no field.
-	InstrumentSync bool `json:"instrument_sync,omitempty"`
+	InstrumentSync   bool `json:"instrument_sync,omitempty"`
+	InlineFlushCheck bool `json:"inline_flush_check,omitempty"`
 }
 
 // Mode returns the driver mode implied by the block and cell.

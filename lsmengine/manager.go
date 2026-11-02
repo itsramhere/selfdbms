@@ -67,7 +67,9 @@ type Config struct {
 	MemtableThresholdBytes int           // Optional flush threshold in bytes (default: 64MB if <= 0)
 	ReadPath               ReadPathMode  // Shared SSTable point-read path (default: block reads).
 	ReadIODelay            time.Duration // Experiment-only delay per block read; ignored by legacy scans.
-	DisableWALSync         bool          // Skip WAL fsync when true (default: sync each record).
+	// InlineFlushCheck is experiment-only; false keeps the existing commit path.
+	InlineFlushCheck bool
+	DisableWALSync   bool // Skip WAL fsync when true (default: sync each record).
 }
 
 func DefaultConfig() Config {
@@ -82,6 +84,8 @@ type Manager struct {
 	readPath                    ReadPathMode
 	readIODelay                 time.Duration
 	disableWALSync              atomic.Bool
+	inlineFlushCheck            bool
+	commitAcquisitionHook       func() // Test hook for the two commit-path acquisitions; nil otherwise.
 	CurrentSeqNo                atomic.Uint64
 	Mu                          *sync.RWMutex
 	compactionMu                sync.Mutex
@@ -191,6 +195,7 @@ func CreateManagerWithConfig(cfg Config) (*Manager, error) {
 	man.readPath = cfg.ReadPath
 	man.readIODelay = cfg.ReadIODelay
 	man.disableWALSync.Store(cfg.DisableWALSync)
+	man.inlineFlushCheck = cfg.InlineFlushCheck
 	man.dataDir = cfg.DataDir
 	man.memtableThresholdBytes = cfg.MemtableThresholdBytes
 	man.CurrentSeqNo.Store(0)
@@ -1059,18 +1064,26 @@ func (m *Manager) TriggerFlush() error {
 	return nil
 }
 
+// memtableAtThresholdLocked requires Manager.Mu to be held.
+func (m *Manager) memtableAtThresholdLocked() bool {
+	threshold := m.memtableThresholdBytes
+	if threshold <= 0 {
+		threshold = 64 * 1024 * 1024
+	}
+	return m.Mem.SizeBytes >= int64(threshold)
+}
+
 func (m *Manager) checkAndTriggerFlush() {
 	m.Mu.Lock()
+	if m.commitAcquisitionHook != nil {
+		m.commitAcquisitionHook()
+	}
 	if m.state != EngineOpen || m.flushErr != nil {
 		m.Mu.Unlock()
 		return
 	}
 
-	threshold := m.memtableThresholdBytes
-	if threshold <= 0 {
-		threshold = 64 * 1024 * 1024
-	}
-	if m.Mem.SizeBytes < int64(threshold) {
+	if !m.memtableAtThresholdLocked() {
 		m.Mu.Unlock()
 		return
 	}

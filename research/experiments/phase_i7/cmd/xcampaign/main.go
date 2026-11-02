@@ -21,6 +21,7 @@ import (
 
 type options struct {
 	runner, out, data, approval string
+	design                      string
 	master                      uint64
 	dry, allowDirty             bool
 	limit                       int
@@ -58,6 +59,7 @@ func main() {
 	flag.StringVar(&o.runner, "runner", "", "path to i7trial executable (required)")
 	flag.StringVar(&o.out, "out", "", "empty results root or existing X campaign (required)")
 	flag.StringVar(&o.data, "data", "", "scratch data root (default <out>/data)")
+	flag.StringVar(&o.design, "design", "readcost", "campaign design: readcost|intervention")
 	flag.Uint64Var(&o.master, "master-seed", 20261030, "paired design master seed")
 	flag.BoolVar(&o.dry, "dry-run", false, "print and persist plan and preflight; launch no trials")
 	flag.IntVar(&o.limit, "limit", 0, "execute at most N unfinished trials (0 = all)")
@@ -65,6 +67,15 @@ func main() {
 	flag.DurationVar(&o.timeout, "trial-timeout", 120*time.Second, "per-process timeout")
 	flag.BoolVar(&o.allowDirty, "allow-dirty", false, "permit and record a dirty worktree")
 	flag.Parse()
+	masterSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "master-seed" {
+			masterSet = true
+		}
+	})
+	if !masterSet && o.design == "intervention" {
+		o.master = 20261103
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	if err := run(ctx, o, os.Stdout); err != nil {
@@ -73,7 +84,7 @@ func main() {
 	}
 }
 
-func checkApproval(path, runnerHash, planHash string) error {
+func checkApproval(path, runnerHash, planHash, expectedCampaign string) error {
 	if path == "" {
 		return errors.New("-approve is required for execution")
 	}
@@ -85,8 +96,8 @@ func checkApproval(path, runnerHash, planHash string) error {
 	if err = json.Unmarshal(b, &a); err != nil {
 		return err
 	}
-	if !a.Approved || a.CampaignID != campaignID {
-		return errors.New("approval must authorize X-readcost-v1")
+	if !a.Approved || a.CampaignID != expectedCampaign {
+		return fmt.Errorf("approval must authorize %s", expectedCampaign)
 	}
 	if !strings.EqualFold(a.RunnerSHA256, runnerHash) || !strings.EqualFold(a.PlanSHA256, planHash) {
 		return errors.New("approval runner_sha256 or plan_sha256 mismatch")
@@ -136,7 +147,11 @@ func preparePlan(out string, b []byte, runnerHash string) error {
 	if err = json.Unmarshal(oldPlatform, &p); err != nil {
 		return err
 	}
-	if p.CampaignID != campaignID || p.RunnerSHA256 != runnerHash || p.PlanSHA256 != digest(b) {
+	var plan Plan
+	if err = json.Unmarshal(b, &plan); err != nil {
+		return err
+	}
+	if p.CampaignID != plan.CampaignID || p.RunnerSHA256 != runnerHash || p.PlanSHA256 != digest(b) {
 		return errors.New("stored runner or plan hash differs; refusing resume")
 	}
 	return nil
@@ -152,8 +167,8 @@ func commandOutput(ctx context.Context, name string, args ...string) (string, er
 	return strings.TrimSpace(string(b)), nil
 }
 
-func preflight(ctx context.Context, o options, runnerHash, planHash string) (platform, error) {
-	p := platform{RunnerPath: o.runner, DataRoot: o.data, TrialTimeout: o.timeout.String(), CampaignID: campaignID, RunnerSHA256: runnerHash, PlanSHA256: planHash, AllowDirty: o.allowDirty, CheckedUTC: time.Now().UTC().Format(time.RFC3339Nano), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
+func preflight(ctx context.Context, o options, runnerHash, planHash, selectedCampaign string) (platform, error) {
+	p := platform{RunnerPath: o.runner, DataRoot: o.data, TrialTimeout: o.timeout.String(), CampaignID: selectedCampaign, RunnerSHA256: runnerHash, PlanSHA256: planHash, AllowDirty: o.allowDirty, CheckedUTC: time.Now().UTC().Format(time.RFC3339Nano), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}
 	var err error
 	if p.GitHEAD, err = commandOutput(ctx, "git", "rev-parse", "HEAD"); err != nil {
 		return p, err
@@ -254,21 +269,29 @@ func run(ctx context.Context, o options, w io.Writer) error {
 		return err
 	}
 	runnerHash := digest(runnerBytes)
-	plan := makePlan(o.master)
+	var plan Plan
+	switch o.design {
+	case "", "readcost":
+		plan = makePlan(o.master)
+	case "intervention":
+		plan = makeInterventionPlan(o.master)
+	default:
+		return fmt.Errorf("unknown design %q; expected readcost|intervention", o.design)
+	}
 	b, err := jsonBytes(plan)
 	if err != nil {
 		return err
 	}
 	planHash := digest(b)
 	if !o.dry {
-		if err = checkApproval(o.approval, runnerHash, planHash); err != nil {
+		if err = checkApproval(o.approval, runnerHash, planHash, plan.CampaignID); err != nil {
 			return err
 		}
 	}
 	if err = preparePlan(o.out, b, runnerHash); err != nil {
 		return err
 	}
-	p, err := preflight(ctx, o, runnerHash, planHash)
+	p, err := preflight(ctx, o, runnerHash, planHash, plan.CampaignID)
 	if err != nil {
 		fmt.Fprintf(w, "Preflight FAILED: %v\n", err)
 		return err
@@ -287,7 +310,11 @@ func run(ctx context.Context, o options, w io.Writer) error {
 			s := c.Spec
 			fmt.Fprintf(w, "%-20s %-5s %7d %-12s %9d %8d %7d %6d\n", c.ID, s.Block, s.ReaderConcurrency, s.ReadPath, s.ReadIODelayUs, s.MemtableThresholdBytes, s.WriterConcurrency, s.PublicationEvents)
 		}
-		fmt.Fprintf(w, "Total: %d cells x 10 triplets x 3 arms + 9 anchor runs = %d runs\nETA at 14s/trial: %s\nFirst 20 schedule rows:\n", len(plan.Cells), len(plan.Trials), (time.Duration(len(plan.Trials)) * 14 * time.Second).String())
+		if plan.CampaignID == "X-intervention-v1" {
+			fmt.Fprintf(w, "Total: %d cells x 5 rounds x 2 conditions x 2 arms = %d runs\n", len(plan.Cells), len(plan.Trials))
+		} else {
+			fmt.Fprintf(w, "Total: %d cells x 10 triplets x 3 arms + 9 anchor runs = %d runs\nETA at 14s/trial: %s\nFirst 20 schedule rows:\n", len(plan.Cells), len(plan.Trials), (time.Duration(len(plan.Trials)) * 14 * time.Second).String())
+		}
 		for _, s := range plan.Trials[:20] {
 			fmt.Fprintf(w, "[%03d/%d] %s t%02d %-4s seed=%d\n", s.RunlistPosition, len(plan.Trials), s.Cell, s.Triplet, s.Arm, s.Seed)
 		}
