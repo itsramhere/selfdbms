@@ -1,0 +1,90 @@
+{
+  "runner_path": "C:\\Users\\ramst\\Documents\\Projects\\selfdbms\\research\\experiments\\phase_i7\\X_READCOST\\tablecount_smoke_bin\\i7trial.exe",
+  "data_root": "C:\\Users\\ramst\\Documents\\Projects\\selfdbms\\research\\experiments\\phase_i7\\X_READCOST\\tablecount_smoke\\data",
+  "trial_timeout": "2m0s",
+  "campaign_id": "X-tablecount-v1",
+  "git_head": "c3428329d41424249a8c452eae22657e3249e335",
+  "git_status": "M research/experiments/phase_i7/cmd/i7trial/main.go\n M research/experiments/phase_i7/cmd/i7trial/main_test.go\n M research/experiments/phase_i7/cmd/xcampaign/README.md\n M research/experiments/phase_i7/cmd/xcampaign/main.go\n M research/experiments/phase_i7/cmd/xcampaign/plan.go\n?? lsmengine/lifecycle_bench_test.go\n?? research/experiments/analysis/test_x_tablecount_analyze.py\n?? research/experiments/analysis/x_tablecount_analyze.py\n?? research/experiments/phase_i7/X_TABLECOUNT_PREREGISTRATION.md\n?? research/experiments/phase_i7/cmd/xcampaign/tablecount_test.go\n?? research/experiments/phase_i7/harness2/tablecount_test.go",
+  "git_dirty": true,
+  "allow_dirty": true,
+  "runner_sha256": "830619df6f6c506006c53568deb1c55e379b9788a0af6d466b27589f04fd87c0",
+  "plan_sha256": "0bc0042b8b8ad5ba517c911e9ec9a7dab00ec1b1f0c78876fc26be969eddc048",
+  "selftest": {
+    "affinity": {
+      "actual": "0xfff",
+      "actual_cores": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "expected": "unset",
+      "match": true
+    },
+    "cgo_enabled": "",
+    "protocol": "1.2.0-windows",
+    "runtime": {
+      "go_version": "go1.26.3",
+      "goos": "windows",
+      "goarch": "amd64",
+      "gomaxprocs": 12,
+      "num_cpu": 12,
+      "affinity_mask": "0xfff",
+      "exe_sha256": "830619df6f6c506006c53568deb1c55e379b9788a0af6d466b27589f04fd87c0",
+      "exe_path": "C:\\Users\\ramst\\Documents\\Projects\\selfdbms\\research\\experiments\\phase_i7\\X_READCOST\\tablecount_smoke_bin\\i7trial.exe",
+      "protocol_version": "1.2.0-windows"
+    },
+    "schedule": {
+      "clock": "QueryPerformanceCounter",
+      "interval_us": 5000,
+      "max_abs_err_us": 8.1,
+      "n": 200,
+      "p50_abs_err_us": 0.2,
+      "p95_abs_err_us": 3.1,
+      "p99_abs_err_us": 5.6
+    },
+    "schema": "i7.selftest.v1",
+    "separate": [
+      "E7"
+    ],
+    "supported": [
+      "E1",
+      "E2",
+      "E3",
+      "E4",
+      "E5",
+      "D3",
+      "PF",
+      "SMOKE",
+      "X1",
+      "X2",
+      "X3",
+      "ANCHOR"
+    ],
+    "timers": {
+      "now_distinct_values": 57,
+      "now_effective_hz": 1039.112561412464,
+      "now_min_positive_delta_ns": 508700,
+      "now_window_ns": 54854500,
+      "qpc_burst_ns": 1645100,
+      "qpc_freq_hz": 10000000,
+      "qpc_min_positive_delta_ns": 100,
+      "sleep1ms_max_abs_err_ns": 748400,
+      "sleep1ms_mean_ns": 1512447
+    },
+    "tmp_dir": "C:\\Users\\ramst\\AppData\\Local\\Temp"
+  },
+  "power_scheme": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+  "free_disk_bytes": 157734739968,
+  "checked_utc": "2026-11-02T18:52:14.6015054Z",
+  "goos": "windows",
+  "goarch": "amd64"
+}

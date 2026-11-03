@@ -1,0 +1,90 @@
+{
+  "runner_path": "C:\\Users\\ramst\\Documents\\Projects\\selfdbms\\research\\experiments\\phase_i7\\X_READCOST\\compaction_smoke_bin\\i7trial.exe",
+  "data_root": "C:\\Users\\ramst\\Documents\\Projects\\selfdbms\\research\\experiments\\phase_i7\\X_READCOST\\compaction_smoke\\data",
+  "trial_timeout": "2m0s",
+  "campaign_id": "X-compaction-v1",
+  "git_head": "d49bccc1cd601f78d81434f68352ba23355a8358",
+  "git_status": "M lsmengine/compaction.go\n M lsmengine/snapshot.go\n M lsmengine/sstableReader.go\n M lsmengine/sync_instrumentation.go\n M research/experiments/analysis/x_readcost_analyze.py\n M research/experiments/phase_i7/cmd/i7trial/main.go\n M research/experiments/phase_i7/cmd/i7trial/main_test.go\n M research/experiments/phase_i7/cmd/xcampaign/main.go\n M research/experiments/phase_i7/cmd/xcampaign/plan.go\n M research/experiments/phase_i7/harness2/run.go\n M research/experiments/phase_i7/harness2/spec.go\n M research/experiments/phase_i7/harness2/syncinstr.go\n?? lsmengine/compaction_instrumentation_test.go\n?? research/experiments/analysis/test_x_compaction_analyze.py\n?? research/experiments/analysis/x_compaction_analyze.py\n?? research/experiments/phase_i7/X_COMPACTION_PREREGISTRATION.md\n?? research/experiments/phase_i7/cmd/xcampaign/compaction_test.go\n?? research/experiments/phase_i7/harness2/compaction.go\n?? research/experiments/phase_i7/harness2/compaction_test.go",
+  "git_dirty": true,
+  "allow_dirty": true,
+  "runner_sha256": "c43d4f4608a4520f37edd4183bc374680748e2216ce21a6638a2777529008165",
+  "plan_sha256": "5330cbddf01b0e55cbf1b13f1b92417e6f6521d315a0402f1c46136528b988a1",
+  "selftest": {
+    "affinity": {
+      "actual": "0xfff",
+      "actual_cores": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "expected": "unset",
+      "match": true
+    },
+    "cgo_enabled": "",
+    "protocol": "1.2.0-windows",
+    "runtime": {
+      "go_version": "go1.26.3",
+      "goos": "windows",
+      "goarch": "amd64",
+      "gomaxprocs": 12,
+      "num_cpu": 12,
+      "affinity_mask": "0xfff",
+      "exe_sha256": "c43d4f4608a4520f37edd4183bc374680748e2216ce21a6638a2777529008165",
+      "exe_path": "C:\\Users\\ramst\\Documents\\Projects\\selfdbms\\research\\experiments\\phase_i7\\X_READCOST\\compaction_smoke_bin\\i7trial.exe",
+      "protocol_version": "1.2.0-windows"
+    },
+    "schedule": {
+      "clock": "QueryPerformanceCounter",
+      "interval_us": 5000,
+      "max_abs_err_us": 14,
+      "n": 200,
+      "p50_abs_err_us": 0.2,
+      "p95_abs_err_us": 3,
+      "p99_abs_err_us": 9.5
+    },
+    "schema": "i7.selftest.v1",
+    "separate": [
+      "E7"
+    ],
+    "supported": [
+      "E1",
+      "E2",
+      "E3",
+      "E4",
+      "E5",
+      "D3",
+      "PF",
+      "SMOKE",
+      "X1",
+      "X2",
+      "X3",
+      "ANCHOR"
+    ],
+    "timers": {
+      "now_distinct_values": 60,
+      "now_effective_hz": 1187.3053313967064,
+      "now_min_positive_delta_ns": 336200,
+      "now_window_ns": 50534600,
+      "qpc_burst_ns": 1281100,
+      "qpc_freq_hz": 10000000,
+      "qpc_min_positive_delta_ns": 100,
+      "sleep1ms_max_abs_err_ns": 1068800,
+      "sleep1ms_mean_ns": 1488568
+    },
+    "tmp_dir": "C:\\Users\\ramst\\AppData\\Local\\Temp"
+  },
+  "power_scheme": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+  "free_disk_bytes": 157900357632,
+  "checked_utc": "2026-11-02T17:16:58.7861946Z",
+  "goos": "windows",
+  "goarch": "amd64"
+}

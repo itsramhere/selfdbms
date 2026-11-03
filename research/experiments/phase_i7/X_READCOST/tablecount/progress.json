@@ -1,0 +1,20 @@
+{
+  "attempted": 480,
+  "campaign_id": "X-tablecount-v1",
+  "eta_seconds": 0,
+  "failed": 0,
+  "last": {
+    "event": "FINISHED",
+    "trial_id": "T1_n256_r04_w0_t10_AMIN",
+    "attempt": 1,
+    "start_utc": "2026-11-02T20:37:45.121826Z",
+    "end_utc": "2026-11-02T20:37:58.6457633Z",
+    "exit_code": 0,
+    "status": "SUCCESS",
+    "wall_ms": 13522
+  },
+  "remaining": 0,
+  "success": 480,
+  "total": 480,
+  "updated_utc": "2026-11-02T20:37:58.6484246Z"
+}

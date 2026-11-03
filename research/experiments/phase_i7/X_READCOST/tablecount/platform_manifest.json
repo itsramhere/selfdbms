@@ -1,0 +1,10 @@
+{
+  "git_dirty": false,
+  "git_revision": "adf754bd1e624101b8dc4d5c993fad76e9506781",
+  "go_version": "go1.26.3",
+  "logical_cores": 12,
+  "os": "windows",
+  "os_version": "windows_amd64",
+  "power_scheme": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+  "volume_free_bytes": 157716131840
+}

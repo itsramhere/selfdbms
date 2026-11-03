@@ -1,0 +1,20 @@
+{
+  "attempted": 9,
+  "campaign_id": "X-compaction-v1",
+  "eta_seconds": 4343,
+  "failed": 0,
+  "last": {
+    "event": "FINISHED",
+    "trial_id": "C1_r04_d0000_off_t01_AMIN",
+    "attempt": 1,
+    "start_utc": "2026-11-02T17:18:39.4630897Z",
+    "end_utc": "2026-11-02T17:18:51.8241397Z",
+    "exit_code": 0,
+    "status": "SUCCESS",
+    "wall_ms": 12360
+  },
+  "remaining": 351,
+  "success": 9,
+  "total": 360,
+  "updated_utc": "2026-11-02T17:18:51.8262624Z"
+}
