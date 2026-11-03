@@ -1,0 +1,20 @@
+{
+  "attempted": 360,
+  "campaign_id": "X-paced-v1",
+  "eta_seconds": 0,
+  "failed": 0,
+  "last": {
+    "event": "FINISHED",
+    "trial_id": "P1_d2000_f20_closed_t10_B",
+    "attempt": 1,
+    "start_utc": "2026-11-03T02:45:50.9643804Z",
+    "end_utc": "2026-11-03T02:46:03.321867Z",
+    "exit_code": 0,
+    "status": "SUCCESS",
+    "wall_ms": 12357
+  },
+  "remaining": 0,
+  "success": 360,
+  "total": 360,
+  "updated_utc": "2026-11-03T02:46:03.3274101Z"
+}

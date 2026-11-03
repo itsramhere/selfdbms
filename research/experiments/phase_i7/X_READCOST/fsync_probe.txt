@@ -1,0 +1,8 @@
+Non-campaign probe, 2026-11-03, after X-paced-v1. Script: fsync_probe.py. Append 140 bytes + fsync on a fresh file, paced for 10 s, no engine, no readers. Times in ms; @ is seconds into the run, # is the write index.
+
+rate 183 run 0: n 1830 p50 1.08 p99 1.86 max 31.8 ms; top 31.8ms@2.69s(#492), 6.8ms@2.68s(#491), 5.9ms@0.49s(#90), 5.7ms@5.64s(#1033), 5.5ms@3.02s(#553)
+rate 183 run 1: n 1830 p50 1.13 p99 2.91 max 31.9 ms; top 31.9ms@6.19s(#1132), 31.5ms@6.44s(#1162), 31.5ms@6.41s(#1159), 31.4ms@6.29s(#1146), 31.3ms@6.35s(#1151)
+rate 183 run 2: n 1830 p50 1.09 p99 1.93 max 12.8 ms; top 12.8ms@8.66s(#1584), 4.9ms@7.61s(#1392), 3.8ms@8.27s(#1513), 3.6ms@3.65s(#668), 3.0ms@1.33s(#244)
+rate 732 run 0: n 7320 p50 0.94 p99 1.88 max 36.0 ms; top 36.0ms@2.20s(#1466), 32.6ms@2.24s(#1468), 31.7ms@2.32s(#1479), 31.6ms@1.39s(#933), 31.5ms@1.32s(#928)
+rate 732 run 1: n 7320 p50 0.93 p99 2.63 max 36.5 ms; top 36.5ms@9.17s(#6517), 32.1ms@9.54s(#6710), 31.8ms@3.78s(#2767), 31.7ms@9.51s(#6708), 31.7ms@8.55s(#6120)
+rate 732 run 2: n 7320 p50 0.95 p99 1.51 max 31.5 ms; top 31.5ms@7.04s(#5128), 31.5ms@7.11s(#5136), 31.5ms@7.15s(#5139), 31.4ms@7.01s(#5125), 23.4ms@7.09s(#5133)
