@@ -1,0 +1,20 @@
+{
+  "attempted": 470,
+  "campaign_id": "X-settled-v1",
+  "eta_seconds": 0,
+  "failed": 0,
+  "last": {
+    "event": "FINISHED",
+    "trial_id": "S1_d0200_f20_open_t10_AMIN",
+    "attempt": 1,
+    "start_utc": "2026-11-03T12:36:15.6416951Z",
+    "end_utc": "2026-11-03T12:36:28.0352586Z",
+    "exit_code": 0,
+    "status": "SUCCESS",
+    "wall_ms": 12393
+  },
+  "remaining": 0,
+  "success": 470,
+  "total": 470,
+  "updated_utc": "2026-11-03T12:36:28.0379095Z"
+}

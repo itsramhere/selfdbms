@@ -1,0 +1,91 @@
+{
+  "runner_path": "C:\\Users\\ramst\\Documents\\Projects\\selfdbms\\research\\experiments\\phase_i7\\X_READCOST\\settled_bin\\i7trial.exe",
+  "data_root": "C:\\Users\\ramst\\Documents\\Projects\\selfdbms\\research\\experiments\\phase_i7\\X_READCOST\\settled\\data",
+  "trial_timeout": "2m0s",
+  "campaign_id": "X-settled-v1",
+  "git_head": "54b2c67d854be66e6883c6fbbcf9c4ad78230e94",
+  "git_status": "",
+  "git_dirty": false,
+  "allow_dirty": false,
+  "runner_sha256": "35b8ea6bbc3a0b8f19a29064bbb90859254ce8e753e3b4c8e67735fd11742262",
+  "plan_sha256": "7c868047870d72cf2d66100aade809f01549ee3a69f68357a5994b34a6c9c777",
+  "selftest": {
+    "affinity": {
+      "actual": "0xfff",
+      "actual_cores": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "expected": "unset",
+      "match": true
+    },
+    "cgo_enabled": "",
+    "protocol": "1.2.0-windows",
+    "runtime": {
+      "go_version": "go1.26.3",
+      "goos": "windows",
+      "goarch": "amd64",
+      "gomaxprocs": 12,
+      "num_cpu": 12,
+      "affinity_mask": "0xfff",
+      "exe_sha256": "35b8ea6bbc3a0b8f19a29064bbb90859254ce8e753e3b4c8e67735fd11742262",
+      "exe_path": "C:\\Users\\ramst\\Documents\\Projects\\selfdbms\\research\\experiments\\phase_i7\\X_READCOST\\settled_bin\\i7trial.exe",
+      "protocol_version": "1.2.0-windows"
+    },
+    "schedule": {
+      "clock": "QueryPerformanceCounter",
+      "interval_us": 5000,
+      "max_abs_err_us": 100.4,
+      "n": 200,
+      "p50_abs_err_us": 0.2,
+      "p95_abs_err_us": 3.4,
+      "p99_abs_err_us": 65.9
+    },
+    "schema": "i7.selftest.v1",
+    "separate": [
+      "E7"
+    ],
+    "supported": [
+      "E1",
+      "E2",
+      "E3",
+      "E4",
+      "E5",
+      "D3",
+      "PF",
+      "SMOKE",
+      "X1",
+      "X2",
+      "X3",
+      "X4",
+      "ANCHOR"
+    ],
+    "timers": {
+      "now_distinct_values": 67,
+      "now_effective_hz": 1324.7782973632957,
+      "now_min_positive_delta_ns": 327200,
+      "now_window_ns": 50574500,
+      "qpc_burst_ns": 1288900,
+      "qpc_freq_hz": 10000000,
+      "qpc_min_positive_delta_ns": 100,
+      "sleep1ms_max_abs_err_ns": 1064100,
+      "sleep1ms_mean_ns": 1459083
+    },
+    "tmp_dir": "C:\\Users\\ramst\\AppData\\Local\\Temp"
+  },
+  "power_scheme": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)",
+  "free_disk_bytes": 157111803904,
+  "checked_utc": "2026-11-03T08:21:33.6746922Z",
+  "goos": "windows",
+  "goarch": "amd64"
+}

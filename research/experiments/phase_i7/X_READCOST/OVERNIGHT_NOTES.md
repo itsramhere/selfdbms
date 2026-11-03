@@ -116,3 +116,45 @@ Clusters of consecutive fsyncs near 31.5 ms, sometimes larger, for up to several
 ### Direct measurements the paper said were missing
 - Sync-off (paper said not run because the harness rejects it; the diagnostic path allows it): at d=0, f=0.2, commit p50 Lease 1.114 -> 0.083 ms, Snapshot 1.106 -> 0.080, CoarseLock 1.229 -> 0.167. The 1 ms floor is the fsync.
 - The second wait (paper said unmeasured): at d=2000, f=0.2, CoarseLock commit p50 8.06 ms, lock wait 2.015, validate 2.015, fsync 0.946, flush check 2.114; Lease 3.00 ms, lock wait 0.000, validate 2.015, fsync 0.913, flush check 0.030. So the median penalty is two lock waits of about one delay each, on top of the delayed validation all designs pay. Three runs per arm, below capacity, exploratory.
+
+## X-settled-v1 (3 Nov, 13:51 to 18:06 IST). Pre-registered, frozen at 54b2c67.
+470/470 succeeded on first attempt, none dropped. Gaps between trials 20.003 to 20.030 s. Analysis outputs rerun byte-identical. `analysis_settled/verify/` recomputes the numbers below from raw trial files without the analysis module; every ratio, CI and Page statistic matched.
+
+### Pre-registered result
+| Prediction | Result | Numbers |
+| --- | --- | --- |
+| H-M1 (primary), median penalty rises with d | Supported, both modes | Page's L = 140 (the maximum), p = 1.65e-8 exact, Holm 3.3e-8. Every round ranked 0 < 200 < 2000 |
+| H-M2, not_equivalent, A higher | Supported, 4/4 | d=200 closed 1.431 [1.398, 1.464], open 1.332 [1.325, 1.340]; d=2000 closed 2.663 [2.640, 2.687], open 2.414 [2.372, 2.456] |
+| H-M3, two lock waits | Supported, all four bands | A lock wait 1.952 ms [1.911, 1.993], flush check 2.105 [2.099, 2.112]; Lease 0.0003 and 0.027 |
+| H-W, 700 writes/s at 200 us | Supported, 2/2 | W_A/W_AMIN closed 0.792 [0.775, 0.808], open 0.840 [0.818, 0.863]. Mean W: A 554 and 584, Lease 700 and 695, Snapshot 689 and 699 |
+| H-R, S3 Lease/Snapshot | FAILED: W equivalent, R inconclusive | W 1.001 [0.994, 1.008]. R 0.995 [0.846, 1.171], Holm p = 0.142, sd of log 0.280 |
+| H-S, median largest fsync below 40 ms | Supported, 18/18 | Cell medians 6.9 to 31.5 ms |
+| H-C sentinels (22 metrics) | 17 unchanged, 5 inconclusive, 0 changed | 0 of 9 published classes contradicted. No rerun triggered |
+
+The five inconclusive sentinels: X2 publication lock-wait p99 AMIN/B (1.60 to 0.74, CI on the change very wide); C1 commit-wait p99 AMIN/B (1.43 to 2.40); I1 W inline/second in A (1.27 to 1.23), R inline/second in A (0.64 to 0.62), W inline/second in Lease (0.995 to 1.04). The three I1 cells have 5 rounds and miss the margin by 0.011 or less.
+
+### Descriptive (no prediction; across-campaign comparisons are confounded with date, binary, seeds and diag_trace)
+- Median penalty at d=0: 1.080 [1.067, 1.092] closed, 1.015 [0.998, 1.032] open. Both inside the +/-10% band. No prediction was made.
+- Commit phases (A lock wait / flush check p50, closed): d=0 0.075 / 0.074 ms; d=200 0.229 / 0.296; d=2000 1.952 / 2.105. Lease lock wait is 0.001 ms or less at all three. The two waits are 82 to 93% of the A minus Lease total p50 difference at d=200 and d=2000. p50s don't add, so that share is approximate.
+- Lease/Snapshot write response p50: 0.983 to 1.003 in all six S1 cells.
+- The stall band went. Largest write service, cell medians: paced 54 to 59 ms, settled 9.5 to 22 ms. Across the 270 paced-cell trials one largest fsync reached 45 ms: 81.3 ms, `S1_d0000_f20_open_t07_B`. One more reached 40.2 ms.
+- Earlier CoarseLock tails at d=2000 were inflated by the carry-over. Cell-median write response p99: A closed 25.95 to 11.17 ms, open 34.41 to 11.70; Lease 5.95 to 5.10, 7.03 to 5.16. Geometric-mean p99 A/AMIN ratio 4.04 to 1.85 and 4.98 to 1.64. p95 ratios held: 3.01 to 3.03, 2.63 to 2.64. H-P1 stays as reported.
+- Tails below d=2000 are still not usable. A/AMIN p99 log-ratio sd at d=0 is 3.16 closed, 2.05 open; d=200 1.23, 1.36. A pause doesn't fix this; the bursts below remain.
+- Compaction commit-wait p99 medians: Lease 0.245 to 0.232 ms, Snapshot 0.177 to 0.104. The AMIN/B rise comes from Snapshot falling, by about 0.07 ms.
+- S3 reads range 81,048 to 188,948/s across trials. Log reads against write excess r = -0.73 (-0.90 in X-paced-v1). Not tested.
+
+### New, exploratory: the 31.5 ms bursts rise with write rate
+Trials with any fsync of 25 ms or longer, and mean share of the window in them: 72 writes/s 6/60, 0.1%; 155/s 16/60, 0.5 to 0.9%; 183/s 28/60, 1.2 to 1.4%; 650 to 730/s 88/90, 5.2 to 6.9%. At the same d=200 it goes from 16/60 at 155/s to 59/60 at 700/s. At 72 writes/s fsyncs are 14 ms apart, so a host event lasting tens of milliseconds, unrelated to writes, would still be caught. That points to write volume, not to an independent periodic event. No intervention; the host cause is still untested. This also explains why the calibration, run at 183/s, did not warn about S3: the pause cannot fix H-R's cell, and the frozen limit said the pause was chosen on one setting. No effect by arm is claimed (any >=25 ms: A 42, Lease 45, Snapshot 51 of 90).
+
+The first commit of the window has fsync median 6.6 ms (1.7 to 16.7, 180 S1 trials), about seven times the p50. In quiet trials it sets the largest fsync.
+
+### Deviations and things not in the frozen text
+- `hold_awake.py` (`analysis_settled/verify/`) ran during the campaign to stop the 3 h idle standby. It holds a per-process power request and spawned `tasklist` every 5 minutes, so about 50 short processes during the run. No settings changed. The prereg says no other user applications; this is an added background process, and the desktop app was also running.
+- One read-only status check, stamped 16:00:37 IST (line counts, ledger and log tails), when the operator asked how long the run would take. It saw status and ETA only and fell inside the window of `S1_d2000_f20_closed_t05_B`. That trial is the largest of its group: fsync 38.3 ms and write response p99 39.85 ms, against 5.05 to 7.73 ms for the other nine rounds. The burst began at window second 3.1, about 5 s before that stamp, so the command itself did not start it; the app's activity around the question can't be ruled out. Round 1 of the same group had a 31.2 ms fsync with no check running. No prediction depends on this trial's tail: B is not in H-M1 to H-M3, and H-S uses the median (7.6 ms). It is kept, per the no-outcome-exclusion rule.
+- The operator was out; it can't be confirmed the machine stayed untouched.
+
+### Consequences for the paper (not yet edited)
+- The median trend moves from descriptive to tested. H-P3's 200 us design flaw is repaired by H-W. The two-wait mechanism is measured, not assumed, at d=2000.
+- H-R stays open: inconclusive twice, on fresh data, and the likely reason now has evidence.
+- Sentinels: earlier results were not artefacts of back-to-back running, at these margins, with the confounds above. C1's AMIN/B tail ratio should be reported beside the original.
+- All campaigns before this one ran back to back, about 0.04 s apart. That must be disclosed along with the stall diagnosis.
