@@ -166,6 +166,9 @@ func execute(ctx context.Context, o options, plan Plan, p platform, w io.Writer)
 			if err = writeJSON(specPath, spec); err != nil {
 				return err
 			}
+			if err = waitSettle(ctx, plan.SettleMs); err != nil {
+				return err
+			}
 			t0 := time.Now()
 			r := record{Event: "STARTED", TrialID: s.TrialID, Attempt: attempt, StartUTC: t0.UTC().Format(time.RFC3339Nano), Status: "STARTED", ExitCode: -1}
 			if err = appendRecord(ledger, r); err != nil {
@@ -230,4 +233,22 @@ func execute(ctx context.Context, o options, plan Plan, p platform, w io.Writer)
 		}
 	}
 	return nil
+}
+
+// waitSettle precedes STARTED for every attempt, including the first and retries.
+func waitSettle(ctx context.Context, ms int64) error {
+	if ms < 0 || ms > int64((1<<63-1)/time.Millisecond) {
+		return errors.New("invalid settle_ms")
+	}
+	if ms == 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(time.Duration(ms) * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return ctx.Err()
+	}
 }

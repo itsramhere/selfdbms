@@ -59,7 +59,7 @@ func main() {
 	flag.StringVar(&o.runner, "runner", "", "path to i7trial executable (required)")
 	flag.StringVar(&o.out, "out", "", "empty results root or existing X campaign (required)")
 	flag.StringVar(&o.data, "data", "", "scratch data root (default <out>/data)")
-	flag.StringVar(&o.design, "design", "readcost", "campaign design: readcost|intervention|compaction|tablecount|paced")
+	flag.StringVar(&o.design, "design", "readcost", "campaign design: readcost|intervention|compaction|tablecount|paced|settled")
 	flag.Uint64Var(&o.master, "master-seed", 20261030, "paired design master seed")
 	flag.BoolVar(&o.dry, "dry-run", false, "print and persist plan and preflight; launch no trials")
 	flag.IntVar(&o.limit, "limit", 0, "execute at most N unfinished trials (0 = all)")
@@ -84,6 +84,9 @@ func main() {
 	}
 	if !masterSet && o.design == "paced" {
 		o.master = 20261106
+	}
+	if !masterSet && o.design == "settled" {
+		o.master = 20261107
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -204,7 +207,7 @@ func preflight(ctx context.Context, o options, runnerHash, planHash, selectedCam
 		return p, errors.New("runner -selftest schema mismatch")
 	}
 	requiredBlocks := []string{"X1", "X2", "X3"}
-	if selectedCampaign == "X-paced-v1" {
+	if selectedCampaign == "X-paced-v1" || selectedCampaign == "X-settled-v1" {
 		requiredBlocks = append(requiredBlocks, "X4")
 	}
 	for _, required := range requiredBlocks {
@@ -290,12 +293,14 @@ func run(ctx context.Context, o options, w io.Writer) error {
 		plan = makeInterventionPlan(o.master)
 	case "compaction":
 		plan = makeCompactionPlan(o.master)
+	case "settled":
+		plan = makeSettledPlan(o.master)
 	case "paced":
 		plan = makePacedPlan(o.master)
 	case "tablecount":
 		plan = makeTablecountPlan(o.master)
 	default:
-		return fmt.Errorf("unknown design %q; expected readcost|intervention|compaction|tablecount|paced", o.design)
+		return fmt.Errorf("unknown design %q; expected readcost|intervention|compaction|tablecount|paced|settled", o.design)
 	}
 	b, err := jsonBytes(plan)
 	if err != nil {
@@ -329,7 +334,10 @@ func run(ctx context.Context, o options, w io.Writer) error {
 			s := c.Spec
 			fmt.Fprintf(w, "%-20s %-5s %7d %-12s %9d %8d %7d %6d %11d %6d %10d\n", c.ID, s.Block, s.ReaderConcurrency, s.ReadPath, s.ReadIODelayUs, s.MemtableThresholdBytes, s.WriterConcurrency, s.PublicationEvents, s.CompactionTriggerMs, s.InitialSSTableCount, s.InitialKeysPerSSTable)
 		}
-		if plan.CampaignID == "X-intervention-v1" {
+		if plan.CampaignID == "X-settled-v1" {
+			eta := time.Duration(len(plan.Trials)) * (time.Duration(plan.SettleMs)*time.Millisecond + 12500*time.Millisecond)
+			fmt.Fprintf(w, "Total: %d runs; pause %d ms before every attempt; ETA at 12.5s/trial plus pause: %s\n", len(plan.Trials), plan.SettleMs, eta)
+		} else if plan.CampaignID == "X-intervention-v1" {
 			fmt.Fprintf(w, "Total: %d cells x 5 rounds x 2 conditions x 2 arms = %d runs\n", len(plan.Cells), len(plan.Trials))
 		} else if plan.CampaignID == "X-compaction-v1" || plan.CampaignID == "X-tablecount-v1" || plan.CampaignID == "X-paced-v1" {
 			fmt.Fprintf(w, "Total: %d cells x 10 rounds x 3 arms = %d runs (no anchors)\n", len(plan.Cells), len(plan.Trials))

@@ -25,6 +25,7 @@ type Cell struct {
 }
 
 type Plan struct {
+	SettleMs     int64           `json:"settle_ms,omitempty"`
 	CampaignID   string          `json:"campaign_id"`
 	MasterSeed   uint64          `json:"master_seed"`
 	SeedEncoding string          `json:"seed_encoding"`
