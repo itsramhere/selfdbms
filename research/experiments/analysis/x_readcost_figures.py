@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render paper figures from x_readcost_results.json only (no trial access)."""
+"""Render paper figures from frozen campaign results JSON (no trial access)."""
 import argparse
 import json
 import math
@@ -394,11 +394,39 @@ def fig_tablecount(data, directory):
     save(fig, directory, 'fig_tablecount')
 
 
+def fig_paced(data, directory):
+    """Closed-reader cells only; per-arm arithmetic means and frozen 95% CIs."""
+    fig, axes = plt.subplots(1, 2, figsize=(7.16, 3.3))
+    handles = []
+    for fraction, line, hollow, shift in ((20, '-', False, -.025), (80, '--', True, .025)):
+        cells = [data['cells'][f'P1_d{d:04d}_f{fraction}_closed'] for d in (0, 200, 2000)]
+        for arm in STYLE:
+            style = dict(STYLE[arm], linestyle=line,
+                         label=f'{STYLE[arm]["label"]}, f = {fraction / 100:.1f}')
+            if hollow:
+                style['markerfacecolor'] = 'white'
+            handles.append(Line2D([], [], **style))
+            for ax, metric, scale in zip(axes, ('achieved_fraction', 'write_service_p50'), (1., 1e-6)):
+                values = [c['arms'][arm][metric] for c in cells]
+                categorical_series(ax, range(3), [v['mean'] for v in values],
+                                   [v['t_ci_95'] for v in values], style, 3,
+                                   offset=shift + .45 * DODGE[arm], scale=scale)
+    axes[0].axhline(.95, color='#777777', linewidth=.8, linestyle=':')
+    axes[0].set(title='(a) Completed writes / offered ticks', ylabel='Achieved write fraction', ylim=(.30, 1.04))
+    axes[1].set(title='(b) Write service time', ylabel='Write service p50 (ms)')
+    axes[0].legend(handles=handles, fontsize=6, loc='lower left', ncol=2)
+    for ax in axes:
+        ax.set(xticks=range(3), xticklabels=['0', '200 \u00b5s', '2 ms'], xlabel='Injected read delay')
+        ax.set_xlim(-.15, 2.15)
+        decorate(ax)
+    save(fig, directory, 'fig_paced')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--results', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
-    for name in ('intervention-results', 'compaction-results', 'tablecount-results'):
+    for name in ('intervention-results', 'compaction-results', 'tablecount-results', 'paced-results'):
         parser.add_argument('--' + name, type=Path)
     args = parser.parse_args()
     data = json.loads(args.results.read_text(encoding='utf-8'))
@@ -412,7 +440,8 @@ def main():
     fig_penalty_vs_hold(data, args.output_dir)
     for path, renderer in ((args.intervention_results, fig_intervention),
                            (args.compaction_results, fig_compaction),
-                           (args.tablecount_results, fig_tablecount)):
+                           (args.tablecount_results, fig_tablecount),
+                           (args.paced_results, fig_paced)):
         if path:
             renderer(json.loads(path.read_text(encoding='utf-8')), args.output_dir)
     return 0

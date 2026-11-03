@@ -22,6 +22,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import re
 import statistics as st
 
 ARMS = ('A', 'AMIN', 'B')
@@ -320,6 +321,143 @@ def generate_tablecount(data, directory):
     write_body(directory, 'microbench', rows)
 
 
+def paced_stall_summary(trials):
+    """Summarize each trial's in-window maximum, never pool operation samples.
+
+    This is descriptive arithmetic. Late service histograms are separate and do
+    not enter the maximum of the in-window write-service distribution.
+    """
+    groups = defaultdict(list)
+    seen = set()
+    for trial in trials:
+        if trial['trial_id'] in seen or trial['status'] != 'SUCCESS':
+            raise ValueError('paced maxima require unique successful trials')
+        seen.add(trial['trial_id'])
+        hist = trial['result']['paced_load']['write_service_nanos']
+        if hist['sample_count'] <= 0 or hist['max'] <= 0:
+            raise ValueError('paced maximum missing: ' + trial['trial_id'])
+        groups[(trial['cell'], trial['arm'])].append(hist['max'] / 1e6)
+    if not groups:
+        raise ValueError('paced maxima require nonempty trials')
+    medians = [st.median(v) for v in groups.values()]
+    maxima = [x for values in groups.values() for x in values]
+    return dict(cell_arm_median_ms=(min(medians), max(medians)),
+                individual_trial_ms=(min(maxima), max(maxima)))
+
+
+def ticks_during_stall(stall_ms, writes_per_second):
+    """Arrival-count scale only; not a claim about measured queue length."""
+    return stall_ms * writes_per_second / 1000
+
+
+def generate_paced(data, trials, directory, earlier, prior_trial_count, probe_text):
+    """Copy frozen paced inference and emit explicitly descriptive arithmetic."""
+    rows, descriptive = [], []
+    for c, cell in sorted(data['cells'].items()):
+        nominal = cell['nominal']
+        mode = c.rsplit('_', 1)[1]
+        fraction = .2 if '_f20_' in c else .8
+        eq = cell['equivalence']['W_A/AMIN']
+        delay = {0: '0', 200: r'200\,\(\mu\)s', 2000: '2 ms'}[nominal['read_io_delay_us']]
+        fields = [delay, f'{fraction:.1f}', mode, str(nominal['paced_write_rate_per_sec'])]
+        fields += [num(cell['arms'][a]['achieved_fraction']['mean']) for a in ARMS]
+        fields += [str(cell['saturated_trials']['A']), ratio(eq), eq['classification'].replace('_', ' ')]
+        fields += [num(cell['arms'][a]['write_response_p50']['mean'] / 1e6) for a in ('A', 'AMIN')]
+        rows.append(' & '.join(fields) + r' \\')
+        read_metric = 'R' if mode == 'closed' else 'read_response_p99'
+        fields = [delay, f'{fraction:.1f}', mode]
+        fields += [ratio(cell['ratios'][m]['A/AMIN']) for m in
+                   ('write_response_p50', 'write_service_p50', read_metric)]
+        fields += [ratio(cell['ratios']['write_response_p99']['AMIN/B'])]
+        descriptive.append(' & '.join(fields) + r' \\')
+    facts = {}
+    def span(values, places=2):
+        values = list(values)
+        lo, hi = num(min(values), places), num(max(values), places)
+        return lo if lo == hi else lo + '--' + hi
+    def cell(delay, f, mode):
+        return data['cells'][f'P1_d{delay:04d}_f{f}_{mode}']
+    def series(metric, f, mode, ci=False, places=3):
+        vals = [cell(d, f, mode)['ratios'][metric]['A/AMIN'] for d in (0, 200, 2000)]
+        return ', '.join(ratio(v, places=places) if ci else num(v['geometric_mean_ratio'], places) for v in vals)
+    def sci(value):
+        mantissa, exponent = f'{value:.1e}'.split('e')
+        return mantissa + r'\times10^{' + str(int(exponent)) + '}'
+    facts['PacedTrialCount'] = str(data['counts']['successful'])
+    facts['PacedTotalTrials'] = f"{prior_trial_count + data['counts']['successful']:,}"
+    for delay, name in ((0, 'Zero'), (200, 'Medium'), (2000, 'High')):
+        facts['PacedRates' + name] = '/'.join(str(cell(delay, f, 'closed')['nominal']['paced_write_rate_per_sec']) for f in (20, 80))
+    facts['PacedOpenRates'] = ', '.join(magnitude_number(cell(d, 20, 'open')['nominal']['open_loop_rate_per_sec'], 0) for d in (0, 200, 2000))
+    for f, load in ((20, 'Low'), (80, 'High')):
+        for mode in ('closed', 'open'):
+            test = data['H_P1'][f'f{f}_{mode}']
+            name = load + mode.title()
+            facts['PacedPage' + name] = num(test['L'], 0)
+            facts['PacedPageP' + name] = num(test['p']) if f == 20 else sci(test['p'])
+            facts['PacedPageHolm' + name] = num(test['holm_p']) if f == 20 else sci(test['holm_p'])
+            facts['PacedResponse' + name] = series('write_response_p50', f, mode)
+            facts['PacedService' + name] = series('write_service_p50', f, mode)
+    facts['PacedHPTwoCount'] = str(sum(v['classification'] == 'equivalent' for v in data['H_P2'].values()))
+    facts['PacedMedianPenalty'] = num(max(cell(d, 20, mode)['ratios']['write_response_p50']['A/AMIN']['geometric_mean_ratio']
+                                        for d in (0, 200, 2000) for mode in ('closed', 'open')), 1)
+    facts['PacedHPThreeCount'] = str(sum(v['matches'] for v in data['predictions'] if v['hypothesis'] == 'H_P3'))
+    for m in ('W', 'R'):
+        facts['PacedHPFour' + m + 'Count'] = str(sum(v['classification'] == 'equivalent' for v in data['H_P4'][m].values()))
+    for mode in ('closed', 'open'):
+        facts['PacedHPThreeMedium' + mode.title()] = ratio(cell(200, 80, mode)['equivalence']['W_A/AMIN'])
+        facts['PacedHPThreeHigh' + mode.title()] = num(cell(2000, 80, mode)['equivalence']['W_A/AMIN']['geometric_mean_ratio'])
+    facts['PacedMediumSaturated'] = str(sum(cell(200, 80, mode)['saturated_trials']['A'] for mode in ('closed', 'open')))
+    exception = data['H_P4']['R']['P1_d0000_f80_closed']
+    facts['PacedReadException'] = ratio(exception)
+    for key, suffix, places in [('holm_p', 'Holm', 2), ('median_ratio', 'Median', 3), ('sd_log', 'SD', 3)]:
+        facts['PacedReadException' + suffix] = num(exception[key], places)
+    capacity = earlier['cells']['X1_r16_d0200']['arms']['A']['W']['mean']
+    offered = cell(200, 80, 'closed')['nominal']['paced_write_rate_per_sec']
+    facts['PacedDesignCapacity'] = num(capacity, 1)
+    facts['PacedDesignFraction'] = num(capacity / offered)
+    facts['PacedDesignOffered'] = str(offered)
+    stall = paced_stall_summary(trials)
+    facts['PacedStallMedians'] = span(stall['cell_arm_median_ms'], 0)
+    facts['PacedStallRange'] = span(stall['individual_trial_ms'], 0)
+    facts['PacedStallTicks'] = span([ticks_during_stall(x, cell(0, 20, 'closed')['nominal']['paced_write_rate_per_sec']) for x in stall['cell_arm_median_ms']], 0)
+    zero_trials = [t for t in trials if t['cell'] == 'P1_d0000_f20_closed']
+    n = round(st.median(t['result']['paced_load']['write_service_nanos']['sample_count'] for t in zero_trials))
+    facts['PacedLowWriteCount'] = str(n)
+    facts['PacedTailRank'] = str(round(.01 * n))
+    paired = defaultdict(dict)
+    for t in data['trials'].values():
+        if t['cell'] == 'P1_d0000_f20_closed':
+            paired[t['triplet']][t['arm']] = t['write_response_p99']
+    facts['PacedTailRatioRange'] = span([v['A'] / v['AMIN'] for v in paired.values()], 2)
+    maxima = [float(v) for v in re.findall(r'^rate .*? max ([\d.]+) ms;', probe_text, re.M)]
+    if len(maxima) != 6:
+        raise ValueError('expected six saved fsync probe summaries')
+    facts['PacedProbeCount'] = str(len(maxima))
+    facts['PacedProbeMaxima'] = span(maxima, 1)
+    for delay, name in ((200, 'Medium'), (2000, 'High')):
+        arm = cell(delay, 80, 'closed')['arms']['A']
+        facts['PacedCapacity' + name] = num(arm['W']['mean'], 1)
+        facts['PacedEarlierCapacity' + name] = num(earlier['cells'][f'X1_r16_d{delay:04d}']['arms']['A']['W']['mean'], 1)
+        facts['PacedReads' + name] = magnitude_number(arm['R']['mean'], 0)
+        facts['PacedCoupledReads' + name] = magnitude_number(2 * cell(delay, 80, 'closed')['nominal']['reader_concurrency'] * arm['W']['mean'], 0)
+    high = cell(2000, 80, 'closed')
+    facts['PacedBacklogObserved'] = num(high['arms']['A']['write_response_p99']['mean'] / 1e9, 2)
+    facts['PacedBacklogModel'] = num(high['nominal']['measurement_duration_ms'] / 1000 * (1 - high['arms']['A']['W']['mean'] / high['nominal']['paced_write_rate_per_sec']), 2)
+    facts['PacedHighOffered'] = str(high['nominal']['paced_write_rate_per_sec'])
+    facts['PacedReadLowClosed'] = series('R', 20, 'closed', ci=True)
+    facts['PacedReadHighClosed'] = series('R', 80, 'closed', ci=True)
+    facts['PacedReadResponseLowOpen'] = series('read_response_p99', 20, 'open', ci=True, places=2)
+    high_cells = [v for k, v in data['cells'].items() if '_f80_' in k]
+    facts['PacedLSTailMedians'] = span([st.median(c['arms'][a]['write_response_p99']['values']) / 1e6 for c in high_cells for a in ('AMIN', 'B')], 0)
+    facts['PacedLSResponseMedians'] = span([st.median(c['arms'][a]['write_response_p50']['values']) / 1e6 for c in high_cells for a in ('AMIN', 'B')], 1)
+    facts['PacedUnissuedAboveFlag'] = str(max(t['unissued_ticks'] for t in data['trials'].values() if not t['saturated']))
+    facts['PacedLSServiceRange'] = span([c['ratios']['write_service_p50']['AMIN/B']['geometric_mean_ratio'] for c in data['cells'].values()], 3)
+    definitions = [r'\gdef\TblPacedRows{%' + '\n' + '\n'.join(rows) + '\n}%']
+    definitions += [r'\gdef\TblPacedDescriptiveRows{%' + '\n' + '\n'.join(descriptive) + '\n}%']
+    definitions += ['\\newcommand{\\' + k + '}{' + v + '}' for k, v in sorted(facts.items())]
+    write_body(directory, 'paced', definitions)
+
+
 def generate_campaign_facts(extra, intervention_trials, directory):
     """Descriptive arithmetic for prose, copied from frozen results or raw p99s.
 
@@ -412,7 +550,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     for arg in ('results', 'trials-dir', 'tables-dir', 'mechanism-out', 'intervention-results'):
         p.add_argument('--' + arg, type=Path, required=True)
-    for arg in ('compaction-results', 'tablecount-results'):
+    for arg in ('compaction-results', 'tablecount-results', 'paced-results'):
         p.add_argument('--' + arg, type=Path)
     args = p.parse_args()
     data = json.loads(args.results.read_text(encoding='utf-8'))
@@ -481,6 +619,15 @@ def main():
             generator(result, args.tables_dir)
             groups.append((name, rows))
             extra[name] = result
+    if args.paced_results:
+        paced = json.loads(args.paced_results.read_text(encoding='utf-8'))
+        rows = trial_rows(args.paced_results)
+        if len(rows) != paced['counts']['successful']:
+            raise ValueError('coverage trial count differs: Paced')
+        probe_text = (args.paced_results.parent.parent / 'fsync_probe.txt').read_text(encoding='utf-8')
+        prior_count = data['counts']['successful'] + intervention['counts']['successful'] + sum(v['counts']['successful'] for v in extra.values())
+        generate_paced(paced, rows, args.tables_dir, data, prior_count, probe_text)
+        groups.append(('Paced', rows))
     generate_coverage(groups, args.tables_dir)
     generate_campaign_facts(extra, intervention_trials, args.tables_dir)
     print(f'Generated manuscript tables; verified unchanged mechanism from {len(trials)} trial envelopes.')
