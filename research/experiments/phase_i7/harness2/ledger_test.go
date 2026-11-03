@@ -185,6 +185,7 @@ func TestRunLedgerConservationUnderOpenLoopOverload(t *testing.T) {
 		t.Skip("timing-sensitive open-loop scenario; -short skips real-time-window tests (see acceptance race evidence)")
 	}
 	spec := miniSpec(t, "E4", "ol_overload", "A")
+	spec.ReadPath = "legacy_scan" // Exercise the full scans assumed by this overload fixture.
 	// Platform-independent cancellation: 1 us arrival period against
 	// full-miss reads (cost >> period) guarantees the reader falls behind
 	// and cancels arrivals past the lateness bound on every OS.

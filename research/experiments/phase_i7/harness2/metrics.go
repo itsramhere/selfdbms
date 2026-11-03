@@ -41,6 +41,8 @@ type Shard struct {
 	Abandoned               int64
 	MaxLatenessNs           int64
 	Dropped                 int64
+
+	SlowestRead *SlowRead // diagnostic only, owned by this reader
 }
 
 // Issue records one request interval for event-conditioned latency analysis.

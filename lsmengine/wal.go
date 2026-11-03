@@ -29,6 +29,11 @@ func NewWal(filename string) (*Wal, error) {
 
 // Append writes a KV pair in one write and syncs it unless DisableSync is set.
 func (w *Wal) Append(internalKey []byte, value []byte) error {
+	_, _, err := w.appendTimed(internalKey, value, nil)
+	return err
+}
+
+func (w *Wal) appendTimed(internalKey []byte, value []byte, clock func() int64) (writeDone, syncDone int64, err error) {
 	// Lock the file so multiple transactions committing at the same millisecond don't interleave their bytes
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -53,16 +58,23 @@ func (w *Wal) Append(internalKey []byte, value []byte) error {
 	// Preserve the header and checksum layout while issuing one record write.
 	n, err := w.File.Write(record)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 	if n != len(record) {
-		return io.ErrShortWrite
+		return 0, 0, io.ErrShortWrite
+	}
+	if clock != nil {
+		writeDone = clock()
 	}
 
 	// force the OS to flush the page cache to physical disk
 	if !w.DisableSync.Load() {
-		return w.File.Sync()
+		err = w.File.Sync()
+		if clock != nil {
+			syncDone = clock()
+		}
+		return writeDone, syncDone, err
 	}
 
-	return nil
+	return writeDone, writeDone, nil
 }

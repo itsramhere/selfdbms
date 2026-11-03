@@ -649,6 +649,7 @@ func TestE4_OpenLoopOverloadAndLateAccounting(t *testing.T) {
 		t.Skip("timing-sensitive open-loop scenario; -short skips real-time-window tests (see acceptance race evidence)")
 	}
 	spec := miniSpec(t, "E4", "overload", "A")
+	spec.ReadPath = "legacy_scan" // Exercise the full scans assumed by this overload fixture.
 	// Platform-independent overload: a 1 us arrival period can never be
 	// sustained when every read is a full miss (hit ratio 0 -> memtable probe
 	// plus SSTable ReadAts, microseconds even in the page cache), so the
@@ -710,6 +711,7 @@ func TestE4_OpenLoopOverloadAndLateAccounting(t *testing.T) {
 
 func TestRunAllMissLengthensReadPath(t *testing.T) {
 	spec := miniSpec(t, "E5", "hit0", "A")
+	spec.ReadPath = "legacy_scan"
 	spec.TargetReadHitRatio = 0.0
 	res, err := Run(spec, testEnv(), "test-rev")
 	if err != nil {

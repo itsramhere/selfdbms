@@ -167,9 +167,10 @@ type Manager struct {
 	// regardless of instrumentation state (pre-registered EXP-2 arrival
 	// sampling), and costs one uncontended atomic add per read-side
 	// lock/unlock pair.
-	syncObserver       SyncObserver
-	instrumentClock    func() int64
-	activeRLockHolders atomic.Int32
+	syncObserver        SyncObserver
+	commitTraceObserver CommitTraceObserver
+	instrumentClock     func() int64
+	activeRLockHolders  atomic.Int32
 }
 
 var sstableFileSeq atomic.Uint64

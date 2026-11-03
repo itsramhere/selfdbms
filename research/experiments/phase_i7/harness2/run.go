@@ -97,12 +97,18 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	// Optional synchronization instrumentation. The QPC clock keeps engine
 	// timestamps on the same monotonic timeline as the trial window.
 	var syncCollector *SyncCollector
+	var stall *stallCollector
 	if spec.InstrumentSync {
 		syncCollector = NewSyncCollector()
-		if spec.IsX() {
+		if spec.IsX() || spec.DiagTrace {
 			syncCollector = NewSyncHistogramCollector()
 		}
-		if err := man.SetSyncObserver(syncCollector, qpcElapsedNanos); err != nil {
+		var observer lsmengine.SyncObserver = syncCollector
+		if spec.DiagTrace {
+			stall = newStallCollector(syncCollector, spec.ReaderConcurrency)
+			observer = stall
+		}
+		if err := man.SetSyncObserver(observer, qpcElapsedNanos); err != nil {
 			_ = man.Close()
 			return nil, fmt.Errorf("attach sync instrumentation: %w", err)
 		}
@@ -185,8 +191,21 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	if spec.IsX() && syncCollector != nil {
 		syncCollector.Reset()
 	}
+	if stall != nil {
+		stall.reset()
+		stall.after.read() // prime runtime histogram storage before the window
+		stall.before.read()
+	}
 	base := Now()
-	res.Timestamps.StartISO = time.Now().UTC().Format(time.RFC3339Nano)
+	wallStart := time.Now()
+	res.Timestamps.StartISO = wallStart.UTC().Format(time.RFC3339Nano)
+	if stall != nil {
+		stall.baseNs = qpcElapsedNanos() - ElapsedNs(base)
+		stall.windowNs = int64(time.Duration(spec.MeasurementDurationMs) * time.Millisecond)
+		if stall.windowNs <= 0 {
+			stall.windowNs = int64(defaultWindow)
+		}
+	}
 	res.Timestamps.WarmupDurationMs = spec.WarmupDurationMs
 	res.Timestamps.MeasurementDurationMs = spec.MeasurementDurationMs
 
@@ -224,6 +243,13 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
+	if stall != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			stall.heartbeat(base, stop)
+		}()
+	}
 	// Per-worker sample capacity. Generous enough that a legitimate trial never
 	// overflows; overflow is counted and fails the trial rather than silently
 	// biasing the percentiles toward the first N samples.
@@ -248,6 +274,9 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	for r := 0; r < spec.ReaderConcurrency; r++ {
 		wg.Add(1)
 		sh := newShard(perShardCap)
+		if stall != nil {
+			sh.SlowestRead = &stall.reads[r]
+		}
 		go func(sh *Shard, worker int) {
 			defer wg.Done()
 			switch mode {
@@ -334,6 +363,10 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	measured := SleepWindow(base, window)
 	close(stop)
 	wg.Wait()
+	if stall != nil {
+		stall.after.read()
+		res.StallDiagnostics = stall.result(wallStart, ElapsedNs(base))
+	}
 	compactions.outcome(res, spec)
 	res.Timestamps.MeasuredWindowNs = measured
 	res.Timestamps.FinishISO = time.Now().UTC().Format(time.RFC3339Nano)
@@ -676,6 +709,9 @@ func closedLoopReader(man *lsmengine.Manager, sh *Shard, base harness.PrecisionT
 		v, err := man.Get(key, math.MaxUint64)
 		done := ElapsedNs(base)
 		d := done - t0
+		if sh.SlowestRead != nil {
+			sh.SlowestRead.record(t0, done)
+		}
 		inWindow := done <= windowNs
 		if inWindow {
 			sh.RecordService(d)
@@ -815,6 +851,9 @@ func openLoopWorker(man *lsmengine.Manager, sh *Shard, sched []Arrival, base har
 		}
 		v, err := man.Get(a.Key, math.MaxUint64)
 		done := ElapsedNs(base)
+		if sh.SlowestRead != nil {
+			sh.SlowestRead.record(issued, done)
+		}
 		inWindow := done <= windowNs
 		if inWindow {
 			sh.RecordService(done - issued)

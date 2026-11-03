@@ -117,7 +117,20 @@ func (m *Manager) SetSyncObserver(obs SyncObserver, clock func() int64) error {
 	}
 	m.syncObserver = obs
 	m.instrumentClock = clock
+	m.commitTraceObserver, _ = obs.(CommitTraceObserver)
 	return nil
+}
+
+// CommitPhases records successful commit boundaries on instrumentClock's timeline.
+// For multi-key commits the WAL boundaries describe the last key.
+type CommitPhases struct {
+	ArrivalNs, AcquiredNs, ValidatedNs, WalWriteDoneNs, WalSyncDoneNs, AppliedNs, ReleasedNs, FlushCheckDoneNs int64
+}
+
+// CommitTraceObserver optionally extends SyncObserver with commit timing.
+// Callbacks have the same non-blocking, lock-free, allocation-free contract.
+type CommitTraceObserver interface {
+	OnCommitPhases(p CommitPhases)
 }
 
 // ActiveRLockHolders returns the current count of goroutines between rLock and

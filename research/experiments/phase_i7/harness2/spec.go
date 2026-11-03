@@ -101,6 +101,7 @@ type Spec struct {
 	// TrialResult.Sync. Default off: the observer costs one nil check on
 	// uninstrumented paths and the trial schema gains no field.
 	InstrumentSync   bool `json:"instrument_sync,omitempty"`
+	DiagTrace        bool `json:"diag_trace,omitempty"`
 	InlineFlushCheck bool `json:"inline_flush_check,omitempty"`
 }
 
@@ -118,11 +119,14 @@ const (
 // ResolveMode classifies a spec. An unsupported combination returns an error so
 // the runner fails closed instead of silently running a different experiment.
 func (s Spec) ResolveMode() (Mode, error) {
+	if s.DiagTrace && !s.InstrumentSync {
+		return 0, errf("diag_trace requires instrument_sync")
+	}
 	if _, err := s.ResolveReadPath(); err != nil {
 		return 0, err
 	}
 	// X requires true rather than relying on a missing JSON bool's zero value.
-	if s.IsX() && !s.WalSync {
+	if s.IsX() && !s.WalSync && !s.DiagTrace {
 		return 0, errf("X blocks require explicit wal_sync=true")
 	}
 	switch Block(s.Block) {
@@ -365,6 +369,8 @@ type TrialResult struct {
 	FixtureManifest harness.FixtureManifest     `json:"fixture_manifest"`
 	Status          string                      `json:"status"`
 	Error           string                      `json:"error,omitempty"`
+
+	StallDiagnostics *StallDiagnostics `json:"stall_diagnostics,omitempty"`
 }
 
 // helperError keeps error construction in one place.
