@@ -499,11 +499,11 @@ class FigureTests(unittest.TestCase):
             self.assertEqual([t.get_text() for t in ax.get_xticklabels()], ['0.90', '1.00', '1.11'])
             labels = [t.get_text() for t in ax.get_yticklabels()]
             self.assertFalse(any('X1_r' in s or '(90%)' in s for s in labels))
-            self.assertIn('X1 mixed (90% CI)', labels)
-            self.assertIn('X3 churn (95% CI)', labels)
+            self.assertIn('Mixed (90% CI)', labels)
+            self.assertIn('Churn (95% CI)', labels)
         self.assertLess(fig.axes[0].get_xlim()[0], .4)
         self.assertGreater(fig.axes[1].get_xlim()[1], 2.2)
-        self.assertIn('X2 publication (90% CI)', [t.get_text() for t in fig.axes[1].get_yticklabels()])
+        self.assertIn('Publication (90% CI)', [t.get_text() for t in fig.axes[1].get_yticklabels()])
         self.assertIn('r=16, 2 ms', [t.get_text() for t in fig.axes[1].get_yticklabels()])
 
     def test_publication_units_ticks_and_zero_omission(self):

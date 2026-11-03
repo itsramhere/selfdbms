@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Render paper figures from x_readcost_results.json only (no trial access)."""
 import argparse
 import json
@@ -13,11 +13,11 @@ from matplotlib.lines import Line2D
 from matplotlib.ticker import FixedLocator, FormatStrFormatter, FuncFormatter, NullFormatter
 import numpy as np
 
-STYLE = {'A': dict(color='#2a78d6', marker='o', linestyle='-', label='A'),
-         'AMIN': dict(color='#eb6834', marker='s', linestyle='--', label='A-min'),
-         'B': dict(color='#1baf7a', marker='^', linestyle=':', label='B')}
+STYLE = {'A': dict(color='#2a78d6', marker='o', linestyle='-', label='CoarseLock'),
+         'AMIN': dict(color='#eb6834', marker='s', linestyle='--', label='Lease'),
+         'B': dict(color='#1baf7a', marker='^', linestyle=':', label='Snapshot')}
 DODGE = {'A': -.08, 'AMIN': 0., 'B': .08}
-LEVELS = ['0', '20 µs', '200 µs', '2 ms', 'legacy']
+LEVELS = ['0', '20 µs', '200 µs', '2 ms', 'legacy scan']
 X = [0, 1, 2, 3, 4.6]
 WARNED = set()
 
@@ -146,7 +146,7 @@ def dose_plot(data, directory, outcome, name):
                 style, connected=4, offset=DODGE[arm]))
         ax.axvline(3.8, color='#aaaaaa', linewidth=.7, linestyle='--')
         ax.set(yscale='log', xticks=X, xticklabels=LEVELS,
-               xlabel=f'Nominal read delay (r = {r})', ylabel='Writes/s' if outcome == 'W' else 'Reads/s')
+               xlabel=f'Injected read delay (r = {r})', ylabel='Writes/s' if outcome == 'W' else 'Reads/s')
         ax.set_xlim(-.3, 5.1)
         ax.margins(y=.15)
         end_labels(ax, endpoints)
@@ -170,7 +170,7 @@ def ratio_plot(data, directory):
     ax.annotate('no penalty', xy=(.98, 1), xycoords=ax.get_yaxis_transform(),
                 xytext=(0, 3), textcoords='offset points', ha='right', va='bottom', fontsize=7)
     ax.axvline(3.8, color='#aaaaaa', linewidth=.7, linestyle='--')
-    ax.set(yscale='log', xticks=X, xticklabels=LEVELS, xlabel='Nominal read delay', ylabel='Write ratio A / A-min')
+    ax.set(yscale='log', xticks=X, xticklabels=LEVELS, xlabel='Injected read delay', ylabel='Write ratio CoarseLock / Lease')
     ax.yaxis.set_major_formatter(FuncFormatter(plain_number))
     ax.yaxis.set_minor_formatter(NullFormatter())
     ax.set_xlim(-.3, 5.1)
@@ -195,7 +195,7 @@ def publication_plot(data, directory):
                    for s in summaries]
             endpoints[panel].append(categorical_series(ax, xs, values, cis, style, connected=3,
                 offset=DODGE[arm], scale=1. if panel == 0 else 1e-6, allow_zero=(panel == 0)))
-        ax.set(xticks=xs, xticklabels=['0', '200 µs', '2 ms', 'legacy'], xlabel='Nominal read delay (r = 16)')
+        ax.set(xticks=xs, xticklabels=['0', '200 µs', '2 ms', 'legacy scan'], xlabel='Injected read delay (r = 16)')
         ax.set_xlim(-.3, 4.1)
         ax.axvline(2.8, color='#aaaaaa', linewidth=.7, linestyle='--')
         arm_legend(ax)
@@ -214,7 +214,7 @@ def cell_label(cell):
     parts = cell.split('_')
     reader = int(parts[1][1:])
     level = {'d0000': 'no delay', 'd0020': '20 µs', 'd0200': '200 µs',
-             'd2000': '2 ms', 'legacy': 'legacy'}.get(parts[2] if len(parts) > 2 else '', 'no delay')
+             'd2000': '2 ms', 'legacy': 'legacy scan'}.get(parts[2] if len(parts) > 2 else '', 'no delay')
     return f'r={reader}, {level}'
 
 
@@ -227,9 +227,9 @@ def cell_order(item):
 
 def forest_rows(data, outcome):
     family = data.get('H2', {}).get(outcome, {})
-    groups = [('X1 mixed (90% CI)', [(c, v) for c, v in family.items() if c.startswith('X1_')]),
-              ('X2 publication (90% CI)', [(c, v) for c, v in family.items() if c.startswith('X2_')]),
-              ('X3 churn (95% CI)', [(c, ms[outcome]) for c, ms in data.get('H3', {}).items() if outcome in ms])]
+    groups = [('Mixed (90% CI)', [(c, v) for c, v in family.items() if c.startswith('X1_')]),
+              ('Publication (90% CI)', [(c, v) for c, v in family.items() if c.startswith('X2_')]),
+              ('Churn (95% CI)', [(c, ms[outcome]) for c, ms in data.get('H3', {}).items() if outcome in ms])]
     rows = []
     for heading, values in groups:
         if values:
@@ -260,7 +260,7 @@ def forest(data, directory):
         ax.set(xscale='log', xlim=(low * math.exp(-padding), high * math.exp(padding)),
                yticks=range(len(rows)), yticklabels=[label for label, _ in rows],
                ylim=(max(len(rows) - .5, .5), -.7),
-               xlabel=f'{"Write" if outcome == "W" else "Read"} throughput: A-min / B')
+               xlabel=f'{"Write" if outcome == "W" else "Read"} throughput: Lease / Snapshot')
         ax.xaxis.set_major_locator(FixedLocator([.90, 1., 1.11]))
         ax.xaxis.set_major_formatter(FormatStrFormatter('%.2f'))
         ax.xaxis.set_minor_formatter(NullFormatter())
@@ -271,10 +271,135 @@ def forest(data, directory):
     save(fig, directory, 'fig_amin_vs_b')
 
 
+def fig_penalty_vs_hold(data, directory):
+    fig, axes = plt.subplots(1, 2, figsize=(7.16, 3.05), sharex=True)
+    for r, color, marker, line in ((4, '#235e96', 'o', '-'), (16, '#6595bf', 'D', '--')):
+        cells = [data.get('cells', {}).get(f'X1_r{r:02d}_{d}', {}) for d in ('d0000', 'd0020', 'd0200', 'd2000', 'legacy')]
+        holds = [c.get('arms', {}).get('A', {}).get('read_cs_mean', {}).get('mean', math.nan) / 1e3 for c in cells]
+        style = dict(color=color, marker=marker, linestyle=line, label=f'r = {r}')
+        for ax, metric in zip(axes, ('W', 'R')):
+            vals = [c.get('ratios', {}).get(metric, {}).get('A/AMIN', {}) for c in cells]
+            categorical_series(ax, holds[:4], [v.get('geometric_mean_ratio') for v in vals[:4]],
+                               [v.get('t_ci') for v in vals[:4]], style, 4)
+            if math.isfinite(holds[4]) and point(ax, holds[4], vals[4].get('geometric_mean_ratio'), vals[4].get('t_ci'),
+                                              dict(style, markerfacecolor='none')):
+                ax.annotate('legacy scan', (holds[4], vals[4]['geometric_mean_ratio']),
+                            xytext=(-8, 12), textcoords='offset points', ha='right', fontsize=6)
+    for ax, ylabel, limits, ticks in zip(axes,
+            ('Write ratio CoarseLock / Lease', 'Read ratio CoarseLock / Lease'),
+            ((.001, 1.5), (.4, 1.8)), ([.001, .01, .1, 1], [.4, .5, 1, 1.5])):
+        ax.set(xscale='log', yscale='log', ylim=limits, ylabel=ylabel,
+               xlabel='Measured mean CoarseLock read-lock hold (µs)')
+        ax.axhline(1, color='#777777', lw=.8)
+        ax.set_xticks([1, 10, 100, 1000, 10000, 100000, 1000000])
+        ax.set_xlim(8, 1000000)
+        ax.set_yticks(ticks)
+        for axis in (ax.xaxis, ax.yaxis):
+            axis.set_major_formatter(FuncFormatter(plain_number))
+            axis.set_minor_formatter(NullFormatter())
+        ax.tick_params(axis='x', labelsize=6)
+        ax.legend(handles=[Line2D([], [], color=c, marker=m, linestyle=l, label=f'r = {r}')
+                           for r, c, m, l in ((4, '#235e96', 'o', '-'), (16, '#6595bf', 'D', '--'))])
+        decorate(ax)
+    save(fig, directory, 'fig_penalty_vs_hold')
+
+
+def fig_intervention(data, directory):
+    fig, axes = plt.subplots(2, 2, figsize=(7.16, 5.0), sharex=True)
+    for col, r in enumerate((4, 16)):
+        cells = [data['cells'][f'I1_r{r:02d}_d{d:04d}'] for d in (0, 20, 200, 2000)]
+        for condition, line, hollow, offset in (('second', '-', False, -.045), ('inline', '--', True, .045)):
+            for a in ('A', 'AMIN'):
+                style = dict(STYLE[a], linestyle=line)
+                if hollow:
+                    style['markerfacecolor'] = 'white'
+                qs = [c['conditions'][condition]['arms'][a]['q']['mean'] for c in cells]
+                categorical_series(axes[0, col], range(4), qs, [[v, v] for v in qs], style, 4,
+                                   offset=offset + DODGE[a] / 2)
+            vals = [c['conditions'][condition]['ratios_A_over_AMIN']['R'] for c in cells]
+            style = dict(color='#235e96', marker='o', linestyle=line, label=condition)
+            if hollow:
+                style['markerfacecolor'] = 'white'
+            categorical_series(axes[1, col], range(4), [v['geometric_mean_ratio'] for v in vals],
+                               [v['t_ci'] for v in vals], style, 4, offset=offset)
+        axes[0, col].set(title=f'r = {r}', ylim=(.8, 2.2), ylabel='Reads per reader per commit, q')
+        axes[1, col].set(ylabel='Read ratio CoarseLock / Lease', xlabel='Injected read delay',
+                         xticks=range(4), xticklabels=LEVELS[:4])
+        axes[1, col].axhline(1, color='#777777', lw=.8)
+    handles = [Line2D([], [], **{**STYLE[a], 'linestyle': line,
+               'markerfacecolor': 'white' if hollow else STYLE[a]['color'],
+               'label': STYLE[a]['label'] + ', ' + label})
+               for a in ('A', 'AMIN') for line, hollow, label in
+               (('-', False, 'two-acquisition'), ('--', True, 'one-acquisition'))]
+    axes[0, 0].legend(handles=handles, fontsize=6, loc='center right')
+    axes[1, 0].legend(handles=[Line2D([], [], color='#235e96', marker='o', linestyle=l,
+                          markerfacecolor=f, label=label) for l, f, label in
+                          (('-', '#235e96', 'two-acquisition'), ('--', 'white', 'one-acquisition'))], fontsize=6)
+    for ax in axes.flat:
+        decorate(ax)
+    save(fig, directory, 'fig_intervention')
+
+
+def fig_compaction(data, directory):
+    fig, axes = plt.subplots(1, 2, figsize=(7.16, 3.15))
+    cells = [(c, v) for c, v in sorted(data['cells'].items()) if c.endswith('_on')]
+    labels = [f'r={v["nominal"]["reader_concurrency"]}\n{v["nominal"]["read_io_delay_us"]} µs' for _, v in cells]
+    axes[0].axhspan(.90, 1 / .90, color='#dddddd', alpha=.6)
+    axes[0].axhline(1, color='#777777', lw=.8)
+    for i, (_, c) in enumerate(cells):
+        v = c['equivalence']['R']
+        point(axes[0], i, v['geometric_mean_ratio'], v['t_ci'], STYLE['AMIN'])
+        for a in STYLE:
+            v = c['arms'][a]['commit_wait_p99']
+            point(axes[1], i + DODGE[a], v['mean'] / 1e3,
+                  [b / 1e3 for b in v['t_ci_95']], STYLE[a])
+    axes[0].set(ylabel='Read throughput: Lease / Snapshot', ylim=(.88, 1.13))
+    axes[1].set(yscale='log', ylabel='Commit-wait p99 (µs)')
+    arm_legend(axes[1])
+    for ax in axes:
+        ax.set(xticks=range(6), xticklabels=labels, xlabel='Compaction on: readers and injected delay')
+        ax.tick_params(axis='x', labelsize=6)
+        decorate(ax)
+    save(fig, directory, 'fig_compaction')
+
+
+def fig_tablecount(data, directory):
+    from x_readcost_paper_tables import microbench_means
+    fig, axes = plt.subplots(1, 2, figsize=(7.16, 3.35))
+    ns = [4, 16, 64, 256]
+    axes[0].axhspan(.90, 1 / .90, color='#dddddd', alpha=.6)
+    axes[0].axhline(1, color='#777777', lw=.8)
+    left_handles, right_handles = [], []
+    for r, color, marker in ((4, '#235e96', 'o'), (16, '#6595bf', 'D')):
+        for w, line in ((0, '-'), (1, '--')):
+            style = dict(color=color, marker=marker, linestyle=line, label=f'r={r}, ' + ('read-only' if w == 0 else 'free writer'))
+            vals = [data['cells'][f'T1_n{n:03d}_r{r:02d}_w{w}']['equivalence']['R'] for n in ns]
+            categorical_series(axes[0], ns, [v['geometric_mean_ratio'] for v in vals], [v['t_ci'] for v in vals], style, 4)
+            left_handles.append(Line2D([], [], **style))
+    bench = microbench_means(data)
+    for a in ('AMIN', 'B'):
+        for g, line in ((1, '-'), (16, '--')):
+            style = dict(STYLE[a], linestyle=line, label=f'{STYLE[a]["label"]}, {g} goroutine' + ('s' if g > 1 else ''))
+            values = [bench[f'BenchmarkLifecycle/{a}/N{n}/g{g}']['ns_per_op'] for n in ns]
+            axes[1].plot(ns, values, **style)
+            right_handles.append(Line2D([], [], **style))
+    axes[0].set(ylabel='Read throughput: Lease / Snapshot', ylim=(.6, 1.16))
+    axes[1].set(yscale='log', ylabel='Microbenchmark read cycle (ns)')
+    for ax, handles in zip(axes, (left_handles, right_handles)):
+        ax.set(xscale='log', xlabel='Initial SSTable count, N', xticks=ns)
+        ax.xaxis.set_major_formatter(FuncFormatter(plain_number))
+        ax.xaxis.set_minor_formatter(NullFormatter())
+        ax.legend(handles=handles, fontsize=6, loc='best')
+        decorate(ax)
+    save(fig, directory, 'fig_tablecount')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--results', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
+    for name in ('intervention-results', 'compaction-results', 'tablecount-results'):
+        parser.add_argument('--' + name, type=Path)
     args = parser.parse_args()
     data = json.loads(args.results.read_text(encoding='utf-8'))
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -284,6 +409,12 @@ def main():
     ratio_plot(data, args.output_dir)
     publication_plot(data, args.output_dir)
     forest(data, args.output_dir)
+    fig_penalty_vs_hold(data, args.output_dir)
+    for path, renderer in ((args.intervention_results, fig_intervention),
+                           (args.compaction_results, fig_compaction),
+                           (args.tablecount_results, fig_tablecount)):
+        if path:
+            renderer(json.loads(path.read_text(encoding='utf-8')), args.output_dir)
     return 0
 
 

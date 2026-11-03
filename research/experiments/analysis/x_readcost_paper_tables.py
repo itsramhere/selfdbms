@@ -2,7 +2,7 @@
 """Generate manuscript table bodies and exploratory mechanism arithmetic.
 
 No trials or inferential analyses are run. Existing CIs/classifications are copied
-from --results and --intervention-results. Mechanism summaries are arithmetic means of per-trial quantities;
+from the frozen results inputs. Mechanism summaries are arithmetic means of per-trial quantities;
 cycle = measured_window_ns / in-window commits. Wait instrumentation also includes
 the post-window drain, as specified by the protocol. No late operation counts enter
 the admission ratio. Anchors are excluded from cell summaries.
@@ -12,7 +12,8 @@ expand the macros instead of reading files while an alignment is active.
 After rendering figures, copy their PDFs reproducibly from the repository root:
   python -c "from pathlib import Path; import shutil; d=Path('paper/figures/x_readcost'); d.mkdir(parents=True, exist_ok=True); [shutil.copyfile(p,d/p.name) for p in sorted(Path('research/experiments/phase_i7/X_READCOST/analysis/figures').glob('fig_*.pdf'))]"
 
-All outputs use sorted input names, UTF-8, LF, and no wall-clock timestamps.
+Existing --mechanism-out JSON is verified and never rewritten.
+All table outputs use sorted input names, UTF-8, LF, and no wall-clock timestamps.
 """
 import argparse
 from collections import defaultdict
@@ -28,7 +29,11 @@ DOSES = ('d0000', 'd0020', 'd0200', 'd2000', 'legacy')
 TABLE_MACROS = {'arms': 'TblArmsRows', 'x1': 'TblXOneRows',
                 'mechanism': 'TblMechanismRows', 'h2_publication': 'TblHTwoPubRows',
                 'x2': 'TblXTwoRows', 'x3': 'TblXThreeRows',
-                'intervention': 'TblInterventionRows'}
+                'intervention': 'TblInterventionRows', 'summary': 'TblSummaryRows',
+                'coverage': 'TblCoverageRows', 'compaction': 'TblCompactionRows',
+                'tablecount': 'TblTablecountRows', 'microbench': 'TblMicrobenchRows',
+                'compaction_throughput': 'TblCompactionThroughputRows',
+                'compaction_lifecycle': 'TblCompactionLifecycleRows'}
 
 
 def digest(path):
@@ -136,7 +141,8 @@ def ratio(x, ci='t_ci', places=3):
 
 def dose(cell):
     return {'d0000': '0', 'd0020': r'20\,\(\mu\)s', 'd0200': r'200\,\(\mu\)s',
-            'd2000': '2 ms', 'legacy': 'legacy'}.get(cell.split('_')[-1], '0')
+            'd2000': '2 ms', 'legacy': 'legacy scan'}.get(
+                next((p for p in cell.split('_') if p in DOSES), ''), '0')
 
 
 def reader(cell):
@@ -177,7 +183,7 @@ def generate_tables(data, mech, directory):
         qs = [num(cell['arms'][a]['reads_per_reader_per_commit']['mean']) for a in ARMS]
         model = cell['cycle_model']
         cycle = [cycle_number(model[k]) for k in ('observed_ms', 'predicted_ms')] + [num(model['error_percent'], 1)] if c.startswith('X1') else ['--'] * 3
-        rows.append(' & '.join([c[:2], str(reader(c)), dose(c)] + qs + cycle) + r' \\')
+        rows.append(' & '.join(['Mixed' if c.startswith('X1') else 'Churn', str(reader(c)), dose(c)] + qs + cycle) + r' \\')
     write_body(directory, 'mechanism', rows)
     rows = []
     for c, x in sorted(data['H2']['publication_lock_wait_p99'].items()):
@@ -223,7 +229,163 @@ def generate_tables(data, mech, directory):
         r'\newcommand{\HOneP}{' + f"{data['H1']['4']['p'] / 1e-9:.2f}" + r'\times10^{-9}}',
         r'\newcommand{\CampaignSuccess}{' + str(data['counts']['successful']) + '}',
         r'\newcommand{\DriftD}{' + num(data['drift']['D']) + '}',
-        r'\newcommand{\DriftLog}{' + num(abs(data['drift']['ln_D'])) + '}'])
+        r'\newcommand{\DriftLog}{' + num(abs(data['drift']['ln_D'])) + '}'] + [
+        r'\newcommand{\Sensitivity' + metric + '}{' + str(sensitivity_count(data['H2'][metric])) + '}'
+        for metric in ('W', 'R')])
+    write_body(directory, 'summary', [
+        ' & '.join([str(reader(c)), dose(c),
+                    magnitude_number(data['cells'][c]['arms']['A']['read_cs_mean']['mean'] / 1e3, 1),
+                    percent_change(data['cells'][c]['ratios']['W']['A/AMIN']['geometric_mean_ratio']),
+                    percent_change(data['cells'][c]['ratios']['R']['A/AMIN']['geometric_mean_ratio'])]) + r' \\'
+        for c in x1])
+
+
+def percent_change(value):
+    return f'{100 * (value - 1):+.1f}' + r'\%'
+
+
+def sensitivity_count(family):
+    """Post-hoc interval containment only, with no new tests or adjustment."""
+    return sum(.95 <= v['t_ci'][0] <= v['t_ci'][1] <= 1 / .95 for v in family.values())
+
+
+def coverage(trials):
+    diagnostics = [t['result']['lsm_diagnostics'] for t in trials]
+    flushes = [d['measured_flushes'] for d in diagnostics]
+    return (len(trials), st.mean(flushes), max(flushes),
+            sum(d['measured_compactions'] for d in diagnostics))
+
+
+def generate_coverage(groups, directory):
+    rows = []
+    for name, trials in groups:
+        n, mean, maximum, compactions = coverage(trials)
+        rows.append(f'{name} & {n} & {mean:.2f} & {maximum} & {compactions}' + r' \\')
+        print(f'Coverage {name}: trials={n}, mean_flushes={mean:.6f}, max_flushes={maximum}, compactions={compactions}')
+    write_body(directory, 'coverage', rows)
+
+
+def microbench_means(data):
+    """Arithmetic mean of independent benchmark counts, not iteration-weighted."""
+    groups = defaultdict(list)
+    for row in data['microbenchmark']['measurements']:
+        if row['compile_check_only']:
+            continue
+        name = row['benchmark'].split('-')[0]
+        groups[name].append(row)
+    return {name: {key: st.mean(row[key] for row in rows)
+                   for key in ('ns_per_op', 'allocs_per_op')} for name, rows in groups.items()}
+
+
+def generate_compaction(data, directory):
+    rows, throughput, lifecycle = [], [], []
+    for c, cell in sorted(data['cells'].items()):
+        if not c.endswith('_on'):
+            continue
+        eq = cell['equivalence']
+        fields = [str(reader(c)), dose(c)]
+        for metric in ('W', 'R'):
+            fields += [ratio(eq[metric]), eq[metric]['classification'].replace('_', ' ')]
+        fields += [ratio(cell['ratios'][metric]['A/AMIN']) for metric in ('W', 'R')]
+        fields += [num(cell['arms'][a]['commit_wait_p99']['mean'] / 1e3, 1) for a in ARMS]
+        fields += [num(cell['arms'][a]['retirement_lag_mean_nanos']['mean'] / 1e6, 2) for a in ARMS]
+        rows.append(' & '.join(fields) + r' \\')
+        throughput.append(' & '.join(fields[:8]) + r' \\')
+        lifecycle.append(' & '.join(fields[:2] + fields[8:]) + r' \\')
+    write_body(directory, 'compaction', rows)
+    write_body(directory, 'compaction_throughput', throughput)
+    write_body(directory, 'compaction_lifecycle', lifecycle)
+
+
+def generate_tablecount(data, directory):
+    rows = []
+    for c, cell in sorted(data['cells'].items()):
+        n = cell['nominal']
+        fields = [str(n['initial_sstable_count']), str(n['reader_concurrency']), str(n['writer_concurrency'])]
+        for metric in ('R', 'W'):
+            eq = cell['equivalence'].get(metric)
+            fields += [ratio(eq), eq['classification'].replace('_', ' ')] if eq else ['--', '--']
+        fields += [num(cell['arms'][a]['read_cs_mean']['mean'] / 1e3, 3) for a in ARMS]
+        rows.append(' & '.join(fields) + r' \\')
+    write_body(directory, 'tablecount', rows)
+    bench = microbench_means(data)
+    rows = []
+    for n in (4, 16, 64, 256):
+        fields = [str(n)]
+        fields += [num(bench[f'BenchmarkLifecycle/{a}/N{n}/g{g}']['ns_per_op'], 1)
+                   for g in (1, 16) for a in ('AMIN', 'B')]
+        fields += [num(bench[f'BenchmarkLifecyclePublication/{a}/N{n}']['ns_per_op'], 1) for a in ('AMIN', 'B')]
+        fields += [num(bench[f'BenchmarkLifecyclePublication/{a}/N{n}']['allocs_per_op'], 0) for a in ('AMIN', 'B')]
+        rows.append(' & '.join(fields) + r' \\')
+    write_body(directory, 'microbench', rows)
+
+
+def generate_campaign_facts(extra, intervention_trials, directory):
+    """Descriptive arithmetic for prose, copied from frozen results or raw p99s.
+
+    No CI, test, or classification is recomputed here.
+    """
+    facts = {}
+    def span(name, values, places=2, scale=1):
+        vals = [v * scale for v in values]
+        lo, hi = f'{min(vals):.{places}f}', f'{max(vals):.{places}f}'
+        facts[name] = lo if lo == hi else lo + '--' + hi
+    paired = defaultdict(dict)
+    for t in intervention_trials:
+        condition = 'inline' if '_inline_' in t['trial_id'] else 'second'
+        paired[(t['cell'].rsplit('_', 1)[0], t['triplet'], t['arm'])][condition] = t['result']['latency_read_nanos']['p99']
+    for arm, name in [('A', 'CL'), ('AMIN', 'L')]:
+        by_cell = defaultdict(list)
+        for (cell, _, a), vals in paired.items():
+            if a == arm:
+                by_cell[cell].append((vals['inline'], vals['second']))
+        span('InterventionTail' + name, [descriptive_geometric_ratio(v) for v in by_cell.values()], 3)
+    if 'Compaction' in extra:
+        data = extra['Compaction']
+        on = [v for k, v in sorted(data['cells'].items()) if k.endswith('_on')]
+        span('CompWaitRatio', [v['ratios']['commit_wait_p99']['AMIN/B']['geometric_mean_ratio'] for v in on])
+        for a, name in [('A', 'CL'), ('AMIN', 'L'), ('B', 'S')]:
+            span('CompWait' + name, [v['arms'][a]['commit_wait_p99']['mean'] for v in on], 0, 1e-3)
+            span('CompLag' + name, [v['arms'][a]['retirement_lag_mean_nanos']['mean'] for v in on], 2, 1e-6)
+        span('CompLeaseStartHold', [v['arms']['AMIN']['compaction_start_hold_mean_nanos']['mean'] for v in on], 0, 1e-3)
+        span('CompHighWater', [v['arms'][a]['retired_tables_high_water']['mean'] for v in on for a in ARMS], 1)
+        low = [v for k, v in data['cells'].items() if k.endswith('_on') and '_d2000_' not in k]
+        high = [v for k, v in data['cells'].items() if k.endswith('_on') and '_d2000_' in k]
+        span('CompCountLow', [v['arms'][a]['compactions']['mean'] for v in low for a in ARMS], 0)
+        span('CompCountHighCL', [v['arms']['A']['compactions']['mean'] for v in high], 0)
+        span('CompCountHighOther', [v['arms'][a]['compactions']['mean'] for v in high for a in ('AMIN', 'B')], 1)
+        span('CompTablesOn', [v['arms'][a]['final_sstables']['mean'] for v in on for a in ARMS], 1)
+        off = [v for k, v in data['cells'].items() if k.endswith('_off')]
+        facts['CompTablesOffMax'] = num(max(v['arms'][a]['final_sstables']['mean'] for v in off for a in ARMS), 1)
+        for a, name in [('A', 'CL'), ('AMIN', 'L')]:
+            span('CompHighTables' + name, [v['arms'][a]['final_sstables']['mean'] for k, v in data['cells'].items() if k.endswith('_off') and '_d2000_' in k], 1)
+        for m in ('W', 'R'):
+            span('CompGain' + m, [v[a][m]['geometric_mean_ratio'] for v in data['on_off'].values() for a in ARMS])
+        for r, name in [(4, 'Four'), (16, 'Sixteen')]:
+            cells = [data['cells'][f'C1_r{r:02d}_d{d:04d}_on'] for d in (0, 200, 2000)]
+            facts['CompS' + name] = ', '.join(num(v['ratios']['W']['A/AMIN']['geometric_mean_ratio']) for v in cells)
+            for state in ('on', 'off'):
+                v = data['cells'][f'C1_r{r:02d}_d2000_{state}']['ratios']['R']['A/AMIN']
+                facts['CompRead' + name + state.title()] = ratio(v) if state == 'on' else num(v['geometric_mean_ratio'])
+    if 'Table-count' in extra:
+        data = extra['Table-count']
+        bench = microbench_means(data)
+        for r, name in [(4, 'Four'), (16, 'Sixteen')]:
+            cells = [data['cells'][f'T1_n{n:03d}_r{r:02d}_w0'] for n in (4, 16, 64, 256)]
+            test = data['H_T1'][f'r{r:02d}_w0']
+            facts['TablePage' + name] = num(test['L'], 0)
+            facts['TablePageP' + name] = num(test['holm_p'] / 1e-9, 2) + r'\times10^{-9}'
+            facts['TableRead' + name] = ', '.join(num(v['equivalence']['R']['geometric_mean_ratio']) for v in cells)
+            span('TableLeaseCS' + name, [v['arms']['AMIN']['read_cs_mean']['mean'] for v in cells], 0)
+            facts['TableSlope' + name] = num((cells[-1]['arms']['AMIN']['read_cs_mean']['mean'] - cells[0]['arms']['AMIN']['read_cs_mean']['mean']) / 252, 0)
+        span('TableWriterRatios', [v['geometric_mean_ratio'] for m in ('R', 'W') for c, v in data['H_T2'][m].items() if c.endswith('w1')], 3)
+        for g, name in [(1, 'One'), (16, 'Sixteen')]:
+            for a, arm in [('AMIN', 'L'), ('B', 'S')]:
+                span('BenchRead' + arm + name, [bench[f'BenchmarkLifecycle/{a}/N{n}/g{g}']['ns_per_op'] for n in (4, 16, 64, 256)], 0)
+        for a, arm in [('AMIN', 'L'), ('B', 'S')]:
+            span('BenchPub' + arm, [bench[f'BenchmarkLifecyclePublication/{a}/N{n}']['ns_per_op'] for n in (4, 16, 64, 256)], 0)
+        facts['BenchSlope'] = num((bench['BenchmarkLifecycle/AMIN/N256/g1']['ns_per_op'] - bench['BenchmarkLifecycle/AMIN/N4/g1']['ns_per_op']) / 252, 1)
+    write_body(directory, 'campaign_facts', ['\\newcommand{\\' + k + '}{' + v + '}' for k, v in sorted(facts.items())])
 
 
 def generate_intervention_table(data, directory):
@@ -250,6 +412,8 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     for arg in ('results', 'trials-dir', 'tables-dir', 'mechanism-out', 'intervention-results'):
         p.add_argument('--' + arg, type=Path, required=True)
+    for arg in ('compaction-results', 'tablecount-results'):
+        p.add_argument('--' + arg, type=Path)
     args = p.parse_args()
     data = json.loads(args.results.read_text(encoding='utf-8'))
     files = sorted(args.trials_dir.glob('*.json'))
@@ -293,10 +457,33 @@ def main():
     generate_tables(data, mech, args.tables_dir)
     intervention = json.loads(args.intervention_results.read_text(encoding='utf-8'))
     generate_intervention_table(intervention, args.tables_dir)
-    args.mechanism_out.parent.mkdir(parents=True, exist_ok=True)
-    args.mechanism_out.write_text(json.dumps(mech, indent=2, sort_keys=True, allow_nan=False) + '\n',
-                                  encoding='utf-8', newline='\n')
-    print(f'Generated 8 table/macro bodies; mechanism from {len(trials)} trial envelopes.')
+    # A manuscript rewrite must not rewrite frozen analysis JSON, even identically.
+    if json.loads(args.mechanism_out.read_text(encoding='utf-8')) != mech:
+        raise ValueError('existing mechanism.json differs; refusing to modify analysis JSON')
+    def trial_rows(results_path):
+        folder = results_path.parent.parent / results_path.parent.name.removeprefix('analysis_') / 'trials'
+        return [json.loads(f.read_text(encoding='utf-8')) for f in sorted(folder.glob('*.json'))]
+    intervention_trials = trial_rows(args.intervention_results)
+    if len(intervention_trials) != intervention['counts']['successful']:
+        raise ValueError('coverage trial count differs: Intervention')
+    groups = [('Mixed', [t for t in trials if t['cell'].startswith('X1') or t['cell'] == 'ANCHOR']),
+              ('Publication', [t for t in trials if t['cell'].startswith('X2')]),
+              ('Churn', [t for t in trials if t['cell'].startswith('X3')]),
+              ('Intervention', intervention_trials)]
+    extra = {}
+    for path, name, generator in ((args.compaction_results, 'Compaction', generate_compaction),
+                                  (args.tablecount_results, 'Table-count', generate_tablecount)):
+        if path:
+            result = json.loads(path.read_text(encoding='utf-8'))
+            rows = trial_rows(path)
+            if len(rows) != result['counts']['successful']:
+                raise ValueError('coverage trial count differs: ' + name)
+            generator(result, args.tables_dir)
+            groups.append((name, rows))
+            extra[name] = result
+    generate_coverage(groups, args.tables_dir)
+    generate_campaign_facts(extra, intervention_trials, args.tables_dir)
+    print(f'Generated manuscript tables; verified unchanged mechanism from {len(trials)} trial envelopes.')
     print(json.dumps(mech['h2_bootstrap_check'], sort_keys=True))
 
 
