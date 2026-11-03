@@ -81,3 +81,38 @@ Analysis: `analysis_paced/`. Page L and p, W and R ratios recomputed from raw tr
 5. A's backlog p99 (6.04 s at d=2000) is set by the window: 10 s x (1 - 111/286) = 6.12 s. Unstable queue, not a steady-state latency.
 6. A's read advantage vanishes at equal write rate. R_A/R_AMIN closed, f=0.2, 0 flushes: 0.967 [0.912, 1.025], 0.921 [0.889, 0.954], 0.720 [0.711, 0.730]. f=0.8: 0.776, 0.550, 0.642. Earlier A read advantage comes with A writing less.
 7. f=0.8 is not a safe operating point for any arm: AMIN and B write p99 tens to hundreds of ms (65 to 453 ms) with medians 1 to 3 ms. Trials above 0.95 achieved can still leave up to 360 ticks unissued (21 of 319 unflagged trials exceed 86, the figure I first wrote, which was a per-cell mean), so the flag understates censoring.
+
+## Stall diagnosis (3 Nov, after X-paced-v1). Exploratory, not pre-registered, not campaign evidence.
+Evidence: `stall_diag/{runs,long,settle}`, scripts and the Codex brief in `stall_diag/scripts`. Binary `stalldiag.exe` sha256 471157ae..., built from the then-uncommitted working tree on top of af351c4. All runs reuse frozen X4 specs; diag_trace adds tracing, a 1 ms heartbeat and per-reader slowest reads, so these are not identical to campaign trials.
+
+### Where the stall is
+- 36 runs (`runs`). In all 27 fsync-on runs the largest commit's time was inside the fsync call (`File.Sync`). Median largest commit 67.4 ms. 0 of 27 were the first commit. No heartbeat gap overlapped it; the largest GC pause in any run was 3.0 ms.
+- fsync off (9 runs, d=0, f=0.2): median largest commit 4.9 ms, largest 13.0 ms, all in the WAL write.
+- Frozen campaign records agree: first-hold lock wait never reached half the write max (0/360); read max / write max is 1.01 to 1.03 by arm, so readers wait behind the exclusive hold; A at d=2000 had a longest critical section of 9.33 ms against about 64 ms, which rules out a process-wide freeze in those 40 trials.
+
+### What triggers the large stall: the previous trial
+- Nine pairs (`settle`, d=0, f=0.2, closed), same spec: 30 s pause then trial ("settled"), then the same spec straight after its cleanup ("back to back"). Largest fsync: settled median 8.0 ms, range 5.7 to 17.0; back to back median 54.9 ms, range 45.7 to 73.0. Larger in 9/9 pairs, ranges do not overlap. Back-to-back stall came 3.1 to 8.5 s into the window.
+- Frozen paced campaign: every trial started 0.04 s (median, max 0.13 s) after the previous one, so all 360 were back to back. Median write max does not depend on the previous arm: A 58.9, AMIN 60.8, B 59.0 ms.
+- Bare fsync started straight after an engine trial (`long`) had one large stall at 5.4 to 9.5 s (86 to 101 ms). Same timing after the previous trial, no engine in the stalled process.
+- Engine 60 s runs that followed a bare run had a largest fsync of 11.4 to 28 ms, except one burst.
+- NOT shown: what in the previous trial causes it. Deleting a six-file directory on its own did not reproduce the band (`settle/B_*`: max 31 to 32 ms with delete, 31 to 48 ms without, 4 runs each). Candidates such as heavy fsync on the deleted WAL, process exit, Defender, NTFS or the device are untested. A pause shorter than 30 s is untested.
+
+### Pause calibration (`pause`, before freezing X-settled-v1)
+36 trials, d=0, f=0.2, closed, six trials at each pause level in a shuffled order. Largest fsync: pause 0: median 60.4 ms, range 53.7 to 74.0; 5 s: 19.6, 7.0 to 46.8; 10 s: 7.5, 5.5 to 54.3; 15 s: 20.4, 3.3 to 35.9; 20 s: 31.5, 7.8 to 36.0; 30 s: 31.3, 5.6 to 36.1. So a pause of 15 s or more removed the band above about 45 ms in 18/18 trials. It did not remove the 31.5 ms bursts: 11 of those 18 trials had at least three fsyncs of 25 ms or longer, whereas the earlier nine settled trials had none. That earlier 8 ms median therefore overstates what a pause achieves; the difference between the two sets is unexplained. X-settled-v1 uses 20 s. 15 and 20 s were indistinguishable here, but other cells leave more files behind than this one.
+
+### A second, separate effect: 31.5 ms bursts
+Clusters of consecutive fsyncs near 31.5 ms, sometimes larger, for up to several seconds. Seen in bare probes with no delete and no engine (35 s runs after a 25 s pause), and in 1 of 3 engine 60 s runs. The cause is untested. Back to back pairs had 2 of 9 bursts, settled 0 of 9; too few to call. A 15.625 ms timer-tick cause has no support for the per-trial maxima (distance to a multiple: median 4.3 ms vs 3.9 ms uniform).
+
+### Consequences for the claims
+- Medians are safe. A/AMIN write response p50 log-ratio sd at f=0.2 is 0.01 to 0.04, against 0.14 to 1.69 for p95 and 0.29 to 2.95 for p99. Replay of the traced commits (18 fsync-on runs at f=0.2) leaves p50 unchanged within 0.03 ms when stalls of 25 ms or more are removed, and drops p99 from 1.2 to 12 ms to 1.1 to 1.3 at d=0.
+- H-P1 stays as reported. The stall explains why p99 was unstable, it does not rescue the prediction.
+- The inconclusive H-P4 read cell (d=0, f=0.8, closed): trial reads track write excess, (mean - p50) x n, r = -0.90 on log reads, excess 0.61 to 2.04 s of the window. Post hoc. Paired-round ratios follow the excess difference.
+- Intervention read p99: max 17.0 ms over 160 trials, below the 31.5 ms burst level and the 55 ms band. Closed readers can only have 16 reads blocked per stall, and the smallest 1% of reads in a trial is 74. Those stalls don't set it.
+- Compaction commit-wait p99: the metric is the wait for the first lock, which excludes the single writer's own fsync. The fsync stall can't enter it directly. Max 16.2 ms, median 0.11 ms.
+- Publication has no writer (X2 writer_concurrency 0), so no WAL fsync in the window.
+- Paced open read response p99 at f=0.2: readers queue behind the exclusive hold. The wide CIs at the two lower doses (1.98 [0.89, 4.37], 1.15 [0.27, 4.86]) are consistent with the stall; replay wasn't done for reads.
+- fsyncs of 25 ms or longer take a median 0.63 to 0.94% of the window per cell, small against the +/-10% margin. Burst trials are the exception: 31.6% in one d=0, f=0.8 run.
+
+### Direct measurements the paper said were missing
+- Sync-off (paper said not run because the harness rejects it; the diagnostic path allows it): at d=0, f=0.2, commit p50 Lease 1.114 -> 0.083 ms, Snapshot 1.106 -> 0.080, CoarseLock 1.229 -> 0.167. The 1 ms floor is the fsync.
+- The second wait (paper said unmeasured): at d=2000, f=0.2, CoarseLock commit p50 8.06 ms, lock wait 2.015, validate 2.015, fsync 0.946, flush check 2.114; Lease 3.00 ms, lock wait 0.000, validate 2.015, fsync 0.913, flush check 0.030. So the median penalty is two lock waits of about one delay each, on top of the delayed validation all designs pay. Three runs per arm, below capacity, exploratory.
