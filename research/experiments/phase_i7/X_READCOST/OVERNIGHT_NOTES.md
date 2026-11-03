@@ -61,4 +61,4 @@ With a free writer all 16 R and W tests equivalent (0.943 to 1.045). Reads are t
 `-benchtime=2s -count=3` ran from 02:08 to 05:14 (11172 s). The publication benchmark rebuilds a manager with untimed setup per iteration, and Go scales iterations by timed duration only, so wall time ballooned. I should have fixed the iteration count. No results were harmed. Consequence: Step 3 was not run.
 
 ## Step 3: X-paced-v1 NOT run
-Brief is written. The campaign needed about 2 hours including the build and analysis, which would have left no time for the rewrite. Rewrite chosen.
+The campaign needed about 2 hours including the build and analysis, which would have left no time for the rewrite, so the rewrite went first. The design was then built and frozen, with 6 excluded smoke trials, but no real trial was run: 74 minutes would have overrun the night's window, and the operator had asked to be told before long campaigns.
