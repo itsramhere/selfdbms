@@ -59,7 +59,7 @@ func main() {
 	flag.StringVar(&o.runner, "runner", "", "path to i7trial executable (required)")
 	flag.StringVar(&o.out, "out", "", "empty results root or existing X campaign (required)")
 	flag.StringVar(&o.data, "data", "", "scratch data root (default <out>/data)")
-	flag.StringVar(&o.design, "design", "readcost", "campaign design: readcost|intervention|compaction|tablecount")
+	flag.StringVar(&o.design, "design", "readcost", "campaign design: readcost|intervention|compaction|tablecount|paced")
 	flag.Uint64Var(&o.master, "master-seed", 20261030, "paired design master seed")
 	flag.BoolVar(&o.dry, "dry-run", false, "print and persist plan and preflight; launch no trials")
 	flag.IntVar(&o.limit, "limit", 0, "execute at most N unfinished trials (0 = all)")
@@ -81,6 +81,9 @@ func main() {
 	}
 	if !masterSet && o.design == "tablecount" {
 		o.master = 20261105
+	}
+	if !masterSet && o.design == "paced" {
+		o.master = 20261106
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -200,7 +203,11 @@ func preflight(ctx context.Context, o options, runnerHash, planHash, selectedCam
 	if err = json.Unmarshal([]byte(self), &st); err != nil || st.Schema != "i7.selftest.v1" {
 		return p, errors.New("runner -selftest schema mismatch")
 	}
-	for _, required := range []string{"X1", "X2", "X3"} {
+	requiredBlocks := []string{"X1", "X2", "X3"}
+	if selectedCampaign == "X-paced-v1" {
+		requiredBlocks = append(requiredBlocks, "X4")
+	}
+	for _, required := range requiredBlocks {
 		found := false
 		for _, b := range st.Supported {
 			if b == required {
@@ -283,10 +290,12 @@ func run(ctx context.Context, o options, w io.Writer) error {
 		plan = makeInterventionPlan(o.master)
 	case "compaction":
 		plan = makeCompactionPlan(o.master)
+	case "paced":
+		plan = makePacedPlan(o.master)
 	case "tablecount":
 		plan = makeTablecountPlan(o.master)
 	default:
-		return fmt.Errorf("unknown design %q; expected readcost|intervention|compaction|tablecount", o.design)
+		return fmt.Errorf("unknown design %q; expected readcost|intervention|compaction|tablecount|paced", o.design)
 	}
 	b, err := jsonBytes(plan)
 	if err != nil {
@@ -322,7 +331,7 @@ func run(ctx context.Context, o options, w io.Writer) error {
 		}
 		if plan.CampaignID == "X-intervention-v1" {
 			fmt.Fprintf(w, "Total: %d cells x 5 rounds x 2 conditions x 2 arms = %d runs\n", len(plan.Cells), len(plan.Trials))
-		} else if plan.CampaignID == "X-compaction-v1" || plan.CampaignID == "X-tablecount-v1" {
+		} else if plan.CampaignID == "X-compaction-v1" || plan.CampaignID == "X-tablecount-v1" || plan.CampaignID == "X-paced-v1" {
 			fmt.Fprintf(w, "Total: %d cells x 10 rounds x 3 arms = %d runs (no anchors)\n", len(plan.Cells), len(plan.Trials))
 		} else {
 			fmt.Fprintf(w, "Total: %d cells x 10 triplets x 3 arms + 9 anchor runs = %d runs\nETA at 14s/trial: %s\nFirst 20 schedule rows:\n", len(plan.Cells), len(plan.Trials), (time.Duration(len(plan.Trials)) * 14 * time.Second).String())
@@ -352,7 +361,7 @@ func resultStatus(path string, s harness2.Spec) string {
 		return "FAILED"
 	}
 	r := e.Result
-	if r.Status != "SUCCESS" || r.TrialID != s.TrialID || r.Operations.ReadOpsCompleted == 0 || r.Operations.ValidationErrorCount != 0 || r.Timestamps.MeasuredWindowNs <= 0 || (s.IsX() && r.LSMDiagnostics.CompactionErrors > 0) {
+	if r.Status != "SUCCESS" || r.TrialID != s.TrialID || (r.Operations.ReadOpsCompleted == 0 && s.Block != string(harness2.BlockX4)) || r.Operations.ValidationErrorCount != 0 || r.Timestamps.MeasuredWindowNs <= 0 || (s.IsX() && r.LSMDiagnostics.CompactionErrors > 0) {
 		return "FAILED"
 	}
 	return "SUCCESS"

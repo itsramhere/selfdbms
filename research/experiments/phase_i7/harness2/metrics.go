@@ -13,6 +13,7 @@ import (
 
 // Shard accumulates one worker's observations.
 type Shard struct {
+	Paced                *pacedHistograms // X4 only, separate read response and write histograms
 	ServiceHistogram     *Histogram
 	ServiceLateHistogram *Histogram
 	Samples              []int64 // service latency (completion - issue) inside measurement window

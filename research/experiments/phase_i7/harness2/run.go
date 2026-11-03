@@ -202,7 +202,7 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	}
 	windowNs := window.Nanoseconds()
 	trackIssues := targetEvents > 0
-	trackResp := mode == ModeOpenLoop
+	trackResp := mode == ModeOpenLoop || mode == ModeOpenReadsPacedWrites
 
 	shards := make([]*Shard, 0, spec.ReaderConcurrency+spec.WriterConcurrency)
 	var shardMu sync.Mutex
@@ -210,6 +210,9 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		var sh *Shard
 		if spec.IsX() {
 			sh = NewHistogramShard()
+			if spec.Block == string(BlockX4) {
+				sh.Paced = &pacedHistograms{}
+			}
 		} else {
 			sh = NewShard(cap, trackResp, trackIssues)
 		}
@@ -230,7 +233,7 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	}
 
 	var sched []Arrival
-	if mode == ModeOpenLoop {
+	if mode == ModeOpenLoop || mode == ModeOpenReadsPacedWrites {
 		sched = BuildSchedule(spec.Seed, spec.OpenLoopRatePerSec, keyspace, spec.TargetReadHitRatio, window)
 		res.Operations.ReadOpsScheduled = int64(len(sched))
 	}
@@ -248,7 +251,7 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		go func(sh *Shard, worker int) {
 			defer wg.Done()
 			switch mode {
-			case ModeOpenLoop:
+			case ModeOpenLoop, ModeOpenReadsPacedWrites:
 				openLoopWorker(man, sh, sched, base, stop, &claim, wMaxNs, windowNs, spec, stream)
 			default:
 				closedLoopReader(man, sh, base, stop, windowNs, spec, stream, worker)
@@ -258,7 +261,7 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 
 	// Writers.
 	switch mode {
-	case ModePacedWrites:
+	case ModePacedWrites, ModeOpenReadsPacedWrites:
 		for w := 0; w < maxInt(1, spec.WriterConcurrency); w++ {
 			wg.Add(1)
 			sh := newShard(perShardCap)
@@ -373,7 +376,7 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		secs = 1e-9
 	}
 	res.Operations.ReadOpsIssued = tot.Issued
-	if mode != ModeOpenLoop {
+	if mode != ModeOpenLoop && mode != ModeOpenReadsPacedWrites {
 		res.Operations.ReadOpsScheduled = tot.ReadsAttempted
 		res.Operations.ReadOpsIssued = tot.ReadsAttempted
 	}
@@ -381,8 +384,11 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	res.Operations.ReadOpsCompletedLate = tot.ReadsCompletedLate
 	res.Operations.ReadOpsCompleted = tot.ReadsCompleted
 	res.Operations.ReadOpsAbandoned = tot.Abandoned
-	if mode == ModeOpenLoop {
+	if mode == ModeOpenLoop || mode == ModeOpenReadsPacedWrites {
 		res.Operations.ReadOpsUnissued = res.Operations.ReadOpsScheduled - tot.ReadsCompletedInWindow - tot.ReadsCompletedLate - tot.Abandoned
+	}
+	if spec.Block == string(BlockX4) && mode == ModeOpenReadsPacedWrites {
+		res.Operations.ReadOpsUnissued = res.Operations.ReadOpsScheduled - tot.ReadsAttempted - tot.Abandoned
 	}
 	res.Operations.ActualHitCount = tot.ReadsHit
 	res.Operations.ActualMissCount = tot.ReadsMiss
@@ -401,8 +407,8 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	}
 
 	// ---- conserved transaction ledger ----
-	scheduledReads := mode == ModeOpenLoop
-	scheduledWrites := mode == ModePacedWrites
+	scheduledReads := mode == ModeOpenLoop || mode == ModeOpenReadsPacedWrites
+	scheduledWrites := mode == ModePacedWrites || mode == ModeOpenReadsPacedWrites
 	if scheduledReads {
 		res.Ledger.Reads = NewScheduledAccounting(
 			res.Operations.ReadOpsScheduled, tot.ReadsAttempted,
@@ -424,6 +430,10 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	if ledgerErr := res.Ledger.Validate(scheduledReads, scheduledWrites); ledgerErr != nil && res.Error == "" {
 		res.Status = "FAILED"
 		res.Error = "transaction ledger: " + ledgerErr.Error()
+	}
+
+	if spec.Block == string(BlockX4) {
+		res.PacedLoad = mergePaced(shards, res.Ledger, scheduledReads)
 	}
 
 	if !spec.IsX() && syncCollector != nil {
@@ -502,6 +512,10 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		res.Error = "data dir removal: " + rmErr.Error()
 	}
 
+	if spec.Block == string(BlockX4) && tot.ReadsError+tot.WritesError > 0 && res.Error == "" {
+		res.Status = "FAILED"
+		res.Error = fmt.Sprintf("%d engine operation error(s)", tot.ReadsError+tot.WritesError)
+	}
 	if tot.ValidationErrors > 0 && res.Error == "" {
 		res.Status = "FAILED"
 		res.Error = fmt.Sprintf("%d validation error(s)", tot.ValidationErrors)
@@ -726,8 +740,15 @@ func pacedWriter(man *lsmengine.Manager, sh *Shard, base harness.PrecisionTime, 
 			return
 		default:
 		}
+		if spec.Block == string(BlockX4) && ElapsedNs(base) >= windowNs {
+			return
+		}
 		key, _ := stream.At(i)
 		val := harness.FormatVal(int(i), 128)
+		issued := int64(0)
+		if sh.Paced != nil {
+			issued = ElapsedNs(base)
+		}
 		sh.WritesAttempted++
 		tx := man.Begin()
 		if tx == nil {
@@ -739,6 +760,9 @@ func pacedWriter(man *lsmengine.Manager, sh *Shard, base harness.PrecisionTime, 
 			} else {
 				sh.WritesCompleted++
 				done := ElapsedNs(base)
+				if sh.Paced != nil {
+					sh.Paced.recordWrite(issued, target, done, windowNs)
+				}
 				if done <= windowNs {
 					sh.WritesCompletedInWindow++
 				} else {
@@ -766,12 +790,21 @@ func openLoopWorker(man *lsmengine.Manager, sh *Shard, sched []Arrival, base har
 		}
 		a := sched[i]
 		now := ElapsedNs(base)
+		if sh.Paced != nil {
+			sh.observeLateness(now - a.IntendedNs)
+		}
 		if now > a.IntendedNs+wMaxNs {
 			sh.Abandoned++
 			continue
 		}
 		SleepUntilElapsed(base, a.IntendedNs)
 		issued := ElapsedNs(base)
+		if sh.Paced != nil {
+			sh.observeLateness(issued - a.IntendedNs)
+			if issued >= windowNs {
+				return
+			}
+		}
 		// Recheck lateness immediately after waking, before starting the request.
 		if issued > a.IntendedNs+wMaxNs {
 			sh.Abandoned++
@@ -785,11 +818,19 @@ func openLoopWorker(man *lsmengine.Manager, sh *Shard, sched []Arrival, base har
 		inWindow := done <= windowNs
 		if inWindow {
 			sh.RecordService(done - issued)
-			sh.RecordResponse(done - a.IntendedNs)
+			if sh.Paced != nil {
+				sh.Paced.readResponse.Record(done - a.IntendedNs)
+			} else {
+				sh.RecordResponse(done - a.IntendedNs)
+			}
 			sh.RecordIssue(a.IntendedNs, issued, done)
 		} else {
 			sh.RecordServiceLate(done - issued)
-			sh.RecordResponseLate(done - a.IntendedNs)
+			if sh.Paced != nil {
+				sh.Paced.readResponseLate.Record(done - a.IntendedNs)
+			} else {
+				sh.RecordResponseLate(done - a.IntendedNs)
+			}
 			sh.RecordIssueLate(a.IntendedNs, issued, done)
 		}
 		recordRead(sh, v, err, a.ExpectHit, inWindow)

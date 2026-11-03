@@ -32,6 +32,7 @@ const (
 	BlockX1    Block = "X1"
 	BlockX2    Block = "X2"
 	BlockX3    Block = "X3"
+	BlockX4    Block = "X4"
 	BlockE1    Block = "E1"
 	BlockE2    Block = "E2"
 	BlockE3    Block = "E3"
@@ -111,6 +112,7 @@ const (
 	ModePublicationOnly
 	ModePacedWrites
 	ModeOpenLoop
+	ModeOpenReadsPacedWrites
 )
 
 // ResolveMode classifies a spec. An unsupported combination returns an error so
@@ -129,6 +131,20 @@ func (s Spec) ResolveMode() (Mode, error) {
 			return 0, errf("%s requires publication_mode none|physical, got %q", s.Block, s.PublicationMode)
 		}
 		return ModePublicationOnly, nil
+	case BlockX4:
+		if math.IsNaN(s.PacedWriteRatePerSec) || s.PacedWriteRatePerSec <= 0 || s.PacedWriteRatePerSec > maxPacedWriteRatePerSec {
+			return 0, errf("X4 requires finite paced_write_rate_per_sec in (0, %g]", maxPacedWriteRatePerSec)
+		}
+		if s.WriterConcurrency != 1 {
+			return 0, errf("X4 requires writer_concurrency == 1")
+		}
+		if math.IsNaN(s.OpenLoopRatePerSec) || math.IsInf(s.OpenLoopRatePerSec, 0) || s.OpenLoopRatePerSec < 0 {
+			return 0, errf("X4 requires finite open_loop_rate_per_sec >= 0")
+		}
+		if s.OpenLoopRatePerSec > 0 {
+			return ModeOpenReadsPacedWrites, nil
+		}
+		return ModePacedWrites, nil
 	case BlockE4:
 		if s.OpenLoopRatePerSec <= 0 {
 			return 0, errf("E4 requires open_loop_rate_per_sec > 0 (set from the G3 calibration)")
@@ -154,7 +170,7 @@ func (s Spec) ResolveMode() (Mode, error) {
 }
 
 func (s Spec) IsX() bool {
-	return s.Block == string(BlockX1) || s.Block == string(BlockX2) || s.Block == string(BlockX3)
+	return s.Block == string(BlockX1) || s.Block == string(BlockX2) || s.Block == string(BlockX3) || s.Block == string(BlockX4)
 }
 
 // ResolveReadPath fails closed, including duration overflow before conversion.
@@ -334,6 +350,9 @@ type TrialResult struct {
 	LatencyReadLate     LatencyStats    `json:"latency_read_late_nanos,omitempty"`
 	LatencyResponseLate LatencyStats    `json:"latency_response_late_nanos,omitempty"`
 	LSMDiagnostics      Diagnostics     `json:"lsm_diagnostics"`
+	// X4 adds optional scheduled-load observations; older result bytes omit it.
+	PacedLoad *PacedLoadOutcome `json:"paced_load,omitempty"`
+
 	// Ledger is the conserved request-lifecycle accounting (offered /
 	// attempted / in-window / late / failed / queued / outstanding).
 	Ledger TransactionLedger `json:"transaction_ledger"`

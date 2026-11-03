@@ -45,7 +45,7 @@ const (
 // zero-delay cell, spliced at campaign milestones. Its absence here was the
 // D3 runner-dispatch defect corrected by the R2 engineering authorization —
 // a runlist containing D3 rows previously failed closed with exitUnsupported.
-var supportedBlocks = []string{"E1", "E2", "E3", "E4", "E5", "D3", "PF", "SMOKE", "X1", "X2", "X3", "ANCHOR"}
+var supportedBlocks = []string{"E1", "E2", "E3", "E4", "E5", "D3", "PF", "SMOKE", "X1", "X2", "X3", "X4", "ANCHOR"}
 var separateRunnerBlocks = []string{"E7"}
 
 // Approval is written by the operator only after external review authorizes the
@@ -287,7 +287,7 @@ func validateEnvelope(env *Envelope) error {
 	if r.TrialID != env.TrialID {
 		return fmt.Errorf("result trial_id %q != envelope %q", r.TrialID, env.TrialID)
 	}
-	if r.Operations.ReadOpsCompleted == 0 {
+	if r.Operations.ReadOpsCompleted == 0 && env.Block != string(harness2.BlockX4) {
 		return errors.New("SUCCESS with zero completed reads")
 	}
 	if r.Timestamps.MeasuredWindowNs <= 0 {
@@ -599,10 +599,14 @@ func checkApproval(approvalPath, gate, block string) (*Approval, error) {
 		return nil, errors.New("approval file does not set approved=true")
 	}
 	if gate == "X" {
-		if a.CampaignID != "X-readcost-v1" && a.CampaignID != "X-intervention-v1" && a.CampaignID != "X-compaction-v1" && a.CampaignID != "X-tablecount-v1" {
+		if a.CampaignID != "X-readcost-v1" && a.CampaignID != "X-intervention-v1" && a.CampaignID != "X-compaction-v1" && a.CampaignID != "X-tablecount-v1" && a.CampaignID != "X-paced-v1" {
 			return nil, errors.New("X approval campaign_id mismatch")
 		}
-		if !containsFold([]string{"X1", "X2", "X3", "ANCHOR"}, block) {
+		blocks := []string{"X1", "X2", "X3", "ANCHOR"}
+		if a.CampaignID == "X-paced-v1" {
+			blocks = []string{"X4"}
+		}
+		if !containsFold(blocks, block) {
 			return nil, errors.New("block is outside X approval")
 		}
 		planHash, err := hex.DecodeString(a.PlanSHA256)

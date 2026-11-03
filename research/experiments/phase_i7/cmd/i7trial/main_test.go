@@ -45,7 +45,7 @@ func TestD3BlockIsDispatchable(t *testing.T) {
 
 // TestSupportedBlocksComplete locks the full dispatch surface.
 func TestSupportedBlocksComplete(t *testing.T) {
-	want := []string{"E1", "E2", "E3", "E4", "E5", "D3", "PF", "SMOKE", "X1", "X2", "X3", "ANCHOR"}
+	want := []string{"E1", "E2", "E3", "E4", "E5", "D3", "PF", "SMOKE", "X1", "X2", "X3", "X4", "ANCHOR"}
 	if len(supportedBlocks) != len(want) {
 		t.Fatalf("supportedBlocks = %v, want %v", supportedBlocks, want)
 	}
@@ -187,13 +187,21 @@ func TestValidateEnvelopeErrorPaths(t *testing.T) {
 func TestXApproval(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "approval.json")
 	a := Approval{CampaignID: "X-readcost-v1", Approved: true, RunnerSHA256: runtimeInfo().ExeSHA256, PlanSHA256: strings.Repeat("a", 64)}
-	for _, campaign := range []string{"X-readcost-v1", "X-intervention-v1", "X-compaction-v1", "X-tablecount-v1"} {
+	for _, campaign := range []string{"X-readcost-v1", "X-intervention-v1", "X-compaction-v1", "X-tablecount-v1", "X-paced-v1"} {
 		a.CampaignID = campaign
 		b, _ := json.Marshal(a)
 		if err := os.WriteFile(path, b, 0644); err != nil {
 			t.Fatal(err)
 		}
-		for _, block := range []string{"X1", "X2", "X3", "ANCHOR"} {
+		blocks := []string{"X1", "X2", "X3", "ANCHOR"}
+		rejected := "X4"
+		if campaign == "X-paced-v1" {
+			blocks, rejected = []string{"X4"}, "X1"
+		}
+		if _, err := checkApproval(path, "X", rejected); err == nil {
+			t.Fatalf("%s authorized %s", campaign, rejected)
+		}
+		for _, block := range blocks {
 			if _, err := checkApproval(path, "X", block); err != nil {
 				t.Fatal(err)
 			}
@@ -208,7 +216,7 @@ func TestXApproval(t *testing.T) {
 	a.PlanSHA256 = ""
 	b, _ := json.Marshal(a)
 	_ = os.WriteFile(path, b, 0644)
-	if _, err := checkApproval(path, "X", "X1"); err == nil {
+	if _, err := checkApproval(path, "X", "X4"); err == nil {
 		t.Fatal("missing plan hash accepted")
 	}
 	a.PlanSHA256 = strings.Repeat("a", 64)
@@ -217,5 +225,18 @@ func TestXApproval(t *testing.T) {
 	_ = os.WriteFile(path, b, 0644)
 	if _, err := checkApproval(path, "X", "X1"); err == nil {
 		t.Fatal("unknown X campaign accepted")
+	}
+}
+
+func TestX4ZeroReadsAreAnOutcome(t *testing.T) {
+	e := validEnvelope()
+	e.Block, e.Result.Block = "X4", "X4"
+	e.Result.Operations.ReadOpsCompleted = 0
+	if err := validateEnvelope(e); err != nil {
+		t.Fatalf("total abandonment rejected: %v", err)
+	}
+	e.Result.Operations.ValidationErrorCount = 1
+	if err := validateEnvelope(e); err == nil {
+		t.Fatal("validation fault accepted")
 	}
 }

@@ -218,3 +218,45 @@ func makeTablecountPlan(master uint64) Plan {
 	}
 	return p
 }
+
+// makePacedPlan uses absolute, pre-data rates from X-readcost-v1 A-min at r=16.
+func makePacedPlan(master uint64) Plan {
+	p := Plan{CampaignID: "X-paced-v1", MasterSeed: master,
+		SeedEncoding: "SHA256(decimal master|cell_id|decimal triplet), first 8 bytes big-endian int64"}
+	writes := [3][2]float64{{183, 732}, {155, 619}, {72, 286}}
+	reads := [3]float64{12500, 8000, 2850}
+	for di, d := range []int{0, 200, 2000} {
+		for fi, f := range []int{20, 80} {
+			for _, readMode := range []string{"closed", "open"} {
+				id := fmt.Sprintf("P1_d%04d_f%02d_%s", d, f, readMode)
+				s := harness2.Spec{
+					Schema: "i7.trial-spec.v1", Block: "X4", Cell: id, WorkloadID: "X-paced",
+					ReaderConcurrency: 16, WriterConcurrency: 1,
+					KeyspaceCardinality: 10000, InitialSSTableCount: 4, InitialKeysPerSSTable: 2500,
+					ExpectedReaderSetSize: 4, TargetReadHitRatio: .95, ReadDistribution: "uniform",
+					WarmupDurationMs: 2000, MeasurementDurationMs: 10000, CooldownDurationMs: 200,
+					WalSync: true, InstrumentSync: true, ReadPath: "block", ReadIODelayUs: d,
+					MemtableThresholdBytes: 1 << 20, PacedWriteRatePerSec: writes[di][fi], MaxLatenessMs: 1000,
+				}
+				if readMode == "open" {
+					s.OpenLoopRatePerSec = reads[di]
+				}
+				p.Cells = append(p.Cells, Cell{id, s})
+			}
+		}
+	}
+	for k := 1; k <= 10; k++ {
+		order := rand.New(rand.NewSource(int64(master + uint64(k)))).Perm(len(p.Cells))
+		for _, i := range order {
+			c := p.Cells[i]
+			for pos, arm := range permutations[(k+i)%6] {
+				s := c.Spec
+				s.Triplet, s.Seed, s.Arm = k, pairedSeed(master, c.ID, k), arm
+				s.OrderPosition, s.RunlistPosition = pos+1, len(p.Trials)+1
+				s.TrialID = fmt.Sprintf("%s_t%02d_%s", c.ID, k, arm)
+				p.Trials = append(p.Trials, s)
+			}
+		}
+	}
+	return p
+}
