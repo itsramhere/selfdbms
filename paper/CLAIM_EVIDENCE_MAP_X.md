@@ -336,3 +336,39 @@ The sixth campaign tests hypotheses generated from earlier observations on fresh
 | ST71 | Frozen settled provenance,seed,and exploratory check binary | S `git_revision`, `plan_sha256`, `runner_sha256`, `master_seed`:54b2c67,7c868047870d,35b8ea6bbc3a,20261107. N check results:f71e7e2,binaryd0e7bb68b0a8;diagnostic JSON has no git revision. SG copies prefixes. |
 
 The earlier map rows remain historical records of the five-campaign manuscript. The sixth-campaign additions above qualify the earlier "unexplained stall" and "no causal explanation" statements with new exploratory evidence; neither H-P1 nor H-R is rescued. No campaign, engine trial, inferential analysis, or LaTeX compilation was run for these manuscript edits; the requested analysis unit tests were run separately.
+
+
+## Phase 1 framing: sentence-level evidence mapping
+
+This section appends mappings for the restructured manuscript. Every earlier row is retained verbatim. Sentence IDs follow source order in the new abstract, four contribution bullets, and conclusion. Bold contribution names are labels; the rows map every substantive sentence.
+
+| Sentence | New manuscript sentence | Existing evidence rows |
+|---|---|---|
+| Abstract 1 | A read lock held across a lookup is an easy way to keep a storage file alive, and replacing it is standard advice, yet a reader-side fix cannot shorten the writer's own critical section. | A11; R21; E1--E8; ST16 (lifetime and writer-path motivation). |
+| Abstract 2 | We ask when such a fix helps. | Research question, motivated by A11, R21, ST1; no empirical estimate. |
+| Abstract 3 | In six pre-registered campaigns on one LSM engine, with read cost controlled by injected delay, we compare a coarse read lock, per-table leases, and immutable reader sets across write load, compaction, and table count. | A1; ST2; F1--F3; N1--N3; N11--N13; PL1--PL3; ST16. |
+| Abstract 4 | Readers and writers are coupled through lock admission: each exclusive acquisition in a commit admits a round of readers, so the coarse lock's read gain at short lookups is paid for in writes and did not appear at equal write rates. | R11--R17; F4--F12; PL15; ST8; ST10. General k describes CoarseLock with a continually waiting writer, as stated in Section VI. |
+| Abstract 5 | An intervention changing the number of acquisitions supported this. | F4--F10; C4; ST10 (pre-registered intervention, bounded support). |
+| Abstract 6 | The writer also bounds what any reader-side design can deliver: exploratory runs at a high write rate showed the writer holding the lock across fsync for about three quarters of the time, with reads following the time left. | ST13; ST46--ST55. Wording "about three quarters" maps to existing macros `\HoldSettledMedian` (74.7%) and `\HoldOnMedian` (72.3%); it is the supplied abstract approximation, not a new estimate or recomputation. |
+| Abstract 7 | Leases and reader sets matched on throughput within a declared margin until read-only load at 256 tables, where leases completed 34\% fewer reads, and differed in commit tails under compaction. | R25--R30; N4--N7; N14--N18; ST11; ST14; ST15. 34% is the existing table-count result row N15 / ST15. |
+| Abstract 8 | Practically, measure lock-held lookup time, write load, and table count before replacing a lock. | P1--P4; PL6--PL7; N14--N18; ST1--ST8 (practical synthesis). |
+| Abstract 9 | Back-to-back trials carried an fsync stall of about 55~ms into the next trial, distorting tails while rechecked throughput classes held. | ST18--ST24; ST34--ST39; ST61. Required "about 55 ms" maps to `\StallBackMedian` (54.9), a back-to-back median largest fsync, not a subtraction of paused and back-to-back medians. |
+| Abstract 10 | Results come from one engine on one Windows host, at most one writer, injected delay, and WAL fsync under the exclusive lock. | ST16; C8; six protocols and implementation evidence A11 / E6. |
+| Contribution 1.1: Admission coupling. | Under a saturated, continually waiting writer, CoarseLock's reads couple to writes as $R\simeq k\,r\,W$, where $k$ is exclusive acquisitions per commit. | R11--R17; I3; F4--F5 (general k, with default k=2 and intervention k=1). |
+| Contribution 1.2: Admission coupling. | A pre-registered intervention changing $k$ supported this account, and the resulting read gain is paid for in writes (Section~\ref{sec:admission}). | F4--F10; F12--F14; PL15; ST8; ST10. |
+| Contribution 2.1: The writer's critical section limits the fix. | The cost of holding a read lock depends on how long it is held and on whether the writer is at capacity: below capacity, write throughput stays within the declared margin while median write response rises through two measured lock waits, and exploratory runs at a high write rate show reads following the time left outside the writer's hold (Sections~\ref{sec:cost} and~\ref{sec:replacement}). | R3--R7; R21--R22; PL6; ST5--ST6; ST26--ST31; ST46--ST55. |
+| Contribution 3.1: Replacement designs are not interchangeable at the extremes. | Lease and Snapshot match on throughput within a declared margin across publication and compaction, and separate at high table counts under read-only load and in commit tails under compaction (Section~\ref{sec:replacement}). | R25--R30; N4--N7; N14--N18; ST11; ST14--ST15. |
+| Contribution 4.1: A methodology lesson. | Back-to-back trials carried an fsync stall into the next trial, distorting tails while rechecked throughput classes held (Section~\ref{sec:settled}). | ST18--ST24; ST34--ST39; ST61. |
+| Conclusion 1 | A reader-side lifetime fix helps when shortening the read hold relieves writer waiting at the intended load; the writer's own critical section bounds the gain. | ST1; R21--R22; PL6--PL7; ST5--ST7 (synthesis of the tested operating points). |
+| Conclusion 2 | Admission coupling ties CoarseLock reads to exclusive acquisitions and writes, so its saturated-writer read gain is paid for in writes and did not appear at equal write rates. | R11--R17; F4--F12; PL15; ST8; ST10. |
+| Conclusion 3 | Below capacity the cost appears in median response through both lock waits, while exploratory high-rate runs relate reads to time outside the writer's hold. | ST5--ST6; ST26--ST31; ST46--ST55; the high-rate account stays exploratory. |
+| Conclusion 4 | Lease and Snapshot match throughput within the declared margin until read-only table count separates them, and commit tails differ under compaction. | R25--R30; N4--N7; N14--N18; ST11; ST14--ST15. |
+| Conclusion 5 | Back-to-back storage trials carried an fsync stall into the next trial; pausing changed tails while rechecked throughput classes held. | ST18--ST24; ST34--ST39; ST61; rechecked classes only. |
+| Conclusion 6 | These results cover one engine on one Windows host, at most one writer, injected delay, and WAL fsync under the exclusive lock. | ST16; C8; six protocols and implementation evidence A11 / E6. |
+
+R-check is the manuscript name for the settled sentinel rule whose frozen JSON key is `H_C` in `analysis_settled/x_settled_results.json` and whose frozen protocol heading is "Sentinel rule (H-C)" in `research/experiments/phase_i7/X_SETTLED_PREREGISTRATION.md` (existing ST34--ST36). Compaction H-C keeps its name (existing N4--N7). Historical rows above retain their original names.
+
+
+Review-fix record: claims about hold relative to the writer's cycle were removed pending Phase 2a. Contribution 2 now states the observed hold-duration and writer-capacity results, with below-capacity throughput within the declared margin. The abstract now says "about three quarters", mapped to `\HoldSettledMedian` (74.7%) and `\HoldOnMedian` (72.3%).
+
+Compiled by the reviewer under WSL; 22 pages in total; main body through references ends on page 12; appendices run from page 13 to page 22; eight figures and five tables in the body; there is one existing 1.9 pt overfull hbox and one 2.6 pt overfull vbox.
