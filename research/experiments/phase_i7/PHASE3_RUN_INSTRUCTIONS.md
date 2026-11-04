@@ -410,3 +410,51 @@ cached rewrite without Sync, but cannot prove storage firmware persistence or
 absence of device/controller caches. The flag bypasses the OS page cache; it
 does not disable caches inside the SSD. 4096-byte alignment is the fixed
 protocol requirement; devices/filesystems that reject it fail explicitly.
+
+## X-memtable-v1
+
+Protocol: [X_MEMTABLE_PREREGISTRATION.md](X_MEMTABLE_PREREGISTRATION.md).
+Sixteen X4 cells (four write rates x same/shadow keys x WAL sync on/off),
+Snapshot only, ten rounds: **160 trials**. Default master seed 20261112;
+20-second pause before every attempt, about 90 minutes including overhead.
+The base is followup F1_w0183_m16. Shadow writes append one byte, `x`, to
+interleave unread keys with the read domain; no engine change is involved.
+
+Prepare and verify without trials (PowerShell):
+
+```powershell
+$env:GODEBUG = 'goindex=0'
+$memtableRunner = Join-Path $env:TEMP 'i7trial-memtable.exe'
+$memtableCampaign = Join-Path $env:TEMP 'x-memtable-v1-dry-run'
+go build -o $memtableRunner ./research/experiments/phase_i7/cmd/i7trial
+go run ./research/experiments/phase_i7/cmd/xcampaign -design memtable -runner $memtableRunner -out $memtableCampaign -dry-run -allow-dirty
+```
+
+`-allow-dirty` is for preparation and is recorded by preflight. Expect 16 cells,
+160 trials, settle_ms=20000 and plan SHA-256 (indented JSON, no trailing newline)
+`8560df67fb5fae4f70f9a93ed8451e5ffa70983b049a3cfe318efd4fa8f5cad9`.
+The dry run performs the timer self-test and writes provenance, without trials.
+Use a separate fresh directory for campaign observations. The operator must
+freeze the preregistration on a clean tree, close Codex/ChatGPT/WSL and other
+user applications, connect AC power and record power mode/Defender as found.
+No commit, campaign or smoke is authorized by these implementation instructions.
+Later execution uses the existing hash-bound gate X approval JSON with
+campaign_id `X-memtable-v1`, approved=true, the current runner_sha256 and this
+plan_sha256, and `-approve <approval.json>` instead of `-dry-run -allow-dirty`.
+Resume, one retry and the 5% abort after 40 attempts follow the existing driver.
+
+Analyze observations, when separately authorized and collected:
+
+```powershell
+python research/experiments/analysis/x_memtable_analyze.py --data-dir <campaign-directory> --output-dir <analysis-directory>
+```
+
+NumPy, SciPy and Matplotlib are required. Outputs are x_memtable_results.json,
+x_memtable_tables.md and x_memtable_capacity.png. Missing observations require
+--allow-partial; second failures remove only the round units needed by each test.
+Raw trials, retries, exclusions, drift, saturation and provenance remain visible.
+H-X(c)'s phrase "rises with rate" is operationalized as strictly increasing
+arithmetic cell means across all four rates, separately for sync on and off;
+no extra significance threshold is specified in the supplied protocol. The
+pooled within-rate descriptive slope uses sync-on data and rate intercepts.
+These implementation choices are also disclosed in the analysis output.

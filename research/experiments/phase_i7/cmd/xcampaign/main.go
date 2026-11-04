@@ -62,7 +62,7 @@ func main() {
 	flag.StringVar(&o.runner, "runner", "", "path to i7trial executable (required)")
 	flag.StringVar(&o.out, "out", "", "empty results root or existing X campaign (required)")
 	flag.StringVar(&o.data, "data", "", "scratch data root (default <out>/data)")
-	flag.StringVar(&o.design, "design", "readcost", "campaign design: readcost|intervention|compaction|tablecount|paced|settled|followup|locks|inputopen|realism")
+	flag.StringVar(&o.design, "design", "readcost", "campaign design: readcost|intervention|compaction|tablecount|paced|settled|followup|memtable|locks|inputopen|realism")
 	flag.Uint64Var(&o.master, "master-seed", 20261030, "paired design master seed")
 	flag.BoolVar(&o.dry, "dry-run", false, "print and persist plan and preflight; launch no trials")
 	flag.IntVar(&o.limit, "limit", 0, "execute at most N unfinished trials (0 = all)")
@@ -90,6 +90,9 @@ func main() {
 	}
 	if !masterSet && o.design == "settled" {
 		o.master = 20261107
+	}
+	if !masterSet && o.design == "memtable" {
+		o.master = 20261112
 	}
 	if !masterSet && o.design == "followup" {
 		o.master = 20261108
@@ -228,7 +231,7 @@ func preflight(ctx context.Context, o options, runnerHash, planHash, selectedCam
 	if selectedCampaign == "X-locks-v1" || selectedCampaign == "X-realism-v1" {
 		requiredBlocks = []string{"X1"}
 	}
-	if selectedCampaign == "X-paced-v1" || selectedCampaign == "X-settled-v1" || selectedCampaign == "X-followup-v1" {
+	if selectedCampaign == "X-paced-v1" || selectedCampaign == "X-settled-v1" || selectedCampaign == "X-followup-v1" || selectedCampaign == "X-memtable-v1" {
 		requiredBlocks = append(requiredBlocks, "X4")
 	}
 	for _, required := range requiredBlocks {
@@ -318,6 +321,8 @@ func run(ctx context.Context, o options, w io.Writer) error {
 		plan = makeInterventionPlan(o.master)
 	case "compaction":
 		plan = makeCompactionPlan(o.master)
+	case "memtable":
+		plan = makeMemtablePlan(o.master)
 	case "followup":
 		plan = makeFollowupPlan(o.master)
 	case "realism":
@@ -333,7 +338,7 @@ func run(ctx context.Context, o options, w io.Writer) error {
 	case "tablecount":
 		plan = makeTablecountPlan(o.master)
 	default:
-		return fmt.Errorf("unknown design %q; expected readcost|intervention|compaction|tablecount|paced|settled|followup|locks|inputopen|realism", o.design)
+		return fmt.Errorf("unknown design %q; expected readcost|intervention|compaction|tablecount|paced|settled|followup|memtable|locks|inputopen|realism", o.design)
 	}
 	b, err := jsonBytes(plan)
 	if err != nil {
@@ -376,6 +381,9 @@ func run(ctx context.Context, o options, w io.Writer) error {
 		} else if plan.CampaignID == "X-locks-v1" {
 			eta := time.Duration(len(plan.Trials)) * (time.Duration(plan.SettleMs)*time.Millisecond + 12500*time.Millisecond)
 			fmt.Fprintf(w, "Total: 8 entries; %d cells; %d trials; pause %d ms before every attempt; ETA at 12.5s/trial plus pause: %s (budget about 4.5 hours)\n", len(plan.Cells), len(plan.Trials), plan.SettleMs, eta)
+		} else if plan.CampaignID == "X-memtable-v1" {
+			eta := time.Duration(len(plan.Trials)) * (time.Duration(plan.SettleMs)*time.Millisecond + 12500*time.Millisecond)
+			fmt.Fprintf(w, "Total: %d cells; %d trials; Snapshot only; pause %d ms before every attempt; ETA at 12.5s/trial plus pause: %s (budget about 90 minutes)\n", len(plan.Cells), len(plan.Trials), plan.SettleMs, eta)
 		} else if plan.CampaignID == "X-followup-v1" {
 			eta := time.Duration(len(plan.Trials)) * (time.Duration(plan.SettleMs)*time.Millisecond + 12500*time.Millisecond)
 			fmt.Fprintf(w, "Total: %d cells; %d trials; pause %d ms before every attempt; ETA at 12.5s/trial plus pause: %s (budget about 85 minutes)\n", len(plan.Cells), len(plan.Trials), plan.SettleMs, eta)

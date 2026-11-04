@@ -106,6 +106,7 @@ type Spec struct {
 	InlineFlushCheck          bool   `json:"inline_flush_check,omitempty"`
 	PersistReadHistogram      bool   `json:"persist_read_histogram,omitempty"`
 	LockPolicy                string `json:"lock_policy,omitempty"`
+	WriteKeyDomain            string `json:"write_key_domain,omitempty"`
 }
 
 // Mode returns the driver mode implied by the block and cell.
@@ -122,6 +123,15 @@ const (
 // ResolveMode classifies a spec. An unsupported combination returns an error so
 // the runner fails closed instead of silently running a different experiment.
 func (s Spec) ResolveMode() (Mode, error) {
+	if s.WriteKeyDomain != "" {
+		if s.WriteKeyDomain != "shadow" {
+			return 0, errf("unknown write_key_domain %q", s.WriteKeyDomain)
+		}
+		if s.Block != string(BlockX4) {
+			return 0, errf("write_key_domain shadow requires X4 with a paced writer")
+		}
+		// The X4 checks below require one writer and a positive finite pace.
+	}
 	if s.Block == string(BlockX1) && s.WriterConcurrency > 1 && !s.IsRealismCell() {
 		return 0, errf("X1 writer_concurrency > 1 is allowed only in X-realism-v1 cells")
 	}

@@ -815,6 +815,9 @@ func pacedWriter(man *lsmengine.Manager, sh *Shard, base harness.PrecisionTime, 
 			return
 		}
 		key, _ := stream.At(i)
+		if spec.WriteKeyDomain == "shadow" {
+			key += "x"
+		}
 		val := harness.FormatVal(int(i), 128)
 		issued := int64(0)
 		if sh.Paced != nil {
