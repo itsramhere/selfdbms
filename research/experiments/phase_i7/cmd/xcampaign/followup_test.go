@@ -77,6 +77,7 @@ func TestExistingDesignFrozenPlans(t *testing.T) {
 		{"tablecount", "tablecount", "0bc0042b8b8ad5ba517c911e9ec9a7dab00ec1b1f0c78876fc26be969eddc048", makeTablecountPlan(20261105)},
 		{"paced", "paced", "384aace771c82b3e16eb0e1cb5363678cfff075a420ce8fcd70045ad82cb90e8", makePacedPlan(20261106)},
 		{"settled", "settled", "7c868047870d72cf2d66100aade809f01549ee3a69f68357a5994b34a6c9c777", makeSettledPlan(20261107)},
+		{"followup", "followup", "394675b73698ef4afeed5af747b59970bc57cec03c66bc9c7642322ff2e04f51", makeFollowupPlan(20261108)},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			b, err := jsonBytes(c.plan)

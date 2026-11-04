@@ -26,7 +26,7 @@ type SyncMode int
 
 const (
 	// SyncModeApproachA represents the Manager-wide RWMutex baseline (Approach A).
-	// Reader-compactor synchronization relies entirely on Manager.Mu (*sync.RWMutex),
+	// Reader-compactor synchronization relies entirely on Manager.Mu (default sync.RWMutex),
 	// serialized compaction lifetimes (compactionMu), and safe reader retirement.
 	SyncModeApproachA SyncMode = iota
 
@@ -69,7 +69,8 @@ type Config struct {
 	ReadIODelay            time.Duration // Experiment-only delay per block read; ignored by legacy scans.
 	// InlineFlushCheck is experiment-only; false keeps the existing commit path.
 	InlineFlushCheck bool
-	DisableWALSync   bool // Skip WAL fsync when true (default: sync each record).
+	LockPolicy       string // Experiment-only: empty/go (default), phasefair, readerpref.
+	DisableWALSync   bool   // Skip WAL fsync when true (default: sync each record).
 }
 
 func DefaultConfig() Config {
@@ -87,7 +88,7 @@ type Manager struct {
 	inlineFlushCheck            bool
 	commitAcquisitionHook       func() // Test hook for the two commit-path acquisitions; nil otherwise.
 	CurrentSeqNo                atomic.Uint64
-	Mu                          *sync.RWMutex
+	Mu                          RWLocker
 	compactionMu                sync.Mutex
 	isClosed                    bool
 	state                       EngineState
@@ -182,6 +183,10 @@ func CreateManagerWithConfig(cfg Config) (*Manager, error) {
 	if cfg.ReadPath != ReadPathBlock && cfg.ReadPath != ReadPathLegacyScan {
 		return nil, fmt.Errorf("unknown read path mode: %v", cfg.ReadPath)
 	}
+	lock, err := newManagerLock(cfg.LockPolicy)
+	if err != nil {
+		return nil, err
+	}
 
 	walPath := cfg.WalPath
 	if walPath == "" {
@@ -200,7 +205,7 @@ func CreateManagerWithConfig(cfg Config) (*Manager, error) {
 	man.dataDir = cfg.DataDir
 	man.memtableThresholdBytes = cfg.MemtableThresholdBytes
 	man.CurrentSeqNo.Store(0)
-	man.Mu = &sync.RWMutex{}
+	man.Mu = lock
 	man.closeDone = make(chan struct{})
 	man.snapshotDrainCond = sync.NewCond(&man.snapshotMu)
 	man.snapshotPhase = SnapshotPhaseOpen

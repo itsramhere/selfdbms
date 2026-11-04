@@ -1,5 +1,97 @@
 # Phase 3 run instructions
 
+## X-locks-v1
+
+Protocol: [X_LOCKS_PREREGISTRATION.md](X_LOCKS_PREREGISTRATION.md).
+Run from the repository root in PowerShell. Preparation and dry-run authorize
+no trial. No trial or smoke was run during implementation. Execution requires
+the frozen protocol, a clean worktree and separate hash-bound operator approval.
+The assistant must not commit the freeze on the operator's behalf.
+
+Connect AC power, close other user applications, and record Windows power mode
+and Defender protection as found; leave both unchanged. Record any interaction
+or background process as a deviation. The operator and assistant leave the host
+alone during execution. The driver records revision, runner/plan hashes, timer
+self-test, power scheme and disk space. At least 5 GB must be free on output and
+scratch volumes. Budget **about 4.5 hours** for 480 trials plus retries: nominal
+480 x (12.5 s trial + 20 s pause) = 4 h 20 min, before other process/fixture costs.
+
+Build and generate the plan without trials:
+
+```powershell
+$env:GODEBUG = 'goindex=0'
+$locksRunner = Join-Path $PWD 'i7trial.exe'
+$locksCampaign = 'C:\scratch\x-locks-v1'
+$locksSmoke = 'C:\scratch\x-locks-v1-smoke'
+go build -o $locksRunner ./research/experiments/phase_i7/cmd/i7trial
+go run ./research/experiments/phase_i7/cmd/xcampaign -design locks -runner $locksRunner -out $locksCampaign -dry-run
+```
+
+During preparation only, a dirty-tree dry-run may append `-allow-dirty`; this
+override is recorded. Expect master seed 20261109, 8 entries, 24 cells, 480
+trials, block X1 only, and `settle_ms=20000`. Verify the plan SHA-256 against
+section 7 of the protocol. Plan hashing covers indented JSON bytes without a
+trailing newline. Rebuilding changes the runner hash; repeat preflight and
+obtain matching approval. Do not use `-allow-dirty` for execution.
+
+After operator approval, create `approval-locks.json` using the printed hashes:
+
+```json
+{
+  "campaign_id": "X-locks-v1",
+  "approved": true,
+  "runner_sha256": "<printed runner_sha256>",
+  "plan_sha256": "<printed plan_sha256>"
+}
+```
+
+If a mechanical smoke is separately approved after the freeze, use a separate
+directory and only the first six identities (one setting's policy/arm entry):
+
+```powershell
+go run ./research/experiments/phase_i7/cmd/xcampaign -design locks -runner $locksRunner -out $locksSmoke -dry-run
+go run ./research/experiments/phase_i7/cmd/xcampaign -design locks -runner $locksRunner -out $locksSmoke -approve .\approval-locks.json -limit 6
+```
+
+Inspect status, cleanup and inter-attempt gaps only; do not inspect outcomes.
+Record any smoke in the protocol deviations log and exclude its directory from
+every analysis. Every attempt, including retries, has a 20-second pause. Each
+entry-round has go/phasefair/readerpref crossed with A/AMIN, with one request
+seed shared by all six. No B arm or anchors are present. Go's default policy
+omits `lock_policy` in JSON. All three policies record write service histograms
+without enabling `diag_trace`; latency samples include only successful
+in-window completions, and late-write latency is separate.
+
+Execute all 480 fresh identities in the full directory, then analyze; repeat
+the execution command to resume. Never copy smoke artifacts into this directory.
+
+```powershell
+go run ./research/experiments/phase_i7/cmd/xcampaign -design locks -runner $locksRunner -out $locksCampaign -approve .\approval-locks.json
+python research/experiments/analysis/x_locks_analyze.py --data-dir $locksCampaign --output-dir C:\scratch\x-locks-v1-analysis
+```
+
+Analysis requires NumPy, SciPy and Matplotlib. Outputs are deterministic
+`x_locks_results.json`, `x_locks_tables.md`, `x_locks_q.png` and `x_locks_s.png`.
+Use `--allow-partial` only to label incomplete data. Failed attempts retry once;
+an exhausted failure drops the entire six-run entry-round from paired tests and
+cell summaries. Successful observations in dropped units remain in trial output.
+The existing driver abort rule (>5% final failures after 40 attempted identities)
+and append-only resume ledger apply.
+
+Zero in-window commits are valid in this campaign. Raw W remains zero; only zero
+W becomes 0.1 writes/s in log ratios, while positive paired W is unchanged.
+Zero-commit q is explicitly above every bound, never excluded or replaced with
+a finite value. The frozen section 3 amendment leaves the t CI undefined when
+any included trial has zero commits: H-L1 is not met, and H-L2 is met exactly
+when every finite q in the setting is strictly above 2.10, including the case
+where all included trials have zero commits. H-L1/H-L2 always give decisions;
+insufficient CI evidence or partial data cannot establish campaign support.
+Every policy, including `go`, calls the manager lock through an interface;
+earlier campaigns did not include that dynamic-call overhead.
+Read/write p50 and p99 are undefined when no corresponding completion exists;
+p99 also requires the existing minimum sample count. Commit lock-site wait is
+the first acquisition only and includes post-window drain, as in earlier X.
+
 ## X-followup-v1
 
 Protocol: [X_FOLLOWUP_PREREGISTRATION.md](X_FOLLOWUP_PREREGISTRATION.md).

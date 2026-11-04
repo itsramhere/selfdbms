@@ -13,6 +13,8 @@ import (
 
 // Shard accumulates one worker's observations.
 type Shard struct {
+	WriteHistogram       *Histogram // X-locks-v1 only, successful in-window writes
+	WriteLateHistogram   *Histogram
 	Paced                *pacedHistograms // X4 only, separate read response and write histograms
 	ServiceHistogram     *Histogram
 	ServiceLateHistogram *Histogram

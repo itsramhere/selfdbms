@@ -86,6 +86,7 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		ReadIODelay:            time.Duration(spec.ReadIODelayUs) * time.Microsecond,
 		DisableWALSync:         !spec.WalSync,
 		InlineFlushCheck:       spec.InlineFlushCheck,
+		LockPolicy:             spec.LockPolicy,
 		WalPath:                filepath.Join(spec.DataDir, "wal.log"),
 		DataDir:                spec.DataDir,
 		MemtableThresholdBytes: defaultMemtable, // large during fixture construction
@@ -303,6 +304,9 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 		for w := 0; w < spec.WriterConcurrency; w++ {
 			wg.Add(1)
 			sh := newShard(perShardCap)
+			if spec.IsLocksCell() {
+				sh.WriteHistogram, sh.WriteLateHistogram = &Histogram{}, &Histogram{}
+			}
 			go func(sh *Shard, worker int) {
 				defer wg.Done()
 				unpacedWriter(man, sh, stop, base, windowNs, spec, writeStream, worker)
@@ -390,6 +394,15 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	resp := MergeResponses(shards)
 	res.LatencyRead = Stats(service)
 	res.LatencyResponse = Stats(resp)
+	if spec.IsLocksCell() {
+		var inWindow, late Histogram
+		for _, sh := range shards {
+			inWindow.Merge(sh.WriteHistogram)
+			late.Merge(sh.WriteLateHistogram)
+		}
+		inStats, lateStats := inWindow.Stats(), late.Stats()
+		res.LatencyWrite, res.LatencyWriteLate = &inStats, &lateStats
+	}
 
 	serviceLate := MergeSamplesLate(shards)
 	respLate := MergeResponsesLate(shards)
@@ -742,6 +755,10 @@ func unpacedWriter(man *lsmengine.Manager, sh *Shard, stop <-chan struct{}, base
 		key, _ := stream.At(idx)
 		val := harness.FormatVal(int(idx), 128)
 		sh.WritesAttempted++
+		issued := int64(0)
+		if sh.WriteHistogram != nil {
+			issued = ElapsedNs(base)
+		}
 		tx := man.Begin()
 		if tx == nil {
 			sh.WritesError++
@@ -756,8 +773,14 @@ func unpacedWriter(man *lsmengine.Manager, sh *Shard, stop <-chan struct{}, base
 			done := ElapsedNs(base)
 			if done <= windowNs {
 				sh.WritesCompletedInWindow++
+				if sh.WriteHistogram != nil {
+					sh.WriteHistogram.Record(done - issued)
+				}
 			} else {
 				sh.WritesCompletedLate++
+				if sh.WriteLateHistogram != nil {
+					sh.WriteLateHistogram.Record(done - issued)
+				}
 			}
 		}
 		iter++

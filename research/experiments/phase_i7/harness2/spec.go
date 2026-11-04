@@ -100,10 +100,11 @@ type Spec struct {
 	// trial and the aggregate is reported in
 	// TrialResult.Sync. Default off: the observer costs one nil check on
 	// uninstrumented paths and the trial schema gains no field.
-	InstrumentSync       bool `json:"instrument_sync,omitempty"`
-	DiagTrace            bool `json:"diag_trace,omitempty"`
-	InlineFlushCheck     bool `json:"inline_flush_check,omitempty"`
-	PersistReadHistogram bool `json:"persist_read_histogram,omitempty"`
+	InstrumentSync       bool   `json:"instrument_sync,omitempty"`
+	DiagTrace            bool   `json:"diag_trace,omitempty"`
+	InlineFlushCheck     bool   `json:"inline_flush_check,omitempty"`
+	PersistReadHistogram bool   `json:"persist_read_histogram,omitempty"`
+	LockPolicy           string `json:"lock_policy,omitempty"`
 }
 
 // Mode returns the driver mode implied by the block and cell.
@@ -120,6 +121,14 @@ const (
 // ResolveMode classifies a spec. An unsupported combination returns an error so
 // the runner fails closed instead of silently running a different experiment.
 func (s Spec) ResolveMode() (Mode, error) {
+	if s.LockPolicy != "" {
+		if !s.IsX() {
+			return 0, errf("lock_policy is allowed only with X blocks")
+		}
+		if s.LockPolicy != "go" && s.LockPolicy != "phasefair" && s.LockPolicy != "readerpref" {
+			return 0, errf("unknown lock_policy %q", s.LockPolicy)
+		}
+	}
 	if s.PersistReadHistogram && !s.IsX() {
 		return 0, errf("persist_read_histogram is allowed only with X blocks")
 	}
@@ -181,6 +190,31 @@ func (s Spec) IsX() bool {
 	return s.Block == string(BlockX1) || s.Block == string(BlockX2) || s.Block == string(BlockX3) || s.Block == string(BlockX4)
 }
 
+// IsLocksCell scopes X-locks-v1 outcome recording to its explicit policy cells.
+// The default policy is omitted from JSON; the cell identity distinguishes it
+// from earlier X1 runs. Full campaign/treatment identity is checked by analysis
+// and by the runner's hash-bound plan approval.
+func (s Spec) IsLocksCell() bool {
+	if s.Block != string(BlockX1) || (s.Arm != "A" && s.Arm != "AMIN") || s.WriterConcurrency != 1 {
+		return false
+	}
+	policy := s.LockPolicy
+	if policy == "" {
+		policy = "go"
+	}
+	if policy != "go" && policy != "phasefair" && policy != "readerpref" {
+		return false
+	}
+	for _, r := range []int{4, 16} {
+		for _, d := range []int{0, 20, 200, 2000} {
+			if s.Cell == fmt.Sprintf("L1_r%02d_d%04d_%s", r, d, policy) && s.ReaderConcurrency == r && s.ReadIODelayUs == d {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ResolveReadPath fails closed, including duration overflow before conversion.
 func (s Spec) ResolveReadPath() (lsmengine.ReadPathMode, error) {
 	if s.ReadIODelayUs < 0 || int64(s.ReadIODelayUs) > math.MaxInt64/int64(time.Microsecond) {
@@ -202,6 +236,9 @@ func (s Spec) ResolveReadPath() (lsmengine.ReadPathMode, error) {
 // MarshalJSON keeps old specs byte-compatible while making X zero-dose settings
 // explicit in the serialized config, where omission would obscure treatment.
 func (s Spec) MarshalJSON() ([]byte, error) {
+	if s.LockPolicy == "go" {
+		s.LockPolicy = ""
+	}
 	type plain Spec
 	if !s.IsX() {
 		return json.Marshal(plain(s))
@@ -354,6 +391,8 @@ type TrialResult struct {
 	Operations           OperationCounts   `json:"operations"`
 	Throughput           ThroughputInfo    `json:"throughput"`
 	LatencyRead          LatencyStats      `json:"latency_read_nanos"`
+	LatencyWrite         *LatencyStats     `json:"latency_write_nanos,omitempty"`
+	LatencyWriteLate     *LatencyStats     `json:"latency_write_late_nanos,omitempty"`
 	ReadLatencyHistogram []HistogramBucket `json:"read_latency_histogram,omitempty"`
 	LatencyResponse      LatencyStats      `json:"latency_response_nanos"`
 	LatencyReadLate      LatencyStats      `json:"latency_read_late_nanos,omitempty"`

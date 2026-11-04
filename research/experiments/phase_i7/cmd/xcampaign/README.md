@@ -96,3 +96,17 @@ with `persist_read_histogram`. This flag is X-only and adds no read-path work;
 false omits both new JSON fields. See the [preregistration](../../X_FOLLOWUP_PREREGISTRATION.md)
 and [run instructions](../../PHASE3_RUN_INSTRUCTIONS.md) for preflight, approval,
 separate smoke, full execution and analysis. Gate X permits X1/X4 for this design.
+
+`-design locks` selects **X-locks-v1**, default master seed 20261109: eight
+first-campaign X1 block-read settings (4/16 readers, 0/20/200/2000 us) crossed
+with go/phasefair/readerpref, A/AMIN only, ten rounds: 24 cells and 480 trials.
+Each round shuffles eight entries; each entry shuffles its six runs and shares
+one request seed across policies and arms. Go's default omits `lock_policy`.
+A 20-second pause precedes every attempt; budget about 4.5 hours. Gate X permits
+X1 only. Zero commits remain observations; only zero W becomes 0.1 writes/s in
+log ratios. See the [preregistration](../../X_LOCKS_PREREGISTRATION.md) and
+[run instructions](../../PHASE3_RUN_INSTRUCTIONS.md) for the frozen zero-commit
+q decision rule, interface-call overhead, approval and host protocol. Analysis is
+`research/experiments/analysis/x_locks_analyze.py --data-dir <campaign>
+--output-dir <analysis> [--allow-partial]`, producing JSON, Markdown and q/S
+figures. No trial or smoke was run during implementation.
