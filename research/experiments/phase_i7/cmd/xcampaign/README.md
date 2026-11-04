@@ -122,3 +122,22 @@ approval gate permits only X3 for this campaign. Budget about three hours. Use
 [PHASE3_RUN_INSTRUCTIONS.md](../../PHASE3_RUN_INSTRUCTIONS.md#x-inputopen-v1)
 for freeze, hash-bound approval, execution and deterministic analysis. No trial
 or smoke was run during implementation; earlier frozen plans remain unchanged.
+
+
+`-design realism` selects **X-realism-v1**, default master seed 20261111:
+eight X1 cells (4/16 readers; direct reads with 1/2/4 writers, buffered controls
+with one writer), three arms, ten rounds, 240 trials, 20-second settling pauses;
+budget about 2.3 hours. The single harness seed uses D_r04/D_r16 per round across
+writer counts/paths. Gate X permits X1 only. Direct readers sync the SSTable,
+open NO_BUFFERING/O_DIRECT handles, pool aligned 4096-byte buffers and fail at
+open/probe without fallback. The amended protocol permits conflicts: the
+existing stride partitions indices, while hashed keys can collide across writers.
+Aborts are counted per trial and retained; W counts successful commits only.
+H-X reports per-cell abort shares and flags strictly more than 1% for disclosure
+beside the cell results. Native Linux replication is optional; not running it is
+not a deviation. See the [protocol](../../X_REALISM_PREREGISTRATION.md)
+and [run instructions](../../PHASE3_RUN_INSTRUCTIONS.md#x-realism-v1), including
+native Linux ext4/xfs replication, Linux kernel/filesystem/device recording,
+separate Linux runner approval, WSL2 rehearsal-only status and deterministic
+`x_realism_analyze.py --replication-dir` side-by-side reporting without pooling.
+No trial, smoke or commit was performed during implementation.

@@ -38,6 +38,7 @@ type Shard struct {
 	WritesCompletedInWindow int64
 	WritesCompletedLate     int64
 	WritesError             int64
+	WriteConflictAborts     int64
 	ValidationErrors        int64
 	Issued                  int64
 	Abandoned               int64
@@ -276,6 +277,7 @@ type Totals struct {
 	WritesCompletedInWindow int64
 	WritesCompletedLate     int64
 	WritesError             int64
+	WriteConflictAborts     int64
 	ValidationErrors        int64
 	Issued                  int64
 	Abandoned               int64
@@ -299,6 +301,7 @@ func Sum(shards []*Shard) Totals {
 		t.WritesCompletedInWindow += s.WritesCompletedInWindow
 		t.WritesCompletedLate += s.WritesCompletedLate
 		t.WritesError += s.WritesError
+		t.WriteConflictAborts += s.WriteConflictAborts
 		t.ValidationErrors += s.ValidationErrors
 		t.Issued += s.Issued
 		t.Abandoned += s.Abandoned

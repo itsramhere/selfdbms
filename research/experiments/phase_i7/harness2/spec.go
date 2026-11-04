@@ -122,6 +122,9 @@ const (
 // ResolveMode classifies a spec. An unsupported combination returns an error so
 // the runner fails closed instead of silently running a different experiment.
 func (s Spec) ResolveMode() (Mode, error) {
+	if s.Block == string(BlockX1) && s.WriterConcurrency > 1 && !s.IsRealismCell() {
+		return 0, errf("X1 writer_concurrency > 1 is allowed only in X-realism-v1 cells")
+	}
 	if s.CompactionOpenOutsideLock && !s.IsX() {
 		return 0, errf("compaction_open_outside_lock is allowed only with X blocks")
 	}
@@ -232,6 +235,11 @@ func (s Spec) ResolveReadPath() (lsmengine.ReadPathMode, error) {
 			return 0, errf("legacy_scan requires read_io_delay_us=0")
 		}
 		return lsmengine.ReadPathLegacyScan, nil
+	case "direct":
+		if !s.IsX() || s.ReadIODelayUs != 0 {
+			return 0, errf("direct requires an X block and read_io_delay_us=0")
+		}
+		return lsmengine.ReadPathDirect, nil
 	default:
 		return 0, errf("unknown read_path %q", s.ReadPath)
 	}
@@ -274,6 +282,7 @@ type TimestampInfo struct {
 // abandoned/unissued accounting required for open-loop measurement, and
 // distinguishes completions in-window from late completions during drain.
 type OperationCounts struct {
+	WriteConflictAborts       *int64           `json:"write_conflict_aborts,omitempty"` // X-realism-v1; includes late attempts.
 	ReadOpsScheduled          int64            `json:"read_ops_scheduled"`
 	ReadOpsIssued             int64            `json:"read_ops_issued"`
 	ReadOpsCompletedInWindow  int64            `json:"read_ops_completed_in_window"`

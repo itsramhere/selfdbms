@@ -5,6 +5,9 @@ import (
 	"fmt"
 )
 
+// ErrWriteConflict identifies an optimistic write-write conflict abort.
+var ErrWriteConflict = errors.New("Write-write conflict detected. Transaction aborted.")
+
 type Transaction struct {
 	WriteSet       map[string]PendingWrite
 	ReadTs         uint64
@@ -89,7 +92,7 @@ func (t *Transaction) Commit() error {
 		if err == nil && latestSeqNo > t.ReadTs {
 			t.Man.Mu.Unlock()
 			t.Abort()
-			return errors.New("Write-write conflict detected. Transaction aborted.")
+			return ErrWriteConflict
 		}
 	}
 

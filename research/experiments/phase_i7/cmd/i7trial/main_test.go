@@ -187,7 +187,7 @@ func TestValidateEnvelopeErrorPaths(t *testing.T) {
 func TestXApproval(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "approval.json")
 	a := Approval{CampaignID: "X-readcost-v1", Approved: true, RunnerSHA256: runtimeInfo().ExeSHA256, PlanSHA256: strings.Repeat("a", 64)}
-	for _, campaign := range []string{"X-readcost-v1", "X-intervention-v1", "X-compaction-v1", "X-tablecount-v1", "X-paced-v1", "X-settled-v1", "X-followup-v1", "X-locks-v1", "X-inputopen-v1"} {
+	for _, campaign := range []string{"X-readcost-v1", "X-intervention-v1", "X-compaction-v1", "X-tablecount-v1", "X-paced-v1", "X-settled-v1", "X-followup-v1", "X-locks-v1", "X-inputopen-v1", "X-realism-v1"} {
 		a.CampaignID = campaign
 		b, _ := json.Marshal(a)
 		if err := os.WriteFile(path, b, 0644); err != nil {
@@ -207,7 +207,7 @@ func TestXApproval(t *testing.T) {
 		if campaign == "X-inputopen-v1" {
 			blocks, rejected = []string{"X3"}, "X1"
 		}
-		if campaign == "X-locks-v1" {
+		if campaign == "X-locks-v1" || campaign == "X-realism-v1" {
 			blocks, rejected = []string{"X1"}, "X4"
 		}
 		if _, err := checkApproval(path, "X", rejected); err == nil {

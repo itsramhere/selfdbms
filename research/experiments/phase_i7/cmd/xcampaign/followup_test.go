@@ -78,6 +78,7 @@ func TestExistingDesignFrozenPlans(t *testing.T) {
 		{"paced", "paced", "384aace771c82b3e16eb0e1cb5363678cfff075a420ce8fcd70045ad82cb90e8", makePacedPlan(20261106)},
 		{"settled", "settled", "7c868047870d72cf2d66100aade809f01549ee3a69f68357a5994b34a6c9c777", makeSettledPlan(20261107)},
 		{"locks", "locks", "3323c32d053be80ca92b543509f474f1e2107e24e093b3e77c64fdd353c89159", makeLocksPlan(20261109)},
+		{"inputopen", "inputopen", "5b685feb2327ff8d9b1e72b4bc0637570f0fe0014690ec9e214e84f163893a98", makeInputopenPlan(20261110)},
 		{"followup", "followup", "394675b73698ef4afeed5af747b59970bc57cec03c66bc9c7642322ff2e04f51", makeFollowupPlan(20261108)},
 	} {
 		t.Run(c.name, func(t *testing.T) {

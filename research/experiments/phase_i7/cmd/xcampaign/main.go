@@ -50,6 +50,9 @@ type platform struct {
 	PowerScheme   string          `json:"power_scheme"`
 	FreeDiskBytes uint64          `json:"free_disk_bytes"`
 	CheckedUTC    string          `json:"checked_utc"`
+	Kernel        string          `json:"kernel,omitempty"`
+	FileSystem    string          `json:"file_system,omitempty"`
+	Device        string          `json:"device,omitempty"`
 	GOOS          string          `json:"goos"`
 	GOARCH        string          `json:"goarch"`
 }
@@ -59,7 +62,7 @@ func main() {
 	flag.StringVar(&o.runner, "runner", "", "path to i7trial executable (required)")
 	flag.StringVar(&o.out, "out", "", "empty results root or existing X campaign (required)")
 	flag.StringVar(&o.data, "data", "", "scratch data root (default <out>/data)")
-	flag.StringVar(&o.design, "design", "readcost", "campaign design: readcost|intervention|compaction|tablecount|paced|settled|followup|locks|inputopen")
+	flag.StringVar(&o.design, "design", "readcost", "campaign design: readcost|intervention|compaction|tablecount|paced|settled|followup|locks|inputopen|realism")
 	flag.Uint64Var(&o.master, "master-seed", 20261030, "paired design master seed")
 	flag.BoolVar(&o.dry, "dry-run", false, "print and persist plan and preflight; launch no trials")
 	flag.IntVar(&o.limit, "limit", 0, "execute at most N unfinished trials (0 = all)")
@@ -96,6 +99,9 @@ func main() {
 	}
 	if !masterSet && o.design == "inputopen" {
 		o.master = 20261110
+	}
+	if !masterSet && o.design == "realism" {
+		o.master = 20261111
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -219,7 +225,7 @@ func preflight(ctx context.Context, o options, runnerHash, planHash, selectedCam
 	if selectedCampaign == "X-inputopen-v1" {
 		requiredBlocks = []string{"X3"}
 	}
-	if selectedCampaign == "X-locks-v1" {
+	if selectedCampaign == "X-locks-v1" || selectedCampaign == "X-realism-v1" {
 		requiredBlocks = []string{"X1"}
 	}
 	if selectedCampaign == "X-paced-v1" || selectedCampaign == "X-settled-v1" || selectedCampaign == "X-followup-v1" {
@@ -259,6 +265,10 @@ func preflight(ctx context.Context, o options, runnerHash, planHash, selectedCam
 		if free < 5_000_000_000 {
 			return p, fmt.Errorf("%s: free disk %d bytes < 5 GB", path, free)
 		}
+	}
+	p.Kernel, p.FileSystem, p.Device, err = diskPlatform(ctx, o.data)
+	if err != nil {
+		return p, err
 	}
 	return p, nil
 }
@@ -310,6 +320,8 @@ func run(ctx context.Context, o options, w io.Writer) error {
 		plan = makeCompactionPlan(o.master)
 	case "followup":
 		plan = makeFollowupPlan(o.master)
+	case "realism":
+		plan = makeRealismPlan(o.master)
 	case "inputopen":
 		plan = makeInputopenPlan(o.master)
 	case "locks":
@@ -321,7 +333,7 @@ func run(ctx context.Context, o options, w io.Writer) error {
 	case "tablecount":
 		plan = makeTablecountPlan(o.master)
 	default:
-		return fmt.Errorf("unknown design %q; expected readcost|intervention|compaction|tablecount|paced|settled|followup|locks|inputopen", o.design)
+		return fmt.Errorf("unknown design %q; expected readcost|intervention|compaction|tablecount|paced|settled|followup|locks|inputopen|realism", o.design)
 	}
 	b, err := jsonBytes(plan)
 	if err != nil {
@@ -355,7 +367,10 @@ func run(ctx context.Context, o options, w io.Writer) error {
 			s := c.Spec
 			fmt.Fprintf(w, "%-20s %-5s %7d %-12s %9d %8d %7d %6d %11d %6d %10d\n", c.ID, s.Block, s.ReaderConcurrency, s.ReadPath, s.ReadIODelayUs, s.MemtableThresholdBytes, s.WriterConcurrency, s.PublicationEvents, s.CompactionTriggerMs, s.InitialSSTableCount, s.InitialKeysPerSSTable)
 		}
-		if plan.CampaignID == "X-inputopen-v1" {
+		if plan.CampaignID == "X-realism-v1" {
+			eta := time.Duration(len(plan.Trials)) * (time.Duration(plan.SettleMs)*time.Millisecond + 12500*time.Millisecond)
+			fmt.Fprintf(w, "Total: %d cells; %d trials; pause %d ms before every attempt; ETA: %s (budget about 2.3 hours)\n", len(plan.Cells), len(plan.Trials), plan.SettleMs, eta)
+		} else if plan.CampaignID == "X-inputopen-v1" {
 			eta := time.Duration(len(plan.Trials)) * (time.Duration(plan.SettleMs)*time.Millisecond + 12500*time.Millisecond)
 			fmt.Fprintf(w, "Total: 6 entries; %d cells; %d trials; pause %d ms before every attempt; ETA: %s (budget about 3 hours)\n", len(plan.Cells), len(plan.Trials), plan.SettleMs, eta)
 		} else if plan.CampaignID == "X-locks-v1" {

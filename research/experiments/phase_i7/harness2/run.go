@@ -447,6 +447,10 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	res.Operations.WriteOpsCompletedLate = tot.WritesCompletedLate
 	res.Operations.WriteOpsCompleted = tot.WritesCompleted
 	res.Operations.ErrorOpsCount = tot.ReadsError + tot.WritesError
+	if spec.IsRealismCell() {
+		v := tot.WriteConflictAborts
+		res.Operations.WriteConflictAborts = &v
+	}
 	res.Operations.ValidationErrorCount = tot.ValidationErrors
 
 	// Throughput is calculated strictly using completions inside the measured window.
@@ -565,6 +569,10 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	if spec.Block == string(BlockX4) && tot.ReadsError+tot.WritesError > 0 && res.Error == "" {
 		res.Status = "FAILED"
 		res.Error = fmt.Sprintf("%d engine operation error(s)", tot.ReadsError+tot.WritesError)
+	}
+	if spec.IsRealismCell() && tot.ReadsError+tot.WritesError-tot.WriteConflictAborts > 0 && res.Error == "" {
+		res.Status = "FAILED"
+		res.Error = fmt.Sprintf("%d non-conflict engine operation error(s)", tot.ReadsError+tot.WritesError-tot.WriteConflictAborts)
 	}
 	if tot.ValidationErrors > 0 && res.Error == "" {
 		res.Status = "FAILED"
@@ -768,7 +776,7 @@ func unpacedWriter(man *lsmengine.Manager, sh *Shard, stop <-chan struct{}, base
 		}
 		tx.Put(key, val)
 		if err := tx.Commit(); err != nil {
-			sh.WritesError++
+			recordUnpacedWriteFailure(sh, spec, err)
 		} else {
 			sh.WritesCompleted++
 			done := ElapsedNs(base)

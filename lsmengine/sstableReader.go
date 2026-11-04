@@ -11,6 +11,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -20,12 +21,15 @@ type ReadPathMode int
 const (
 	ReadPathBlock      ReadPathMode = iota // Range check, per-block ReadAt, and early stop (default).
 	ReadPathLegacyScan                     // Historical unbuffered scan, without injected delay.
+	ReadPathDirect                         // Aligned, uncached point-read data blocks (experiment only).
 )
 
 // SSTableReader uses block reads for point lookups by default. ReadPath and
 // ReadIODelay must be configured before publishing the reader to other goroutines.
 type SSTableReader struct {
 	File          *os.File
+	directRaw     syscall.RawConn
+	directFile    *os.File // Separate handle; metadata and iterators retain buffered I/O.
 	Index         []IndexEntry
 	DataEndOffset int64
 	ReadPath      ReadPathMode
@@ -67,7 +71,7 @@ func (sst *SSTableReader) reclaim() error {
 		path := ""
 		if sst.File != nil {
 			path = sst.File.Name()
-			if err := sst.File.Close(); err != nil {
+			if err := sst.Close(); err != nil {
 				sst.freeErr = err
 				return
 			}
@@ -247,6 +251,9 @@ func (sst *SSTableReader) readBlock(i int, buf []byte, pointRead bool) ([]byte, 
 		if sst.blockReadHook != nil {
 			sst.blockReadHook()
 		}
+	}
+	if pointRead && sst.ReadPath == ReadPathDirect {
+		return buf, sst.readDirectBlock(buf, start)
 	}
 	_, err := sst.File.ReadAt(buf, start)
 	return buf, err
@@ -475,8 +482,12 @@ func (sst *SSTableReader) latestValueLegacyScan(userKey []byte) (uint64, error) 
 }
 
 func (sst *SSTableReader) Close() error {
-	if sst.File != nil {
-		return sst.File.Close()
+	var directErr error
+	if sst.directFile != nil {
+		directErr = sst.directFile.Close()
 	}
-	return nil
+	if sst.File != nil {
+		return errors.Join(directErr, sst.File.Close())
+	}
+	return directErr
 }

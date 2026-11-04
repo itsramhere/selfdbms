@@ -183,7 +183,7 @@ func CreateManagerWithConfig(cfg Config) (*Manager, error) {
 	if cfg.Mode != SyncModeApproachA && cfg.Mode != SyncModeApproachB && cfg.Mode != SyncModeApproachAMin {
 		return nil, fmt.Errorf("unknown synchronization mode: %v", cfg.Mode)
 	}
-	if cfg.ReadPath != ReadPathBlock && cfg.ReadPath != ReadPathLegacyScan {
+	if cfg.ReadPath != ReadPathBlock && cfg.ReadPath != ReadPathLegacyScan && cfg.ReadPath != ReadPathDirect {
 		return nil, fmt.Errorf("unknown read path mode: %v", cfg.ReadPath)
 	}
 	lock, err := newManagerLock(cfg.LockPolicy)
@@ -242,7 +242,7 @@ func CreateManagerWithConfig(cfg Config) (*Manager, error) {
 
 // newSSTableReader configures point reads before the reader is published.
 func (m *Manager) newSSTableReader(filename string) (*SSTableReader, error) {
-	reader, err := NewSSTableReader(filename)
+	reader, err := NewSSTableReaderWithReadPath(filename, m.readPath)
 	if err != nil {
 		return nil, err
 	}

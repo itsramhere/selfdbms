@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"syscall"
 	"unsafe"
 )
@@ -17,4 +18,9 @@ func freeDisk(path string) (uint64, error) {
 		return 0, err
 	}
 	return available, nil
+}
+
+func diskPlatform(ctx context.Context, path string) (kernel, filesystem, device string, err error) {
+	// Existing platform records retain the Windows power/selftest inventory.
+	return "", "", "", nil
 }

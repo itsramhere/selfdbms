@@ -394,7 +394,7 @@ func emitSelftest(rt RuntimeInfo, expectedAffinity string) {
 
 func probeTimers() map[string]any {
 	out := map[string]any{}
-	out["qpc_freq_hz"] = harness.QPCFrequencyHz()
+	out["qpc_freq_hz"] = platformQPCFrequency()
 
 	const samples = 20000
 	minQPC, lastQPC := int64(1<<62), int64(0)
@@ -599,7 +599,7 @@ func checkApproval(approvalPath, gate, block string) (*Approval, error) {
 		return nil, errors.New("approval file does not set approved=true")
 	}
 	if gate == "X" {
-		if a.CampaignID != "X-readcost-v1" && a.CampaignID != "X-intervention-v1" && a.CampaignID != "X-compaction-v1" && a.CampaignID != "X-tablecount-v1" && a.CampaignID != "X-paced-v1" && a.CampaignID != "X-settled-v1" && a.CampaignID != "X-followup-v1" && a.CampaignID != "X-locks-v1" && a.CampaignID != "X-inputopen-v1" {
+		if a.CampaignID != "X-readcost-v1" && a.CampaignID != "X-intervention-v1" && a.CampaignID != "X-compaction-v1" && a.CampaignID != "X-tablecount-v1" && a.CampaignID != "X-paced-v1" && a.CampaignID != "X-settled-v1" && a.CampaignID != "X-followup-v1" && a.CampaignID != "X-locks-v1" && a.CampaignID != "X-inputopen-v1" && a.CampaignID != "X-realism-v1" {
 			return nil, errors.New("X approval campaign_id mismatch")
 		}
 		blocks := []string{"X1", "X2", "X3", "ANCHOR"}
@@ -615,7 +615,7 @@ func checkApproval(approvalPath, gate, block string) (*Approval, error) {
 		if a.CampaignID == "X-inputopen-v1" {
 			blocks = []string{"X3"}
 		}
-		if a.CampaignID == "X-locks-v1" {
+		if a.CampaignID == "X-locks-v1" || a.CampaignID == "X-realism-v1" {
 			blocks = []string{"X1"}
 		}
 		if !containsFold(blocks, block) {

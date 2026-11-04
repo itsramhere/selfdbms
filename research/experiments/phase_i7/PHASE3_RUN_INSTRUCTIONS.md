@@ -261,3 +261,152 @@ can reuse and truncate a live input. Output naming is unchanged by this treatmen
 The read stress test waits for a distinct tick between successive compactions;
 the campaign retains its specified 250 ms timer. Race verification is left to the
 operator. The copied protocol is unchanged except for the requested plan-hash line.
+
+
+## X-realism-v1
+
+Protocol: [X_REALISM_PREREGISTRATION.md](X_REALISM_PREREGISTRATION.md).
+Eight X1 cells, three arms, ten rounds: **240 trials**, with a 20-second pause
+before every attempt. Budget **about 2.3 hours** (240 x (12.5 + 20) seconds =
+2 h 10 min before fixture, process and retry overhead). Direct cells have 4/16
+readers and 1/2/4 free writers; buffered controls have one writer. All retain
+four tables, 1 MiB memtable, 2 s warmup, 10 s window, 200 ms cooldown, no
+compaction, WAL sync and sync instrumentation on, diag_trace off, no delay.
+
+Writers retain the existing stride, which separates request indices rather than
+keys. KeyStream.At hashes into a shared 10,000-key domain, so conflict aborts are
+possible. The pre-freeze amendment explicitly permits them: an abort is not a
+failure and the trial is kept. W counts successful in-window commits only.
+H-X reports abort counts per trial attempt and the abort share per cell, including
+retries and late attempts; a share strictly above 1% must be disclosed beside that
+cell's results. Unknown counts are marked explicitly. No campaign trial or smoke
+was run during implementation.
+
+Connect AC power, close other user applications, record Windows power mode and
+Defender as found, and leave them unchanged. Record any interaction or background
+process as a deviation; the operator and assistant leave the host alone during
+execution. The operator handles the pre-data freeze; the assistant never commits.
+Use the existing hash-bound gate X approval with block X1 only.
+
+Prepare in PowerShell without launching trials:
+
+```powershell
+$env:GODEBUG = 'goindex=0'
+$realismRunner = Join-Path $PWD 'i7trial.exe'
+$realismCampaign = 'C:\scratch\x-realism-v1'
+go build -o $realismRunner ./research/experiments/phase_i7/cmd/i7trial
+go run ./research/experiments/phase_i7/cmd/xcampaign -design realism -runner $realismRunner -out $realismCampaign -dry-run
+```
+
+During preparation, use -allow-dirty if needed and record it. Expect master seed
+20261111, settle_ms=20000, no anchors, the eight cells in protocol table order,
+and plan SHA-256 (indented JSON bytes without trailing newline)
+`e41320390c819d25fe74132d242e555e5831e063f71cba2d51eae0fc1d34681a`.
+All paths/writer counts within a reader setting and round share
+pairedSeed(master, "D_r04" or "D_r16", round). Each read logical index has the
+same key/hit flag across comparisons. Read workers keep the same reader stride;
+actual timing, counts and the set of indices completed can differ. Writer
+indices retain their existing stride, so each indexed write is issued by one
+worker, but this does not make their hashed keys disjoint. Sync before direct
+handle open covers fixture writes that omitted sync. A rejected direct open or
+aligned probe fails explicitly without buffered fallback.
+
+The operator freezes and reviews the amended protocol and unchanged plan, then creates approval-realism.json with the current printed runner hash:
+
+```json
+{
+  "campaign_id": "X-realism-v1",
+  "approved": true,
+  "runner_sha256": "<printed runner_sha256>",
+  "plan_sha256": "e41320390c819d25fe74132d242e555e5831e063f71cba2d51eae0fc1d34681a"
+}
+```
+
+Execution, only after freeze and operator approval:
+
+```powershell
+$env:GODEBUG = 'goindex=0'
+go run ./research/experiments/phase_i7/cmd/xcampaign -design realism -runner $realismRunner -out $realismCampaign -approve .\approval-realism.json
+python research/experiments/analysis/x_realism_analyze.py --data-dir $realismCampaign --output-dir C:\scratch\x-realism-v1-analysis
+```
+
+Repeat the execution command to resume. Failed attempts retry once; second failures
+drop the complete three-arm cell-round. Cross-cell tests require both complete
+triplets, paired by round. Successful observations in dropped units stay in trial
+output. No outcome-based exclusions. For W log ratios only, a zero anywhere in
+the comparison unit adds 0.1 writes/s to every run in that unit, as X-paced.
+q with a zero W denominator is undefined and cannot establish a band prediction;
+raw zeros remain visible. Missing data requires --allow-partial. No smoke is
+authorized by these implementation instructions; any later operator-authorized
+mechanical smoke must be separate, first plan identities only, logged in the
+protocol, checked for status/cleanup/gaps only, and excluded from analysis.
+
+Native Linux replication is optional if a native ext4/xfs host becomes available;
+not running it is not a deviation. It uses the **same plan bytes/hash, seed and predictions**,
+with fresh fixtures in a separate output directory on ext4 or xfs. WSL2 is only
+a rehearsal: its virtual disk counts for nothing, and the analyzer rejects it
+as replication. From PowerShell a cross-build check is:
+
+```powershell
+$env:GODEBUG = 'goindex=0'
+$env:GOOS = 'linux'
+go build ./research/experiments/phase_i7/...
+go build -o .\i7trial-linux ./research/experiments/phase_i7/cmd/i7trial
+go build -o .\xcampaign-linux ./research/experiments/phase_i7/cmd/xcampaign
+Remove-Item Env:GOOS
+```
+
+On the native Linux host (or build there with GODEBUG=goindex=0), use uname and
+findmnt from util-linux. The driver's platform.json records kernel, scratch
+filesystem and source device, plus revision, runner/plan hashes, self-test,
+architecture, power availability and disk space. Also record the physical host,
+storage model/firmware and mount options, native-versus-virtual status, AC/power
+settings and background activity/deviations. Keep these records beside platform.json.
+The runner hash differs by platform; create a separate Linux approval bound to
+that runner and the unchanged plan hash. Compare the generated plan bytes with
+the Windows plan before executing:
+
+```bash
+export GODEBUG=goindex=0
+./xcampaign-linux -design realism -runner ./i7trial-linux -out /mnt/ext4/x-realism-linux -dry-run
+sha256sum /mnt/ext4/x-realism-linux/plan.json
+# After operator freeze/approval, using the Linux runner hash:
+./xcampaign-linux -design realism -runner ./i7trial-linux -out /mnt/ext4/x-realism-linux -approve ./approval-realism-linux.json
+python research/experiments/analysis/x_realism_analyze.py --data-dir /path/to/windows-results --replication-dir /mnt/ext4/x-realism-linux --output-dir /path/to/side-by-side-analysis
+```
+
+Analysis requires NumPy, SciPy and Matplotlib, and deterministically writes
+x_realism_results.json, x_realism_tables.md and one x_realism_s_q.png figure.
+With --replication-dir, Windows and native Linux have separate estimates,
+intervals, predictions, exclusions and provenance, shown side by side and never
+pooled. An optional --readcost-dir <earlier-X-readcost-campaign> supplies hold
+against injected-dose context; the default looks for the sibling campaign folder.
+If unavailable, that descriptive item is explicitly marked unavailable. Earlier
+campaign values never enter any confirmatory test. Hold, read p50/p95/p99,
+S/read ratios at multiple writers, direct/buffered R/W ratios, commit wait,
+flushes and descriptive drift are all retained. Bootstrap sensitivity uses
+10000 paired resamples with seed 20261111.
+
+Operator verification (no campaign or smoke):
+
+```powershell
+$env:GODEBUG = 'goindex=0'
+go test -race ./lsmengine/ ./research/experiments/phase_i7/... -count=1
+```
+
+Targeted Linux/WSL engine names: TestDirectAlignment,
+TestDirectReadEquivalenceConcurrent, TestDirectOpenFailureAndDefault,
+TestDirectManagerValidationAndClose. Harness names: TestRealismSpecAndReadPath,
+TestRealismPairedStreams, TestRealismWriterStrideKeyCollision,
+TestRealismWriterCommitCountOnce and TestRealismConflictAccounting. Driver:
+TestRealismPlan and TestExistingDesignFrozenPlans. On Linux/WSL set
+GODEBUG=goindex=0 before every Go command, with -race available on the chosen host.
+WSL tests validate mechanics only.
+
+Windows coherence limitation: file.Sync calls FlushFileBuffers on a writable
+cached handle before opening the separate NO_BUFFERING handle. SSTables remain
+immutable afterward. Tests compare direct and buffered results, including a
+cached rewrite without Sync, but cannot prove storage firmware persistence or
+absence of device/controller caches. The flag bypasses the OS page cache; it
+does not disable caches inside the SSD. 4096-byte alignment is the fixed
+protocol requirement; devices/filesystems that reject it fail explicitly.
