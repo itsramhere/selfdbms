@@ -86,3 +86,13 @@ go run ./research/experiments/phase_i7/cmd/xcampaign -design tablecount -runner 
 Analysis: `research/experiments/analysis/x_tablecount_analyze.py --data-dir <campaign>
 --output-dir <analysis> [--allow-partial]`. Optional `lifecycle_bench.txt` contains
 separate Go microbenchmark output; one-iteration rows are compile checks only.
+
+`-design followup` selects **X-followup-v1**, default master seed 20261108:
+six X4 cells with AMIN/B and one X1 mixed cell with A/AMIN/B, ten rounds,
+150 trials, and a 20-second pause before every attempt (budget about 85 minutes).
+F1 varies paced writes with a 16 MiB memtable; F2 retains 1 MiB; F3 disables
+WAL sync under `diag_trace`; F4 persists the existing measured-read histogram
+with `persist_read_histogram`. This flag is X-only and adds no read-path work;
+false omits both new JSON fields. See the [preregistration](../../X_FOLLOWUP_PREREGISTRATION.md)
+and [run instructions](../../PHASE3_RUN_INSTRUCTIONS.md) for preflight, approval,
+separate smoke, full execution and analysis. Gate X permits X1/X4 for this design.

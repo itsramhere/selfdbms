@@ -100,9 +100,10 @@ type Spec struct {
 	// trial and the aggregate is reported in
 	// TrialResult.Sync. Default off: the observer costs one nil check on
 	// uninstrumented paths and the trial schema gains no field.
-	InstrumentSync   bool `json:"instrument_sync,omitempty"`
-	DiagTrace        bool `json:"diag_trace,omitempty"`
-	InlineFlushCheck bool `json:"inline_flush_check,omitempty"`
+	InstrumentSync       bool `json:"instrument_sync,omitempty"`
+	DiagTrace            bool `json:"diag_trace,omitempty"`
+	InlineFlushCheck     bool `json:"inline_flush_check,omitempty"`
+	PersistReadHistogram bool `json:"persist_read_histogram,omitempty"`
 }
 
 // Mode returns the driver mode implied by the block and cell.
@@ -119,6 +120,9 @@ const (
 // ResolveMode classifies a spec. An unsupported combination returns an error so
 // the runner fails closed instead of silently running a different experiment.
 func (s Spec) ResolveMode() (Mode, error) {
+	if s.PersistReadHistogram && !s.IsX() {
+		return 0, errf("persist_read_histogram is allowed only with X blocks")
+	}
 	if s.DiagTrace && !s.InstrumentSync {
 		return 0, errf("diag_trace requires instrument_sync")
 	}
@@ -334,26 +338,27 @@ type LatencyStats struct {
 
 // TrialResult is the per-trial envelope consumed by the analysis layer.
 type TrialResult struct {
-	FixtureWALSync      *bool           `json:"fixture_wal_sync,omitempty"`
-	SchemaVersion       string          `json:"schema_version"`
-	TrialID             string          `json:"trial_id"`
-	TrialIndex          int             `json:"trial_index"`
-	WorkloadID          string          `json:"workload_id"`
-	Block               string          `json:"block"`
-	Cell                string          `json:"cell"`
-	Arm                 string          `json:"arm"`
-	SyncMode            string          `json:"sync_mode"`
-	GitRevision         string          `json:"git_revision"`
-	Environment         Environment     `json:"environment"`
-	Config              Spec            `json:"config"`
-	Timestamps          TimestampInfo   `json:"timestamps"`
-	Operations          OperationCounts `json:"operations"`
-	Throughput          ThroughputInfo  `json:"throughput"`
-	LatencyRead         LatencyStats    `json:"latency_read_nanos"`
-	LatencyResponse     LatencyStats    `json:"latency_response_nanos"`
-	LatencyReadLate     LatencyStats    `json:"latency_read_late_nanos,omitempty"`
-	LatencyResponseLate LatencyStats    `json:"latency_response_late_nanos,omitempty"`
-	LSMDiagnostics      Diagnostics     `json:"lsm_diagnostics"`
+	FixtureWALSync       *bool             `json:"fixture_wal_sync,omitempty"`
+	SchemaVersion        string            `json:"schema_version"`
+	TrialID              string            `json:"trial_id"`
+	TrialIndex           int               `json:"trial_index"`
+	WorkloadID           string            `json:"workload_id"`
+	Block                string            `json:"block"`
+	Cell                 string            `json:"cell"`
+	Arm                  string            `json:"arm"`
+	SyncMode             string            `json:"sync_mode"`
+	GitRevision          string            `json:"git_revision"`
+	Environment          Environment       `json:"environment"`
+	Config               Spec              `json:"config"`
+	Timestamps           TimestampInfo     `json:"timestamps"`
+	Operations           OperationCounts   `json:"operations"`
+	Throughput           ThroughputInfo    `json:"throughput"`
+	LatencyRead          LatencyStats      `json:"latency_read_nanos"`
+	ReadLatencyHistogram []HistogramBucket `json:"read_latency_histogram,omitempty"`
+	LatencyResponse      LatencyStats      `json:"latency_response_nanos"`
+	LatencyReadLate      LatencyStats      `json:"latency_read_late_nanos,omitempty"`
+	LatencyResponseLate  LatencyStats      `json:"latency_response_late_nanos,omitempty"`
+	LSMDiagnostics       Diagnostics       `json:"lsm_diagnostics"`
 	// X4 adds optional scheduled-load observations; older result bytes omit it.
 	PacedLoad *PacedLoadOutcome `json:"paced_load,omitempty"`
 

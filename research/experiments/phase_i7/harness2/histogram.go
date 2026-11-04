@@ -121,3 +121,18 @@ func MergeHistograms(shards []*Shard, late bool) LatencyStats {
 	}
 	return h.Stats()
 }
+
+// Export only after workers stop. The read path and its existing histogram
+// recording are unchanged. Persist all buckets (including zeros) so an empty
+// measured window still has an explicit, nonempty histogram.
+func mergeReadHistogramBuckets(shards []*Shard) []HistogramBucket {
+	var h Histogram
+	for _, s := range shards {
+		h.Merge(s.ServiceHistogram)
+	}
+	buckets := make([]HistogramBucket, histogramBuckets)
+	for i, n := range h.buckets {
+		buckets[i] = HistogramBucket{LowerNs: histogramValue(i), Count: n}
+	}
+	return buckets
+}

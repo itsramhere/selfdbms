@@ -403,6 +403,9 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	if spec.IsX() {
 		res.LatencyRead = MergeHistograms(shards, false)
 		res.LatencyReadLate = MergeHistograms(shards, true)
+		if spec.PersistReadHistogram {
+			res.ReadLatencyHistogram = mergeReadHistogramBuckets(shards)
+		}
 	}
 	secs := float64(measured) / 1e9
 	if secs <= 0 {
