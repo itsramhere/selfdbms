@@ -1,0 +1,8 @@
+{
+    "campaign_id":  "X-followup-v1",
+    "approved":  true,
+    "runner_sha256":  "6d065832f6398dd66e79eb56e9fc961c091e139cf50abfa63c160b45770e2c77",
+    "plan_sha256":  "394675b73698ef4afeed5af747b59970bc57cec03c66bc9c7642322ff2e04f51",
+    "approved_by":  "Operator in chat, 2026-11-04: \u0027once 3d coding is done, you can do start testing\u0027 and \u0027I mean these: Hold-share test, Read-histogram rerun\u0027",
+    "git_head":  "fc7998c5d5266b690a6e6276267ff34102c63e49"
+}

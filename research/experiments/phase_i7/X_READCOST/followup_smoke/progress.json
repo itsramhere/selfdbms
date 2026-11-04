@@ -1,0 +1,20 @@
+{
+  "attempted": 7,
+  "campaign_id": "X-followup-v1",
+  "eta_seconds": 4623,
+  "failed": 0,
+  "last": {
+    "event": "FINISHED",
+    "trial_id": "F4_r04_d0000_t01_A",
+    "attempt": 1,
+    "start_utc": "2026-11-04T06:44:17.3381439Z",
+    "end_utc": "2026-11-04T06:44:29.6474245Z",
+    "exit_code": 0,
+    "status": "SUCCESS",
+    "wall_ms": 12309
+  },
+  "remaining": 143,
+  "success": 7,
+  "total": 150,
+  "updated_utc": "2026-11-04T06:44:29.6679187Z"
+}

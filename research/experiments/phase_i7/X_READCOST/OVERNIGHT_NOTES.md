@@ -219,3 +219,40 @@ Neither model met the criteria on the 39 test cells. M1: median |residual| 0.031
 M1 was close in most cells: 32 of 39 fell inside the margin, and 6 of the 8 k = 1 cells. The two cells beyond the bound are the intervention's r = 16, d = 2 ms cells (-0.228 and -0.307), where writes fell further than the model says. Five of the seven misses are at 2 ms, where the delay changes from a spin to a sleep; the other two are r = 16, d = 200 us (second) and Churn r = 1. Not separated. Tempting to loosen criterion 2 after seeing this, but it stays as written.
 
 Separate from the criteria: the settled flush-check CDF at d = 2 ms under CoarseLock falls in two steps, near one and near two delays, so that p50 hides a second cluster. Not predicted and not analysed. Read quantiles show p50 45 vs 808 us and similar p95 and p99, which is consistent with the inferred fast and blocked reads but does not establish modes. Mean above p95 in 0/10 trials per arm.
+
+## X-followup-v1 execution log (4 Nov). Pre-registered, frozen at fc7998c.
+- Built in a worktree of fc7998c, so the later lock, compaction and direct-read code is not in the runner. Runner sha256 6d065832..., plan sha256 394675b7..., matching the protocol.
+- Mechanical smoke, excluded from analysis: first 7 trials in `followup_smoke`. Read status, trace and histogram presence, cleanup and ledger only, not outcomes. All succeeded.
+- Aborted start, excluded from analysis and not analysed: the operator asked to stop and restart, because a ChatGPT process left behind from earlier Codex runs had to be killed during the run. I stopped it after 13 finished trials, with the 14th killed in flight. Only status lines were seen. Kept unread in `followup_aborted1`. The restart uses the same plan, seeds and runner in a fresh folder, so no trial from the aborted start counts.
+- Before the restart: AC on, open windows Claude and Settings only, no Codex, ChatGPT or WSL VM process running; `wslservice` idle.
+- Run: 150/150 trials SUCCESS, first attempt, no retries, no dropped traces, 12:22 to 13:43 local. Gaps 20.0 to 22.5 s. AC at the end, no leftover processes at the end. No chat from the operator during the restarted run. The assistant sent one status message right after starting it and ran nothing else.
+
+## X-followup-v1 results (4 Nov). Analysis in `analysis_followup`. Key figures recomputed from raw trials and they match.
+
+Confirmatory:
+- H-F1 (primary) NOT supported. Mean per-round slope of log R on log free share: Lease 0.768 [0.731, 0.806], Snapshot 0.779 [0.745, 0.813], 90% t CI, band [0.80, 1.25]. Both intervals also exclude 1, so proportional reads are rejected too, not only the band.
+- H-F2 supported. Page L = 299 for both arms, Holm p about 1e-12. Mean ranks 1.0, 2.1, 2.9, 4.0 for Lease, and the same for Snapshot.
+- H-F3 NOT supported as a whole; all three were predicted equivalent. Lease/Snapshot reads: 183 w/s 0.992 [0.979, 1.006] equivalent, Holm p < 0.001; 366 w/s 0.992 [0.918, 1.073] equivalent, Holm p 0.048; 549 w/s 0.983 [0.871, 1.109] inconclusive, Holm p 0.106. No evidence of a difference; the 549 interval is simply too wide.
+- H-F4 supported. CoarseLock fast 0.555 [0.552, 0.558], valley 0.0011 [0.0009, 0.0013], blocked 0.444 [0.441, 0.447], 95% t CI.
+- H-X supported: no flush in any F1 or F3 trial.
+
+Descriptive, no prediction:
+| Cell | R Lease / Snapshot | Hold share | R/(R_off x free) |
+| --- | --- | --- | --- |
+| 183 w/s | 368195 / 370938 | 0.200 / 0.203 | 0.811 / 0.807 |
+| 366 w/s | 310745 / 312896 | 0.395 / 0.399 | 0.906 / 0.903 |
+| 549 w/s | 238343 / 242780 | 0.571 / 0.563 | 0.979 / 0.962 |
+| 732 w/s | 168004 / 164336 | 0.718 / 0.728 | 1.050 / 1.047 |
+| 732 w/s, 1 MiB | 151864 / 156635 | 0.729 / 0.723 | 0.987 / 0.981 |
+| 732 w/s, sync off | 563435 / 569640 | 0.034 / 0.034 | 1.028 / 1.022 |
+- The earlier undershoot is not constant across rate: R falls short of R_off x free by about 19% at 183 w/s and exceeds it by about 5% at 732 w/s.
+- Fsync is 94 to 96% of the hold with sync on, about 1 ms per commit.
+- Lease/Snapshot reads: 732 w/s 1.023 [0.839, 1.246] inconclusive, spread grows with rate; sync off 0.989 [0.981, 0.998], equivalent.
+- Sync off at 732 w/s gives 3.41 [3.06, 3.81] and 3.53 [3.13, 3.98] times the reads, sync-on durability aside. This is not an estimate of what moving fsync outside the lock will give.
+- 1 MiB against 16 MiB at 732 w/s: read ratio 0.915 [0.794, 1.054] and 0.968 [0.830, 1.129], one flush per trial against none, hold share about the same.
+- F4, all arms: read latency is two-moded with an almost empty valley. Slow-mode median about 877 us (A), 856 us (Lease), 854 us (Snapshot), with a further step near 1.6 ms (about 5.5% of reads at or above 1.2 ms). Blocked share 0.444 (A), 0.554 (Lease), 0.554 (Snapshot). Reads relative to A: Lease 0.822 [0.789, 0.856], Snapshot 0.844 [0.821, 0.867], writes equal within about 3%. The histogram shows the shape only; F4 has no trace, so the link to the commit hold is inferred.
+
+Exploratory, found after seeing the data, untested:
+- Slope differs by source of variation. Within a write rate, where free share varies through fsync bursts, the pooled slope is 1.136 (se 0.070, Lease) and 1.137 (se 0.067, Snapshot), close to the earlier post hoc 1.11 and 1.16. Those earlier slopes came from a single write rate. Across write rates it is about 0.77. The 183 w/s cell alone is uninformative within-cell because its free share hardly varies.
+- Candidate reason: read cost changes with write rate. Memtable reads per window read rise 0.084, 0.161, 0.239, 0.289 with rate, and R/free rises 459k, 513k, 554k, 591k. Time per read in free time fits a line on that share, r about -0.99 over four cell means. F3 lands about 4% below the line's capacity. The counter covers the whole trial including warmup while the denominator covers the window, so the share is approximate. Share and rate move together by construction here, so this data cannot separate them. Other rate-linked effects are not ruled out.
+- Check that could separate them: sync off at 183, 366 and 549 w/s. If memory-served reads explain it, sync-off reads rise with rate, to about 460k at 183 w/s. If fsync has its own extra cost at low rates, they stay near 570k. Not run, not preregistered.

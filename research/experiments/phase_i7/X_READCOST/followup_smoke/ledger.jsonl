@@ -1,0 +1,14 @@
+{"event":"STARTED","trial_id":"F1_w0183_m16_t01_B","attempt":1,"start_utc":"2026-11-04T06:41:03.3781928Z","exit_code":-1,"status":"STARTED","wall_ms":0}
+{"event":"FINISHED","trial_id":"F1_w0183_m16_t01_B","attempt":1,"start_utc":"2026-11-04T06:41:03.3781928Z","end_utc":"2026-11-04T06:41:15.6851194Z","exit_code":0,"status":"SUCCESS","wall_ms":12306}
+{"event":"STARTED","trial_id":"F1_w0183_m16_t01_AMIN","attempt":1,"start_utc":"2026-11-04T06:41:35.7316065Z","exit_code":-1,"status":"STARTED","wall_ms":0}
+{"event":"FINISHED","trial_id":"F1_w0183_m16_t01_AMIN","attempt":1,"start_utc":"2026-11-04T06:41:35.7316065Z","end_utc":"2026-11-04T06:41:48.0435302Z","exit_code":0,"status":"SUCCESS","wall_ms":12311}
+{"event":"STARTED","trial_id":"F3_w0732_m16_syncoff_t01_AMIN","attempt":1,"start_utc":"2026-11-04T06:42:08.0730624Z","exit_code":-1,"status":"STARTED","wall_ms":0}
+{"event":"FINISHED","trial_id":"F3_w0732_m16_syncoff_t01_AMIN","attempt":1,"start_utc":"2026-11-04T06:42:08.0730624Z","end_utc":"2026-11-04T06:42:20.3747043Z","exit_code":0,"status":"SUCCESS","wall_ms":12301}
+{"event":"STARTED","trial_id":"F3_w0732_m16_syncoff_t01_B","attempt":1,"start_utc":"2026-11-04T06:42:40.3840209Z","exit_code":-1,"status":"STARTED","wall_ms":0}
+{"event":"FINISHED","trial_id":"F3_w0732_m16_syncoff_t01_B","attempt":1,"start_utc":"2026-11-04T06:42:40.3840209Z","end_utc":"2026-11-04T06:42:52.6957219Z","exit_code":0,"status":"SUCCESS","wall_ms":12311}
+{"event":"STARTED","trial_id":"F1_w0366_m16_t01_AMIN","attempt":1,"start_utc":"2026-11-04T06:43:12.7045894Z","exit_code":-1,"status":"STARTED","wall_ms":0}
+{"event":"FINISHED","trial_id":"F1_w0366_m16_t01_AMIN","attempt":1,"start_utc":"2026-11-04T06:43:12.7045894Z","end_utc":"2026-11-04T06:43:25.0129894Z","exit_code":0,"status":"SUCCESS","wall_ms":12308}
+{"event":"STARTED","trial_id":"F1_w0366_m16_t01_B","attempt":1,"start_utc":"2026-11-04T06:43:45.0183304Z","exit_code":-1,"status":"STARTED","wall_ms":0}
+{"event":"FINISHED","trial_id":"F1_w0366_m16_t01_B","attempt":1,"start_utc":"2026-11-04T06:43:45.0183304Z","end_utc":"2026-11-04T06:43:57.328549Z","exit_code":0,"status":"SUCCESS","wall_ms":12310}
+{"event":"STARTED","trial_id":"F4_r04_d0000_t01_A","attempt":1,"start_utc":"2026-11-04T06:44:17.3381439Z","exit_code":-1,"status":"STARTED","wall_ms":0}
+{"event":"FINISHED","trial_id":"F4_r04_d0000_t01_A","attempt":1,"start_utc":"2026-11-04T06:44:17.3381439Z","end_utc":"2026-11-04T06:44:29.6474245Z","exit_code":0,"status":"SUCCESS","wall_ms":12309}
