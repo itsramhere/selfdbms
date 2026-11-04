@@ -61,12 +61,13 @@ var ErrClosed = errors.New("engine is closed")
 var ErrUnsupportedSyncMode = errors.New("unsupported synchronization mode: Approach B is not implemented")
 
 type Config struct {
-	Mode                   SyncMode
-	WalPath                string
-	DataDir                string        // Optional directory for SSTables and WAL files
-	MemtableThresholdBytes int           // Optional flush threshold in bytes (default: 64MB if <= 0)
-	ReadPath               ReadPathMode  // Shared SSTable point-read path (default: block reads).
-	ReadIODelay            time.Duration // Experiment-only delay per block read; ignored by legacy scans.
+	Mode                      SyncMode
+	WalPath                   string
+	DataDir                   string        // Optional directory for SSTables and WAL files
+	MemtableThresholdBytes    int           // Optional flush threshold in bytes (default: 64MB if <= 0)
+	ReadPath                  ReadPathMode  // Shared SSTable point-read path (default: block reads).
+	ReadIODelay               time.Duration // Experiment-only delay per block read; ignored by legacy scans.
+	CompactionOpenOutsideLock bool          // Experiment-only; false preserves opening under the start hold.
 	// InlineFlushCheck is experiment-only; false keeps the existing commit path.
 	InlineFlushCheck bool
 	LockPolicy       string // Experiment-only: empty/go (default), phasefair, readerpref.
@@ -85,6 +86,7 @@ type Manager struct {
 	readPath                    ReadPathMode
 	readIODelay                 time.Duration
 	disableWALSync              atomic.Bool
+	compactionOpenOutsideLock   bool
 	inlineFlushCheck            bool
 	commitAcquisitionHook       func() // Test hook for the two commit-path acquisitions; nil otherwise.
 	CurrentSeqNo                atomic.Uint64
@@ -107,6 +109,7 @@ type Manager struct {
 	ActiveSSreaders             []*SSTableReader
 	beforeCompactionPublishHook func()
 	duringCompactionMergeHook   func()
+	compactionIteratorOpenHook  func(string) (*SSTableIterator, error) // Test-only opener; nil uses NewSSTableIterator.
 	duringPointReadHook         func()
 	duringMemtableReadHook      func()
 	beforeFlushPublishHook      func()
@@ -202,6 +205,7 @@ func CreateManagerWithConfig(cfg Config) (*Manager, error) {
 	man.readIODelay = cfg.ReadIODelay
 	man.disableWALSync.Store(cfg.DisableWALSync)
 	man.inlineFlushCheck = cfg.InlineFlushCheck
+	man.compactionOpenOutsideLock = cfg.CompactionOpenOutsideLock
 	man.dataDir = cfg.DataDir
 	man.memtableThresholdBytes = cfg.MemtableThresholdBytes
 	man.CurrentSeqNo.Store(0)

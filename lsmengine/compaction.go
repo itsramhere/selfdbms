@@ -106,12 +106,26 @@ func (m *Manager) CompactAll() error {
 		filenames = append(filenames, r.File.Name())
 	}
 
+	// compactionMu prevents compaction and Close from retiring these inputs;
+	// concurrent flush publication only appends to the copied prefix.
+	if m.compactionOpenOutsideLock {
+		startHold.end(m)
+		m.Mu.Unlock()
+	}
 	var iterators []*SSTableIterator
 	for _, fname := range filenames {
-		it, err := NewSSTableIterator(fname)
+		var it *SSTableIterator
+		var err error
+		if m.compactionIteratorOpenHook != nil {
+			it, err = m.compactionIteratorOpenHook(fname)
+		} else {
+			it, err = NewSSTableIterator(fname)
+		}
 		if err != nil {
-			startHold.end(m)
-			m.Mu.Unlock()
+			if !m.compactionOpenOutsideLock {
+				startHold.end(m)
+				m.Mu.Unlock()
+			}
 			for _, openedIt := range iterators {
 				openedIt.Close()
 			}
@@ -119,8 +133,10 @@ func (m *Manager) CompactAll() error {
 		}
 		iterators = append(iterators, it)
 	}
-	startHold.end(m)
-	m.Mu.Unlock()
+	if !m.compactionOpenOutsideLock {
+		startHold.end(m)
+		m.Mu.Unlock()
+	}
 
 	// Deterministic concurrency test hook: pause during merge outside m.Mu
 	if m.duringCompactionMergeHook != nil {

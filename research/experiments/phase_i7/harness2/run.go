@@ -81,15 +81,16 @@ func Run(spec Spec, env Environment, gitRev string) (*TrialResult, error) {
 	}
 	readPath, _ := spec.ResolveReadPath() // ResolveMode already validated treatment.
 	man, err := lsmengine.CreateManagerWithConfig(lsmengine.Config{
-		Mode:                   lsmMode,
-		ReadPath:               readPath,
-		ReadIODelay:            time.Duration(spec.ReadIODelayUs) * time.Microsecond,
-		DisableWALSync:         !spec.WalSync,
-		InlineFlushCheck:       spec.InlineFlushCheck,
-		LockPolicy:             spec.LockPolicy,
-		WalPath:                filepath.Join(spec.DataDir, "wal.log"),
-		DataDir:                spec.DataDir,
-		MemtableThresholdBytes: defaultMemtable, // large during fixture construction
+		Mode:                      lsmMode,
+		ReadPath:                  readPath,
+		ReadIODelay:               time.Duration(spec.ReadIODelayUs) * time.Microsecond,
+		DisableWALSync:            !spec.WalSync,
+		InlineFlushCheck:          spec.InlineFlushCheck,
+		CompactionOpenOutsideLock: spec.CompactionOpenOutsideLock,
+		LockPolicy:                spec.LockPolicy,
+		WalPath:                   filepath.Join(spec.DataDir, "wal.log"),
+		DataDir:                   spec.DataDir,
+		MemtableThresholdBytes:    defaultMemtable, // large during fixture construction
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create manager: %w", err)

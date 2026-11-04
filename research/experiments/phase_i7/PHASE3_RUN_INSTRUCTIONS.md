@@ -171,3 +171,93 @@ The frozen H-F4 rule assigns each histogram bucket to the region containing its
 listed descriptively and do not suspend the H-F4 decision. Hold/free shares and
 fsync-duration diagnostics are reported for paced cells only: F4 has no
 `diag_trace` and therefore no phase data.
+
+## X-inputopen-v1
+
+Protocol: [X_INPUTOPEN_PREREGISTRATION.md](X_INPUTOPEN_PREREGISTRATION.md).
+Run from the repository root in PowerShell. Implementation verification ran only
+unit tests, synthetic analysis fixtures and a driver dry-run. No campaign trial
+or smoke was run. The operator freezes the reviewed protocol before real data;
+the assistant does not commit it. Budget **about 3 hours**: 300 trials x
+(12.5 seconds + 20-second settling pause) = 2 h 42 min 30 s before fixture,
+process and retry costs. The pause applies before every attempt, including retries.
+
+Connect AC power, close other user applications, record Windows power mode and
+Defender protection as found, and leave both unchanged. The operator and assistant
+leave the machine alone during execution; record interactions and background
+processes as deviations. At least 5 GB must be free on both output and scratch
+volumes. The existing preflight records revision, runner and plan hashes, timer
+self-test, power scheme and disk space.
+
+Build and prepare without launching trials:
+
+```powershell
+$env:GODEBUG = 'goindex=0'
+$inputopenRunner = Join-Path $PWD 'i7trial.exe'
+$inputopenCampaign = 'C:\scratch\x-inputopen-v1'
+go build -o $inputopenRunner ./research/experiments/phase_i7/cmd/i7trial
+go run ./research/experiments/phase_i7/cmd/xcampaign -design inputopen -runner $inputopenRunner -out $inputopenCampaign -dry-run
+```
+
+During preparation only, append `-allow-dirty` if needed; do not use it for
+execution. Expect default master seed 20261110, six settings, twelve path cells,
+300 trials, block X3 only, `settle_ms=20000`, and a merge-all 250 ms compaction
+timer. Each setting-round has A default/aligned, AMIN default/aligned, and B
+under default only. All five share `pairedSeed(master, entryID, round)`; both
+entry order and run order are shuffled as specified. No anchors are present.
+`compaction_open_outside_lock` is absent for default cells and true for aligned
+cells. B already opens outside locks. Rebuilding changes the runner hash.
+
+Verify the indented `plan.json` bytes, with no trailing newline, against the hash
+in protocol section 7. After the operator freezes the protocol and approves the
+printed hashes, create `approval-inputopen.json`:
+
+```json
+{
+  "campaign_id": "X-inputopen-v1",
+  "approved": true,
+  "runner_sha256": "<printed runner_sha256>",
+  "plan_sha256": "<printed plan_sha256>"
+}
+```
+
+The runner's X gate accepts this campaign only for X3. The driver and runner both
+check the hash binding. No smoke is authorized by these implementation instructions.
+Any later separately approved smoke must use its own directory, only the first
+five plan identities, inspect status/cleanup/gaps without inspecting outcomes,
+and be logged in the protocol and excluded from every analysis.
+
+After freeze and operator approval, execute all 300 fresh identities, then analyze:
+
+```powershell
+$env:GODEBUG = 'goindex=0'
+go run ./research/experiments/phase_i7/cmd/xcampaign -design inputopen -runner $inputopenRunner -out $inputopenCampaign -approve .\approval-inputopen.json
+python research/experiments/analysis/x_inputopen_analyze.py --data-dir $inputopenCampaign --output-dir C:\scratch\x-inputopen-v1-analysis
+```
+
+Repeat the execution command to resume; never copy smoke artifacts into the full
+campaign directory. Failed attempts retry once; a second failure drops the whole
+five-run setting-round from paired tests and cell summaries, with successful
+observations retained in trial output. The existing abort rule (>5% final
+failures after 40 attempted identities) applies. Zero throughput is an outcome.
+For log W ratios only, add 0.1 writes/s to all five runs of a zero-containing
+complete unit, following X-paced; retain raw zeros in summaries. Missing and
+nonpositive latency log pairs are listed without pseudocounts.
+
+Analysis requires NumPy, SciPy and Matplotlib. Deterministic outputs are
+`x_inputopen_results.json`, `x_inputopen_tables.md` and the single figure
+`x_inputopen_commit_wait_p99.png`. `--allow-partial` explicitly labels incomplete
+data. H-O1 uses paired 95% log-t intervals; H-O2 uses 90% intervals and Holm TOST
+at +/-ln(1.5). H-O3/H-O4 each have separate six-setting W/R families at
++/-ln(1/0.90). Bootstrap sensitivity uses 10000 paired resamples, seed 20261110.
+The analysis reports all hypotheses, CoarseLock path ratios, Lease default/B
+against the earlier 1.43-7.69 range as across-campaign descriptive context,
+start hold, compaction count, retirement lag/high water, and commit-wait p50/max.
+Earlier X-compaction runs did not include the manager lock interface call.
+
+Verification found a pre-existing Windows wall-clock filename collision when
+synthetic compactions recur within one clock tick: `data_compacted_<UnixNano>.sst`
+can reuse and truncate a live input. Output naming is unchanged by this treatment.
+The read stress test waits for a distinct tick between successive compactions;
+the campaign retains its specified 250 ms timer. Race verification is left to the
+operator. The copied protocol is unchanged except for the requested plan-hash line.

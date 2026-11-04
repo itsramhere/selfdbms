@@ -110,3 +110,15 @@ q decision rule, interface-call overhead, approval and host protocol. Analysis i
 `research/experiments/analysis/x_locks_analyze.py --data-dir <campaign>
 --output-dir <analysis> [--allow-partial]`, producing JSON, Markdown and q/S
 figures. No trial or smoke was run during implementation.
+
+`-design inputopen` selects **X-inputopen-v1**, default master seed 20261110:
+six X-compaction on settings, A/AMIN crossed with default/aligned input opening
+plus B under default, ten rounds and 300 trials. Each five-run entry-round shares
+one seed, with the registered independent entry/run permutations and a 20-second
+pause before every attempt. It retains X3's merge-all 250 ms timer. Default specs
+omit `compaction_open_outside_lock`; aligned specs set it true. The runner's X
+approval gate permits only X3 for this campaign. Budget about three hours. Use
+`-dry-run` to prepare without trials; follow
+[PHASE3_RUN_INSTRUCTIONS.md](../../PHASE3_RUN_INSTRUCTIONS.md#x-inputopen-v1)
+for freeze, hash-bound approval, execution and deterministic analysis. No trial
+or smoke was run during implementation; earlier frozen plans remain unchanged.

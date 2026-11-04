@@ -100,11 +100,12 @@ type Spec struct {
 	// trial and the aggregate is reported in
 	// TrialResult.Sync. Default off: the observer costs one nil check on
 	// uninstrumented paths and the trial schema gains no field.
-	InstrumentSync       bool   `json:"instrument_sync,omitempty"`
-	DiagTrace            bool   `json:"diag_trace,omitempty"`
-	InlineFlushCheck     bool   `json:"inline_flush_check,omitempty"`
-	PersistReadHistogram bool   `json:"persist_read_histogram,omitempty"`
-	LockPolicy           string `json:"lock_policy,omitempty"`
+	InstrumentSync            bool   `json:"instrument_sync,omitempty"`
+	DiagTrace                 bool   `json:"diag_trace,omitempty"`
+	CompactionOpenOutsideLock bool   `json:"compaction_open_outside_lock,omitempty"`
+	InlineFlushCheck          bool   `json:"inline_flush_check,omitempty"`
+	PersistReadHistogram      bool   `json:"persist_read_histogram,omitempty"`
+	LockPolicy                string `json:"lock_policy,omitempty"`
 }
 
 // Mode returns the driver mode implied by the block and cell.
@@ -121,6 +122,9 @@ const (
 // ResolveMode classifies a spec. An unsupported combination returns an error so
 // the runner fails closed instead of silently running a different experiment.
 func (s Spec) ResolveMode() (Mode, error) {
+	if s.CompactionOpenOutsideLock && !s.IsX() {
+		return 0, errf("compaction_open_outside_lock is allowed only with X blocks")
+	}
 	if s.LockPolicy != "" {
 		if !s.IsX() {
 			return 0, errf("lock_policy is allowed only with X blocks")
