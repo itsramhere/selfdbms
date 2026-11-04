@@ -2,6 +2,13 @@
 
 Writing-only restructuring on `paper/revision-1`. No compile, trial run, statistics recomputation, generator edit, data change, or commit. Historical manuscripts remain intact. The appendix toggle is `\newif\ifwithappendix\withappendixtrue`; appendices load after the bibliography.
 
+## Author review edits
+
+1. Deleted the introduction paragraph after the contributions list, retaining the blank line before Background.
+2. Changed `tab:summary` placement to `[!ht]`, moved `tab:settled` before `fig:paced` in V-B, and changed its placement to `[!t]`; captions and contents are unchanged.
+3. Replaced the Discussion lead-in and enumerate with the supplied worked example and decision paragraph, retaining its first two sentences and What we did not test.
+4. Moved `tab:prereg` immediately after Method's first paragraph, retaining `[t]` and all contents, so its float order no longer pushes later tables (including Table IV) out of Section V.
+
 ## Section changes
 
 | Section | Change |
@@ -757,7 +764,7 @@ Cut the Publication and Churn subsections and their result detail, the lifecycle
 
 ## Verification and length
 
-Compiled by the reviewer under WSL; 22 pages in total; main body through references ends on page 12; appendices run from page 13 to page 22; eight figures and five tables in the body; there is one existing 1.9 pt overfull hbox and one 2.6 pt overfull vbox.
+Page figures after these author review edits, compiled by the reviewer under WSL: 23 pages in total. Text through the Conclusion ends on page 12, references end on page 13, and appendices run from page 14 to page 23. Table IV sits at the top of page 5, directly after V-B and V-D on page 4 and before Section VI starts. There is one existing 1.9 pt overfull hbox and one 2.6 pt overfull vbox.
 
 Abstract: **250 words**, counting whitespace-separated words after replacing LaTeX nonbreaking spaces with spaces. Hyphenated terms count as one.
 

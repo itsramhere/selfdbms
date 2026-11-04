@@ -372,3 +372,21 @@ R-check is the manuscript name for the settled sentinel rule whose frozen JSON k
 Review-fix record: claims about hold relative to the writer's cycle were removed pending Phase 2a. Contribution 2 now states the observed hold-duration and writer-capacity results, with below-capacity throughput within the declared margin. The abstract now says "about three quarters", mapped to `\HoldSettledMedian` (74.7%) and `\HoldOnMedian` (72.3%).
 
 Compiled by the reviewer under WSL; 22 pages in total; main body through references ends on page 12; appendices run from page 13 to page 22; eight figures and five tables in the body; there is one existing 1.9 pt overfull hbox and one 2.6 pt overfull vbox.
+
+## Author review edits: Discussion numerical evidence
+
+| ID | Number or numerical statement in the new Discussion | Existing evidence row(s) |
+|---|---|---|
+| AR1 | Below about 8\% at holds below about 40 us | P1; P2 qualifies these as point estimates, not confidence bounds. |
+| AR2 | 24--29\% around 170 us | P3; R6; ST3 (holds 163/173 us, rounded in the supplied text). |
+| AR3 | 64--69\% around 1.9 ms | P3; R6; ST3 (same first-campaign dose-response results). |
+| AR4 | Four readers; Lease cycle 1.07 to 2.79 ms | R22 (four-reader zero-delay and 2-ms cells). |
+| AR5 | Median response ratios 1.33--1.43 at 200 us and 2.41--2.66 at 2 ms | ST5; ST27 (settled paired geometric ratios). |
+| AR6 | 700 writes/s, 200 us; closed/open write ratios 0.792 and 0.840 | ST32 (H-W). |
+| AR7 | Removing a second acquisition; write gains at 200 us and 2 ms | F10; F11 (one versus two exclusive acquisitions). |
+| AR8 | Read ratio 0.507--0.763 of the two-acquisition level | F13. |
+| AR9 | Intervention read p99 rose | F15; N19 (paired descriptive read-tail ratios). |
+| AR10 | Sixteen readers, no writer; 0.851 at 64 tables and 0.663 at 256 | N15; ST15. Writer-present equivalence is also in N15. |
+| AR11 | Compaction commit-wait p99, \CompWaitRatio{} | N7; ST14 (existing generated macro, 1.43--7.69). |
+| AR12 | Writer holds about three quarters of the window | ST50 (74.7% settled campaign; 72.3% check); ST53--ST55 bound the exploratory free-share account. |
+| AR13 | Trial spacing distorted p99 while rechecked throughput classes held | ST34--ST39; ST61 (rechecked cells/classes only). |
