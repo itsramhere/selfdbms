@@ -219,6 +219,24 @@ Fsync & Lease & Snapshot & $\geq25$~ms & (\%) & Ratio [90\% CI] & Class & Ratio 
 \bottomrule\end{tabular}
 \end{table*}
 
+\begin{figure}[t]
+\centering\includegraphics[width=\columnwidth]{fig_penalty_collapse.pdf}
+\caption{Exploratory collapse check: write ratio against CoarseLock's mean read hold over Lease's commit cycle, with $S=1/(1+kx)$ drawn for $k=1$ and $k=2$. Filled markers have $k=2$, hollow $k=1$; grey cells were seen before the criteria were written and do not count. Neither model met the criteria.}
+\label{fig:collapse}
+\end{figure}
+
+\begin{figure}[t]
+\centering\includegraphics[width=\columnwidth]{fig_read_quantiles.pdf}
+\caption{Stored read-latency percentiles, Mixed, $r=4$, zero delay, ten trials per design, with a median line. Trials stored percentiles and no histograms, so this cannot establish modes.}
+\label{fig:readquantiles}
+\end{figure}
+
+\begin{figure*}[t]
+\centering\includegraphics[width=\textwidth]{fig_commit_cdf.pdf}
+\caption{Commit-phase empirical CDFs from the settled campaign, closed readers, ten rounds pooled by summing bucket counts, with mass at each bucket's lower bound. Exploratory.}
+\label{fig:commitcdf}
+\end{figure*}
+
 \section{Project history and execution notes}
 \subsection{Earlier measurements}
 A defective reader motivated the present study but supplies no pooled evidence for it. That reader scanned from the target block toward the data end, used about four unbuffered syscalls per record, and did not stop after passing the target key. A 960-trial WSL2 campaign comparing CoarseLock and Snapshot and a Windows campaign stopped by its stopping rule at 60 of 330 planned trials, with 18 complete triplets, used this path. They reported Snapshot completing 3.3--18.5 times CoarseLock's writes and churn throughput ratios of 0.63--0.74 at $r\leq4$. We retain the defective path only as the legacy scan operating point. The earlier campaigns motivated the controlled delay, were not pooled with these data, and carry no inference into this paper. This study supersedes their claims, including the withdrawn $\pm5\%$ equivalence claim and any earlier claim about Lease under churn.

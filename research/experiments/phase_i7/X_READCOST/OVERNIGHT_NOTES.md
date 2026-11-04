@@ -192,3 +192,30 @@ At 732 writes/s the writer holds the exclusive lock for about three quarters of 
 - Frozen settled S3, paired by round: AMIN/B read ratio against the ratio of free shares r = 0.97. Raw 0.995 [0.846, 1.171], sd 0.280; adjusted for free share 1.003 [0.956, 1.052], sd 0.082. This check: raw 1.052 [0.906, 1.222], sd 0.258; adjusted 1.009 [0.972, 1.047], sd 0.064.
 - This answers open item (1), read swing larger than bursts directly explain: the bursts take a median 4.9 to 8.3% of the window, but the free share is only about 25 to 30%, so the loss is proportionally much larger.
 - Limits: post hoc on outcomes measured in the same trial, so it doesn't establish direction. Hold share vs burst share r = 0.94 in settled but 0.44 here, so bursts are not the whole of the variation in hold. H-R stays failed; the adjusted CI is not a test of it.
+
+## Phase 2 (4 Nov). Exploratory, on existing data, no new trials.
+Criteria written before running the analysis. The only look so far is the 8 non-legacy Mixed cells, seen while planning, so those are the development set and cannot count as evidence. No other cell has been computed.
+
+### 2a: does the write penalty collapse onto hold / cycle?
+x = h / T_L, with h CoarseLock's arithmetic mean trial read critical section and T_L Lease's mean per-trial commit cycle in the same cell and condition. T_CL is not used, because T_CL = 1/W_CL makes the axis partly circular with S. T_L is also in S, so some coupling remains.
+
+Two models, no fitted parameters: M1, S = 1 / (1 + k h / T_L). M2, the same with CoarseLock's mean trial p95 critical section in place of the mean, because the writer may wait for a slow admitted reader and not an average one. k is exclusive acquisitions per commit: 2 on the default path, 1 for intervention inline cells.
+
+Test set, none seen: intervention second and inline cells, compaction on and off cells, Churn cells, table-count cells with a writer. Legacy scan is reported separately and counts for nothing.
+
+A model collapses only if, on the test set, all three hold:
+1. Median |log S - log predicted| is at most ln(1/0.90).
+2. The largest |log S - log predicted| is at most 2 ln(1/0.90).
+3. Where a cell exists at both r = 4 and r = 16 with otherwise the same settings, the mean of (r=16 residual minus r=4 residual) lies within +/- ln(1/0.90).
+
+If neither model passes, the paper says no collapse was found and does not offer a rule. If one passes, it is reported as exploratory, with the k = 1 cells called out because they vary k. Nothing here is a confirmatory test.
+
+### 2b: latency distributions
+The records hold no read-latency histograms, only min, mean, p50, p95, p99 and p999, so read CDFs are not possible. Quantile plot only for the cell where the paper infers bimodality (Mixed, r = 4, d = 0, CoarseLock and Lease). Commit-phase CDFs from the settled histograms, which are complete. The quantile plot can't confirm bimodality, and the paper must keep saying so.
+
+### Result: no collapse, no rule
+Neither model met the criteria on the 39 test cells. M1: median |residual| 0.031 (passes), largest 0.307 against a bound of 0.211 (fails), r=16 minus r=4 mean -0.042 over 19 pairs (passes). M2: median 0.106 (fails, by 0.0004), largest 0.448 (fails), reader difference 0.002 (passes). Spearman of x and S -0.906, description only. So the paper says no collapse was found and offers no rule. I rechecked four test cells from raw records, including the two largest misses, and they matched.
+
+M1 was close in most cells: 32 of 39 fell inside the margin, and 6 of the 8 k = 1 cells. The two cells beyond the bound are the intervention's r = 16, d = 2 ms cells (-0.228 and -0.307), where writes fell further than the model says. Five of the seven misses are at 2 ms, where the delay changes from a spin to a sleep; the other two are r = 16, d = 200 us (second) and Churn r = 1. Not separated. Tempting to loosen criterion 2 after seeing this, but it stays as written.
+
+Separate from the criteria: the settled flush-check CDF at d = 2 ms under CoarseLock falls in two steps, near one and near two delays, so that p50 hides a second cluster. Not predicted and not analysed. Read quantiles show p50 45 vs 808 us and similar p95 and p99, which is consistent with the inferred fast and blocked reads but does not establish modes. Mean above p95 in 0/10 trials per arm.
