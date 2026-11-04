@@ -472,6 +472,7 @@ def phrase_hazards(name, text):
     clean = uncomment(text)
     errors = []
     for needle, message in (
+            (r'favoured', 'retracted phrase "favoured"'),
             (r'paid for in writes', 'retracted phrase "paid for in writes"'),
             (r'Lease earns its complexity', 'retracted phrase "Lease earns its complexity"'),
             (r'(?i:lock\s+handoff)', 'retracted phrase "lock handoff"'),
