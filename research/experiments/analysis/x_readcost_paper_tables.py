@@ -14,6 +14,13 @@ After rendering figures, copy their PDFs reproducibly from the repository root:
 
 Existing --mechanism-out JSON is verified and never rewritten.
 All table outputs use sorted input names, UTF-8, LF, and no wall-clock timestamps.
+
+Full six-campaign regeneration, from the repository root (PowerShell):
+  $X = 'research/experiments/phase_i7/X_READCOST'
+  python research/experiments/analysis/x_readcost_paper_tables.py --results "$X/analysis/x_readcost_results.json" --trials-dir "$X/campaign/trials" --tables-dir paper/generated --mechanism-out "$X/analysis/mechanism.json" --intervention-results "$X/analysis_intervention/x_intervention_results.json" --compaction-results "$X/analysis_compaction/x_compaction_results.json" --tablecount-results "$X/analysis_tablecount/x_tablecount_results.json" --paced-results "$X/analysis_paced/x_paced_results.json" --settled-results "$X/analysis_settled/x_settled_results.json" --fsync-report "$X/fsync_checks/report/report.json"
+
+The settled output re-expresses general-cell frozen 95% log-CI widths at the
+requested 90% level; H_M2, H_M3, H_W, H_R CIs are copied without conversion.
 """
 import argparse
 from collections import defaultdict
@@ -546,13 +553,297 @@ def generate_intervention_table(data, directory):
     write_body(directory, 'intervention', rows)
 
 
+def settled_phase(trial, phase, statistic='p50'):
+    return trial['result']['stall_diagnostics']['phase_histograms'][phase]['stats'][statistic]
+
+
+def settled_ratio90(source):
+    """Re-express a stored Student-t log CI at 90%, preserving its estimate.
+
+    General cell summaries only store 95% CIs. Scale their frozen log widths
+    by t(.95, n-1)/t(.975, n-1); do not estimate variance or pairing again.
+    H_M2's frozen 90% intervals pass through unchanged.
+    """
+    if source['level'] == .90:
+        return source
+    if source['level'] != .95 or source['n'] < 2:
+        raise ValueError('expected a frozen 90% or 95% Student-t interval')
+    from scipy.stats import t
+    center = source['mean_log']
+    if not math.isclose(math.exp(center), source['geometric_mean_ratio']):
+        raise ValueError('frozen ratio and log center disagree')
+    if any(not math.isclose(math.exp(v), b) for v, b in zip(source['t_ci_log'], source['t_ci'])):
+        raise ValueError('frozen ratio/log interval disagree')
+    scale = float(t.ppf(.95, source['n'] - 1) / t.ppf(.975, source['n'] - 1))
+    logs = [center + (v - center) * scale for v in source['t_ci_log']]
+    return dict(source, level=.90, t_ci_log=logs, t_ci=[math.exp(v) for v in logs])
+
+
+def settled_groups(data, trials):
+    """Validate raw coverage and frozen descriptive quantities before formatting."""
+    if len(trials) != data['counts']['successful']:
+        raise ValueError('settled trial count differs from frozen results')
+    groups, seen = defaultdict(list), set()
+    for t in sorted(trials, key=lambda t: t['trial_id']):
+        if t['status'] != 'SUCCESS' or t['trial_id'] in seen:
+            raise ValueError('settled requires unique successful trials')
+        seen.add(t['trial_id'])
+        groups[t['cell'], t['arm']].append(t)
+    for c, cell in sorted(data['cells'].items()):
+        if not c.startswith(('S1_', 'S2_', 'S3_')):
+            continue
+        for a, arm in cell['arms'].items():
+            rows = groups[c, a]
+            if sorted(t['triplet'] for t in rows) != cell['complete_rounds']:
+                raise ValueError('settled pairing differs: ' + c + ' ' + a)
+            for phase in ('lock_wait', 'flush_check', 'total'):
+                source = arm['phase_' + phase + '_p50']
+                values = [settled_phase(t, phase) for t in rows]
+                if sorted(values) != sorted(source['values']) or not math.isclose(st.mean(values), source['mean']):
+                    raise ValueError('settled phase differs: ' + c + ' ' + a + ' ' + phase)
+            for metric, field in (('write_response_p50', 'write_response_nanos'),
+                                  ('write_service_p50', 'write_service_nanos')):
+                values = [t['result']['paced_load'][field]['p50'] for t in rows]
+                if sorted(values) != sorted(arm[metric]['values']):
+                    raise ValueError('settled response/service differs: ' + c + ' ' + a)
+    return groups
+
+
+def settled_check_facts(report):
+    """Only format the deterministic exploratory report; never rerun inference."""
+    facts = {}
+    def span(v, places=1):
+        return num(v['min'], places) + '--' + num(v['max'], places)
+    def count(v):
+        return str(v['k']) + '/' + str(v['n'])
+    burst_rows = []
+    for label, rate in (('72', '72'), ('155', '155'), ('183', '183'), ('650--730', '700')):
+        settled = report['engine_reference'][rate if rate != '700' else '650-730']
+        bare = report['bare'][rate]
+        burst_rows.append(' & '.join([label, count(settled['any_ge_25']),
+            num(100 * settled['fraction_ge_25'], 3), count(bare['any_ge_25']),
+            count(bare['any_ge_25_excluding_first']), num(100 * bare['fraction_ge_25'], 3)]) + r' \\')
+    facts['TblBurstRows'] = '%\n' + '\n'.join(burst_rows) + '\n'
+    rho = report['bare_spearman_rate_bursts']
+    facts.update(BareSpearman=num(rho['r'], 2), BareSpearmanP=num(rho['p']),
+                 BareBurstRuns=str(len(report['burst_run_positions'])))
+    # Use the report's individual slow-first population, not per-rate maxima.
+    slow_first = report['bare_first_slow_ms']
+    facts['BareFirstSlow'] = span(slow_first)
+    facts['BareFirstSlowCount'] = str(sum(v['first_fsync_ge_25'] for v in report['bare'].values()))
+    fsync_rows = []
+    for condition in ('on', 'off'):
+        arms = report['engine_on_off'][condition]
+        pairs = report['paired_ratios'][condition]
+        hold = report['hold_account'][condition]
+        read_ranges = [magnitude_number(arms[a]['R']['min'], 0) + '--' +
+                       magnitude_number(arms[a]['R']['max'], 0) for a in ('AMIN', 'B')]
+        k = sum(arms[a]['any_ge_25']['k'] for a in arms)
+        n = sum(arms[a]['runs'] for a in arms)
+        facts['Fsync' + condition.title() + 'Bursts'] = f'{k}/{n}'
+        fields = ['fsync ' + condition] + read_ranges + [f'{k}/{n}', num(hold['hold_share_pct']['median'], 1)]
+        for metric in ('read', 'write'):
+            v = pairs[metric]
+            fields += [ratio(dict(geometric_mean_ratio=v['geometric_mean'], t_ci=v['ci90'])),
+                       v['classification'].replace('_', ' ')]
+        fsync_rows.append(' & '.join(fields) + r' \\')
+        facts['FsyncPooled' + condition.title()] = num(report['pooled_log_R'][condition]['sd'])
+    facts['TblFsyncRows'] = '%\n' + '\n'.join(fsync_rows) + '\n'
+    v = report['pooled_log_R']['sd_off_over_on']
+    facts['FsyncSdRatio'] = ratio(dict(geometric_mean_ratio=v['ratio'], t_ci=v['ci90']))
+    off_service = [report['engine_on_off']['off'][a]['largest_write_service_ms'][k]
+                   for a in ('AMIN', 'B') for k in ('min', 'max')]
+    facts['FsyncOffService'] = num(min(off_service), 1) + '--' + num(max(off_service), 1)
+    facts['FsyncOnPearson'] = r'\(-' + num(abs(report['on_pearson_log_R_write_excess']['r']), 2) + r'\)'
+    for dataset, suffix in (('on', 'On'), ('settled_S3', 'Settled')):
+        h = report['hold_account'][dataset]
+        facts['Hold' + suffix + 'Median'] = num(h['hold_share_pct']['median'], 1)
+        facts['Hold' + suffix + 'Range'] = span(h['hold_share_pct'])
+        facts['Hold' + suffix + 'R'] = num(h['log_R_log_free_r'])
+        facts['Hold' + suffix + 'Slope'] = num(h['log_R_log_free_slope'], 2)
+        facts['HoldBurst' + suffix] = num(h['burst_share_pct']['median'], 1)
+        facts['HoldVsBurst' + suffix] = num(h['hold_burst_r'], 2)
+        facts['HoldUndershoot' + suffix] = num(h['mean_log_observed_over_predicted'], 2)
+        adj = h['paired']['adjusted']
+        facts['HoldAdj' + suffix] = ratio(dict(geometric_mean_ratio=adj['geometric_mean'], t_ci=adj['ci90']))
+        facts['HoldAdj' + suffix + 'SD'] = num(adj['sd_log'])
+    facts['HoldOff'] = num(report['hold_account']['off']['hold_share_pct']['median'], 1)
+    facts['HoldRatioR'] = num(report['hold_account']['settled_S3']['paired']['raw_log_ratio_log_free_ratio_r'], 2)
+    return facts
+
+
+def settled_stall_facts(settle, runs, notes):
+    """Cell medians of exploratory per-trial p50s; no campaign inference."""
+    facts = {}
+    for prefix, name in (('S_settled_', 'Settled'), ('S_back_to_back_', 'Back')):
+        values = [r['stall_diagnostics']['phase_histograms']['wal_sync']['stats']['max'] / 1e6
+                  for filename, r in sorted(settle.items()) if filename.startswith(prefix)]
+        if len(values) != 9:
+            raise ValueError('expected nine exploratory stall trials: ' + prefix)
+        facts['Stall' + name + 'Median'] = num(st.median(values), 1)
+        facts['Stall' + name + 'Range'] = num(min(values), 1) + '--' + num(max(values), 1)
+    for arm, name in (('A', 'CL'), ('AMIN', 'Lease'), ('B', 'Snapshot')):
+        for sync, suffix in ((True, 'On'), (False, 'Off')):
+            rows = [r for r in runs.values() if r['arm'] == arm and
+                    r['config']['read_io_delay_us'] == 0 and r['config']['wal_sync'] == sync and
+                    r['config']['paced_write_rate_per_sec'] == 183]
+            if len(rows) != 3:
+                raise ValueError('expected three sync diagnostic trials')
+            facts['StallSyncOff' + name + suffix] = num(st.median(
+                r['stall_diagnostics']['phase_histograms']['total']['stats']['p50'] / 1e6 for r in rows))
+    rows = [r for r in runs.values() if r['arm'] == 'A' and
+            r['config']['read_io_delay_us'] == 2000 and r['config']['wal_sync']]
+    for phase, suffix in (('lock_wait', 'Lock'), ('flush_check', 'Flush')):
+        value = num(st.median(r['stall_diagnostics']['phase_histograms'][phase]['stats']['p50'] / 1e6 for r in rows))
+        # Include only when the saved narrative explicitly agrees with evidence.
+        label = 'lock wait ' if phase == 'lock_wait' else 'flush check '
+        if len(rows) == 3 and label + value in notes:
+            facts['StallSecondWait' + suffix] = value
+        else:
+            print('Dropped StallSecondWait' + suffix + ': notes/evidence do not agree')
+    return facts
+
+
+def generate_settled(data, trials, directory, earlier, prior_trial_count,
+                     paced_trials, compaction_trials, stall_settle, stall_runs,
+                     fsync_report, notes):
+    """Frozen inference plus raw descriptive arithmetic, with no engine execution.
+
+    S1 nonzero-dose rows copy H_M2 estimates and 90% CIs. Zero-dose S1 and
+    S2/S3 rows copy the general cell estimates and rescale frozen 95% log-CI
+    widths to the requested 90% level (settled_ratio90). No ratios of arm
+    means, saturation exclusions, trial CIs, or new classifications are used.
+    The frozen p50 ratios include all complete rounds; only p99 is censored
+    for saturation by the analysis. Phase columns are computed from raw p50s.
+    """
+    groups = settled_groups(data, trials)
+    facts = dict(SettledTrialCount=str(data['counts']['successful']),
+                 SettledTotalTrials=magnitude_number(prior_trial_count + data['counts']['successful'], 0),
+                 SettledGapMin=num(data['gaps']['min_ms'] / 1000),
+                 SettledGapMax=num(data['gaps']['max_ms'] / 1000),
+                 SettledPlanPrefix=data['plan_sha256'][:12], SettledRunnerPrefix=data['runner_sha256'][:12],
+                 SettledSeed=str(data['master_seed']))
+    page = data['H_M1']['closed']
+    if any(data['H_M1']['open'][k] != page[k] for k in ('L', 'p', 'holm_p')):
+        raise ValueError('Page modes differ; require separate macros')
+    def sci(v):
+        mantissa, exponent = f'{v:.2e}'.split('e')
+        return mantissa + r'\times10^{' + str(int(exponent)) + '}'
+    facts.update(SettledPageL=num(page['L'], 0), SettledPageP=sci(page['p']), SettledPageHolm=sci(page['holm_p']))
+    def cell(d, mode):
+        return data['cells'][f'S1_d{d:04d}_f20_{mode}']
+    def interval(c):
+        source = data['cells'][c]['ratios']['write_response_p50']['A/AMIN']
+        if c in data['H_M2']:
+            if not math.isclose(source['geometric_mean_ratio'], data['H_M2'][c]['geometric_mean_ratio']):
+                raise ValueError('H_M2/cell ratio disagree: ' + c)
+            source = data['H_M2'][c]
+        return settled_ratio90(source)
+    for mode in ('closed', 'open'):
+        facts['SettledMedian' + mode.title()] = ', '.join(num(cell(d, mode)['ratios']['write_response_p50']['A/AMIN']['geometric_mean_ratio']) for d in (0, 200, 2000))
+        facts['SettledMedianZero' + mode.title()] = ratio(interval(f'S1_d0000_f20_{mode}'))
+        for d, suffix in ((200, 'Medium'), (2000, 'High')):
+            facts['SettledMTwo' + suffix + mode.title()] = ratio(data['H_M2'][f'S1_d{d:04d}_f20_{mode}'])
+        facts['SettledHW' + mode.title()] = ratio(data['H_W'][f'S2_d0200_w700_{mode}'])
+    facts['SettledHWFraction'] = num(earlier['cells']['X1_r16_d0200']['arms']['A']['W']['mean'] / 700, 2)
+    for phase, name in (('lock_wait', 'LockWait'), ('flush_check', 'Flush')):
+        v = data['H_M3']['bands']['A_' + phase]
+        facts['Settled' + name + 'CL'] = ratio(dict(geometric_mean_ratio=v['mean'] / 1e6,
+            t_ci=[b / 1e6 for b in v['t_ci_95']]))
+        facts['Settled' + name + 'L'] = num(data['H_M3']['bands']['AMIN_' + phase]['mean'] / 1e6,
+                                          4 if phase == 'lock_wait' else 3)
+    for m, name in (('R', 'Read'), ('W', 'Write')):
+        facts['SettledHR' + name] = ratio(data['H_R'][m])
+    facts['SettledHRReadHolm'] = num(data['H_R']['R']['holm_p'])
+    facts['SettledHRReadSD'] = num(data['H_R']['R']['sd_log'])
+    hs = [v['median_largest_fsync_ns'] / 1e6 for v in data['H_S']['trials'].values()]
+    facts['SettledHSRange'] = num(min(hs), 1) + '--' + num(max(hs), 1)
+    hc = data['H_C']
+    facts['SettledSentinelTotal'] = str(len(hc))
+    for value in ('unchanged', 'inconclusive', 'changed'):
+        facts['SettledSentinel' + value.title()] = str(sum(v['comparison']['classification'] == value for v in hc))
+    facts['SettledPublishedClasses'] = str(sum(v['published_class'] is not None for v in hc))
+    facts['SettledContradicted'] = str(sum(v['classification_contradicted'] for v in hc))
+    c1 = next(v for v in hc if v['cell'] == 'R_C1_r16_d0200_on' and v['metric'] == 'commit_wait_p99')
+    for source, suffix in (('original', 'Old'), ('new', 'New')):
+        facts['SettledCOneTail' + suffix] = num(c1[source]['geometric_mean_ratio'], 2)
+    for rows, suffix, c in ((compaction_trials, 'Old', 'C1_r16_d0200_on'),
+                             (trials, 'New', 'R_C1_r16_d0200_on')):
+        for arm, name in (('AMIN', 'Lease'), ('B', 'Snapshot')):
+            vals = [t['result']['sync_instrumentation']['writer_lock_wait_nanos']['commit']['p99_nanos'] / 1e6
+                    for t in rows if t['cell'] == c and t['arm'] == arm]
+            facts['SettledCOne' + name + suffix] = num(st.median(vals))
+    rows = []
+    for c, cs in sorted(data['cells'].items()):
+        if not c.startswith(('S1_', 'S2_', 'S3_')):
+            continue
+        fields = [dose(c), str(cs['nominal']['paced_write_rate_per_sec']), c.rsplit('_', 1)[1], ratio(interval(c))]
+        for arm in ('A', 'AMIN'):
+            for phase in ('lock_wait', 'flush_check'):
+                fields.append(num(st.mean(settled_phase(t, phase) for t in groups[c, arm]) / 1e6))
+        fields.append(num(st.median(settled_phase(t, 'wal_sync', 'max') / 1e6
+                                   for a in ARMS for t in groups[c, a]), 1))
+        rows.append(' & '.join(fields) + r' \\')
+    facts['TblSettledRows'] = '%\n' + '\n'.join(rows) + '\n'
+    shares = []
+    for d in (200, 2000):
+        c = cell(d, 'closed')['arms']
+        wait = sum(c['A']['phase_' + p + '_p50']['mean'] for p in ('lock_wait', 'flush_check'))
+        shares.append(100 * wait / (c['A']['phase_total_p50']['mean'] - c['AMIN']['phase_total_p50']['mean']))
+    facts['SettledPhaseShare'] = num(min(shares), 0) + '--' + num(max(shares), 0)
+    # Across-campaign stall medians pool arms within each corresponding S1 cell.
+    for source, label, prefix in ((paced_trials, 'Paced', 'P1_'), (trials, 'Settled', 'S1_')):
+        medians = [st.median(t['result']['paced_load']['write_service_nanos']['max'] / 1e6
+                            for t in source if t['cell'] == f'{prefix}d{d:04d}_f20_{mode}')
+                   for d in (0, 200, 2000) for mode in ('closed', 'open')]
+        places = 0 if label == 'Paced' else 1
+        # Range endpoints use the prose precision (9.5--22 ms).
+        facts['SettledStall' + label] = num(min(medians), places) + '--' + num(max(medians), 0)
+    maxima = sorted((settled_phase(t, 'wal_sync', 'max') / 1e6 for t in trials
+                     if t['cell'].startswith(('S1_', 'S2_', 'S3_'))), reverse=True)
+    facts['SettledOutlier'], facts['SettledSecondOutlier'] = [num(v, 1) for v in maxima[:2]]
+    for mode in ('closed', 'open'):
+        c = f'S1_d2000_f20_{mode}'
+        cross = next(v for v in data['across_campaign_paced'] if v['cell'] == c and
+                     v['metric'] == 'write_response_p99' and v['pair'] == 'A/AMIN')
+        for source, suffix in (('original', 'Old'), ('new', 'New')):
+            facts['SettledTailRatio' + mode.title() + suffix] = num(cross[source]['geometric_mean_ratio'], 2)
+        for source, suffix, name in ((paced_trials, 'Old', c.replace('S1_', 'P1_')), (trials, 'New', c)):
+            vals = [t['result']['paced_load']['write_response_nanos']['p99'] / 1e6
+                    for t in source if t['cell'] == name and t['arm'] == 'A']
+            facts['SettledTailCL' + mode.title() + suffix] = num(st.median(vals), 2)
+        facts['SettledTailSDZero' + mode.title()] = num(cell(0, mode)['ratios']['write_response_p99']['A/AMIN']['sd_log'], 2)
+    first = []
+    for t in trials:
+        if t['cell'].startswith('S1_'):
+            commits = t['result']['stall_diagnostics']['commits']
+            c = min(commits, key=lambda c: c['index'])
+            if c['index'] != 1:
+                raise ValueError('first in-window commit not stored: ' + t['trial_id'])
+            first.append((c['WalSyncDoneNs'] - c['WalWriteDoneNs']) / 1e6)
+    facts['SettledFirstFsync'] = num(st.median(first), 1)
+    facts['SettledFirstFsyncRange'] = num(min(first), 1) + '--' + num(max(first), 1)
+    reads = [t['result']['throughput']['read_ops_per_sec'] for t in trials if t['cell'] == 'S3_d0000_f80_closed']
+    facts['SettledReadRange'] = magnitude_number(min(reads), 0) + '--' + magnitude_number(max(reads), 0)
+    facts.update(settled_stall_facts(stall_settle, stall_runs, notes))
+    facts.update(settled_check_facts(fsync_report))
+    definitions = [('\\gdef\\' + k + '{' + v + '}%' if k.startswith('Tbl') else
+                    '\\newcommand{\\' + k + '}{' + v + '}') for k, v in sorted(facts.items())]
+    write_body(directory, 'settled', definitions)
+    return facts
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for arg in ('results', 'trials-dir', 'tables-dir', 'mechanism-out', 'intervention-results'):
         p.add_argument('--' + arg, type=Path, required=True)
-    for arg in ('compaction-results', 'tablecount-results', 'paced-results'):
+    for arg in ('compaction-results', 'tablecount-results', 'paced-results', 'settled-results', 'fsync-report'):
         p.add_argument('--' + arg, type=Path)
     args = p.parse_args()
+    if bool(args.settled_results) != bool(args.fsync_report):
+        p.error('--settled-results and --fsync-report must be supplied together')
+    if args.settled_results and not all((args.paced_results, args.compaction_results, args.tablecount_results)):
+        p.error('settled output requires all preceding campaign inputs')
     data = json.loads(args.results.read_text(encoding='utf-8'))
     files = sorted(args.trials_dir.glob('*.json'))
     trials = [json.loads(f.read_text(encoding='utf-8')) for f in files]
@@ -628,6 +919,22 @@ def main():
         prior_count = data['counts']['successful'] + intervention['counts']['successful'] + sum(v['counts']['successful'] for v in extra.values())
         generate_paced(paced, rows, args.tables_dir, data, prior_count, probe_text)
         groups.append(('Paced', rows))
+    if args.settled_results:
+        # Load the large frozen JSON once. Evidence inputs are read-only.
+        settled = json.loads(args.settled_results.read_text(encoding='utf-8'))
+        settled_trials = trial_rows(args.settled_results)
+        root = args.settled_results.parent.parent
+        if digest(root / 'settled' / 'plan.json') != settled['plan_sha256']:
+            raise ValueError('settled plan hash differs from frozen source')
+        def diagnostics(folder, pattern):
+            return {f.name: json.loads(f.read_text(encoding='utf-8')) for f in sorted(folder.glob(pattern))}
+        generate_settled(settled, settled_trials, args.tables_dir, data,
+            prior_count + paced['counts']['successful'], rows, trial_rows(args.compaction_results),
+            diagnostics(root / 'stall_diag' / 'settle', 'S_*.json'),
+            diagnostics(root / 'stall_diag' / 'runs', '*.json'),
+            json.loads(args.fsync_report.read_text(encoding='utf-8')),
+            (root / 'OVERNIGHT_NOTES.md').read_text(encoding='utf-8'))
+        groups.append(('Settled', settled_trials))
     generate_coverage(groups, args.tables_dir)
     generate_campaign_facts(extra, intervention_trials, args.tables_dir)
     print(f'Generated manuscript tables; verified unchanged mechanism from {len(trials)} trial envelopes.')

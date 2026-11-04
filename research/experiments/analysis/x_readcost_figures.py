@@ -422,13 +422,65 @@ def fig_paced(data, directory):
     save(fig, directory, 'fig_paced')
 
 
+def fig_hold_reads(report, directory):
+    """Post hoc hold account, from report points read from frozen raw evidence.
+
+    Shapes encode dataset; fill encodes arm. Reference lines use each arm's
+    fsync-off median (not a fitted slope or a hold-normalized off capacity).
+    This function writes only fig_hold_reads.pdf and its PNG preview.
+    """
+    fig, ax = plt.subplots(figsize=(3.5, 3.1))
+    datasets = (('settled_S3', 'Settled S3', 'o'), ('on', 'Fsync on', 's'),
+                ('off', 'Fsync off', '^'))
+    for dataset, label, marker in datasets:
+        points = report['hold_account'][dataset]['points']
+        for arm in ('AMIN', 'B'):
+            rows = [p for p in points if p['arm'] == arm]
+            ax.scatter([p['free_share'] for p in rows], [p['reads_per_sec'] for p in rows],
+                       marker=marker, s=22, facecolors='#333333' if arm == 'AMIN' else 'white',
+                       edgecolors='#333333', linewidths=.7, zorder=3)
+    xs = np.geomspace(.18, 1, 100)
+    medians = report['hold_account']['off']['off_read_median_for_arm']
+    for arm, line in (('AMIN', '-'), ('B', '--')):
+        ax.plot(xs, medians[arm] * xs, color='#777777', linestyle=line, linewidth=.9)
+    ax.text(.03, .96, r'$R = R_{\mathrm{off}}\,\times\,\mathrm{free}$',
+            transform=ax.transAxes, va='top', fontsize=7)
+    ax.set(xscale='log', yscale='log', xlabel='Free share (1 − exclusive hold share)',
+           ylabel='Reads/s', xlim=(.18, 1.06), ylim=(70000, 540000))
+    ax.set_xticks([.2, .3, .5, 1])
+    ax.set_yticks([100000, 200000, 400000])
+    ax.xaxis.set_major_formatter(FuncFormatter(plain_number))
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{x / 1000:.0f}k'))
+    for axis in (ax.xaxis, ax.yaxis):
+        axis.set_minor_formatter(NullFormatter())
+    handles = [Line2D([], [], color='#333333', marker=m, markerfacecolor='#aaaaaa',
+                      linestyle='none', label=label) for _, label, m in datasets]
+    handles += [Line2D([], [], color='#333333', marker='o', linestyle='none',
+                       markerfacecolor=fill, label=label) for fill, label in
+                (('#333333', 'Lease'), ('white', 'Snapshot'))]
+    ax.legend(handles=handles, loc='lower right', fontsize=6, framealpha=.95)
+    decorate(ax)
+    save(fig, directory, 'fig_hold_reads')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--results', type=Path, required=True)
+    parser.add_argument('--results', type=Path)
     parser.add_argument('--output-dir', type=Path, required=True)
+    parser.add_argument('--fsync-report', type=Path)
+    parser.add_argument('--hold-only', action='store_true', help='Write only the hold/read figure')
     for name in ('intervention-results', 'compaction-results', 'tablecount-results', 'paced-results'):
         parser.add_argument('--' + name, type=Path)
     args = parser.parse_args()
+    if args.hold_only:
+        if not args.fsync_report:
+            parser.error('--hold-only requires --fsync-report')
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+        setup()
+        fig_hold_reads(json.loads(args.fsync_report.read_text(encoding='utf-8')), args.output_dir)
+        return 0
+    if not args.results:
+        parser.error('--results is required unless --hold-only is used')
     data = json.loads(args.results.read_text(encoding='utf-8'))
     args.output_dir.mkdir(parents=True, exist_ok=True)
     setup()
@@ -444,6 +496,8 @@ def main():
                            (args.paced_results, fig_paced)):
         if path:
             renderer(json.loads(path.read_text(encoding='utf-8')), args.output_dir)
+    if args.fsync_report:
+        fig_hold_reads(json.loads(args.fsync_report.read_text(encoding='utf-8')), args.output_dir)
     return 0
 
 
