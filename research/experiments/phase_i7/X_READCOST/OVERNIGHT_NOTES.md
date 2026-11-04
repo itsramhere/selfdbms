@@ -232,7 +232,7 @@ Separate from the criteria: the settled flush-check CDF at d = 2 ms under Coarse
 Confirmatory:
 - H-F1 (primary) NOT supported. Mean per-round slope of log R on log free share: Lease 0.768 [0.731, 0.806], Snapshot 0.779 [0.745, 0.813], 90% t CI, band [0.80, 1.25]. Both intervals also exclude 1, so proportional reads are rejected too, not only the band.
 - H-F2 supported. Page L = 299 for both arms, Holm p about 1e-12. Mean ranks 1.0, 2.1, 2.9, 4.0 for Lease, and the same for Snapshot.
-- H-F3 NOT supported as a whole; all three were predicted equivalent. Lease/Snapshot reads: 183 w/s 0.992 [0.979, 1.006] equivalent, Holm p < 0.001; 366 w/s 0.992 [0.918, 1.073] equivalent, Holm p 0.048; 549 w/s 0.983 [0.871, 1.109] inconclusive, Holm p 0.106. No evidence of a difference; the 549 interval is simply too wide.
+- H-F3 NOT supported as a whole; all three were predicted equivalent. Lease/Snapshot reads: 183 w/s 0.992 [0.979, 1.006] equivalent, Holm p < 0.001; 366 w/s 0.992 [0.918, 1.073] equivalent, Holm p 0.048; 549 w/s 0.983 [0.871, 1.108] inconclusive, Holm p 0.106. No evidence of a difference; the 549 interval is simply too wide.
 - H-F4 supported. CoarseLock fast 0.555 [0.552, 0.558], valley 0.0011 [0.0009, 0.0013], blocked 0.444 [0.441, 0.447], 95% t CI.
 - H-X supported: no flush in any F1 or F3 trial.
 
@@ -255,4 +255,9 @@ Descriptive, no prediction:
 Exploratory, found after seeing the data, untested:
 - Slope differs by source of variation. Within a write rate, where free share varies through fsync bursts, the pooled slope is 1.136 (se 0.070, Lease) and 1.137 (se 0.067, Snapshot), close to the earlier post hoc 1.11 and 1.16. Those earlier slopes came from a single write rate. Across write rates it is about 0.77. The 183 w/s cell alone is uninformative within-cell because its free share hardly varies.
 - Candidate reason: read cost changes with write rate. Memtable reads per window read rise 0.084, 0.161, 0.239, 0.289 with rate, and R/free rises 459k, 513k, 554k, 591k. Time per read in free time fits a line on that share, r about -0.99 over four cell means. F3 lands about 4% below the line's capacity. The counter covers the whole trial including warmup while the denominator covers the window, so the share is approximate. Share and rate move together by construction here, so this data cannot separate them. Other rate-linked effects are not ruled out.
-- Check that could separate them: sync off at 183, 366 and 549 w/s. If memory-served reads explain it, sync-off reads rise with rate, to about 460k at 183 w/s. If fsync has its own extra cost at low rates, they stay near 570k. Not run, not preregistered.
+- Check that could separate them: sync off at 183, 366 and 549 w/s. If memory-served reads explain it, sync-off reads rise with rate, to about 460k at 183 w/s. If fsync has its own extra cost at low rates, they stay near 570k. Not run, not preregistered. Superseded by X-memtable-v1, which also changes memtable share at a fixed write rate.
+
+## X-memtable-v1 execution log (4 Nov). Pre-registered, frozen at 62e4e42.
+- Runner sha256 db809a76..., plan sha256 8560df67..., built in a worktree of 62e4e42.
+- Mechanical smoke, excluded from analysis: first 4 trials in `memtable_smoke`. Read status, trace presence, cleanup and ledger only, not outcomes. The analyzer's exit code was checked and its output discarded unread. All succeeded.
+- Aborted start, excluded from analysis and not analysed: stopped at the operator's request because they needed the laptop. One trial had finished. Kept unread in `memtable_aborted1`. Not a result of the data. The campaign has not been run; a later run uses the same plan, seeds and runner in a fresh `memtable` folder, so nothing from this start counts.

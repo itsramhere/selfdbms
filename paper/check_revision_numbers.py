@@ -1,10 +1,13 @@
 """Read-only numerical provenance and optional static manuscript checks.
 
-Default: list numeric tokens in manuscript body text absent from both
-63c6d21:paper.tex and paper/generated/*, with original source line numbers.
-No rounding, arithmetic, inferential analysis, or LaTeX execution is performed.
+Default: list numeric tokens in the body text of paper.tex, paper_extended.tex
+and paper/appendix.tex that are absent from both 63c6d21:paper.tex and
+paper/generated/*, with original source line numbers. No rounding, arithmetic,
+inferential analysis, or LaTeX execution is performed.
 Use --verify for references, citations, macro definitions, math mode, source
-hazards, and column counts after expanding generated table rows.
+hazards, and column counts after expanding generated table rows. Verification
+treats paper.tex and paper_extended.tex (which alone inputs the appendix) as
+separate documents: each is checked against only the generated files it inputs.
 """
 
 from collections import Counter
@@ -15,7 +18,10 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-FILES = (ROOT / 'paper.tex', ROOT / 'paper/appendix.tex')
+MAIN, EXTENDED, APPENDIX = ROOT / 'paper.tex', ROOT / 'paper_extended.tex', ROOT / 'paper/appendix.tex'
+FILES = (MAIN, EXTENDED, APPENDIX)
+# Documents as compiled: the appendix is part of the extended report only.
+UNITS = {'paper.tex': (MAIN,), 'paper_extended.tex': (EXTENDED, APPENDIX)}
 NUMBER = re.compile(r'(?<![\w.])\d+(?:(?:[.,]|\{,\})\d+)*(?![\w.])')
 
 
@@ -364,64 +370,216 @@ def moving_argument_hazards(source):
     return errors
 
 
+def followup_macro_hazards(documents, definitions):
+    """Read-only provenance check for every new scalar and generated row.
+
+    The new generator also computes descriptive paired intervals from raw
+    trials; verify those definitions without regenerating any output files.
+    Numeric baseline handling stays unchanged: generated macros are already
+    included in check_numbers()'s corpus.
+    """
+    import importlib.util
+    directory = ROOT / 'research/experiments/analysis'
+    sys.path.insert(0, str(directory))
+    try:
+        spec = importlib.util.spec_from_file_location('followup_paper_verify', directory / 'x_followup_paper_outputs.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        import json
+        results = json.loads((module.X / 'analysis_followup/x_followup_results.json').read_text(encoding='utf-8'))
+        rows = module.load_raw(module.X / 'followup', results)
+        expected, _ = module.macro_values(results, rows)
+        actual = {k: v for k, v in definitions.items() if k.startswith('Follow')}
+        errors = ['Follow-up macro differs from raw/results provenance: ' + k
+                  for k in sorted(set(actual) | set(expected)) if actual.get(k) != expected.get(k)]
+        phase2 = r'\input{paper/generated/phase2}'
+        followup = r'\input{paper/generated/followup}'
+        for name, text in documents.items():
+            if followup not in text:
+                errors.append(name + ' does not load the follow-up macros')
+            elif phase2 in text and text.index(followup) < text.index(phase2):
+                errors.append(name + ': follow-up macros must be loaded after phase2')
+        print(f'Follow-up macro provenance ({len(expected)} definitions): ' + ('PASS' if not errors else 'FAILED'))
+        return errors
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print('Follow-up macro provenance: FAILED')
+        return ['Follow-up provenance check: ' + str(exc)]
+    finally:
+        sys.path.pop(0)
+
+
+def mainpaper_macro_hazards():
+    """Recompute paper/generated/mainpaper.tex from retained results in memory.
+
+    The restructured paper's new macros come from x_main_paper_outputs.py; the
+    committed file must equal what the generator produces now, byte for byte.
+    Nothing is written. The generator also asserts the claims the prose makes.
+    """
+    import importlib.util
+    import json
+    directory = ROOT / 'research/experiments/analysis'
+    sys.path.insert(0, str(directory))
+    try:
+        spec = importlib.util.spec_from_file_location('main_paper_verify', directory / 'x_main_paper_outputs.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        x = module.X
+        load = lambda p: json.loads(p.read_text(encoding='utf-8'))
+        text, values = module.macro_text(
+            load(x / 'analysis/x_readcost_results.json'), load(x / 'analysis/mechanism.json'),
+            load(x / 'analysis_intervention/x_intervention_results.json'),
+            load(x / 'analysis_followup/x_followup_results.json'), x / 'followup',
+            load(x / 'analysis_settled/x_settled_results.json'), x)
+        actual = (ROOT / 'paper/generated/mainpaper.tex').read_text(encoding='utf-8')
+        errors = [] if text == actual else ['mainpaper.tex differs from x_main_paper_outputs.py output']
+        print(f'Main-paper macro provenance ({len(values)} scalar definitions): ' + ('PASS' if not errors else 'FAILED'))
+        return errors
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print('Main-paper macro provenance: FAILED')
+        return ['Main-paper provenance check: ' + str(exc)]
+    finally:
+        sys.path.pop(0)
+
+
+def main_document_hazards(main):
+    """paper.tex stands alone: no appendix, no Linux numbers, no retracted claims."""
+    errors = []
+    clean = uncomment(main)
+    for needle, message in (
+            (r'\\appendices', 'paper.tex must not start appendices'),
+            (r'\\input\{paper/appendix\}', 'paper.tex must not input the appendix'),
+            (r'\\ifwithappendix', 'paper.tex must not use the appendix toggle'),
+            (r'Appendix~?[A-C]\b', 'paper.tex refers to an appendix it does not have'),
+            ):
+        if re.search(needle, clean):
+            errors.append(message)
+    blocks = re.findall(r'(?<!\\newif)\\ifwithlinux\b(.*?)\\fi\b', main, flags=re.S)
+    if len(blocks) != 1:
+        errors.append('paper.tex must contain exactly one \\ifwithlinux block')
+    for block in blocks:
+        body = re.sub(r'\\(?:label|ref)\{[^}]*\}', '', uncomment(block))
+        body = re.sub(r'\\begin\{tabular\}\{[^}]*\}', '', body)
+        if re.search(r'\d', body):
+            errors.append('the \\ifwithlinux block contains a digit; it may hold comments and headers only')
+    if not re.search(r'\\newif\\ifwithlinux\\withlinuxfalse', main):
+        errors.append('paper.tex must default to \\withlinuxfalse')
+    print('Main-document checks (no appendix, no Linux numbers, retracted phrases): ' + ('PASS' if not errors else 'FAILED'))
+    return errors
+
+
+def phrase_hazards(name, text):
+    """Phrases the restructuring retracted must not return in any document."""
+    clean = uncomment(text)
+    errors = []
+    for needle, message in (
+            (r'paid for in writes', 'retracted phrase "paid for in writes"'),
+            (r'Lease earns its complexity', 'retracted phrase "Lease earns its complexity"'),
+            (r'(?i:lock\s+handoff)', 'retracted phrase "lock handoff"'),
+            (r'standard advice', 'uncited phrase "standard advice"'),
+            (r'any reader-side design', 'over-general phrase "any reader-side design"'),
+            (r'lookups up to 20', 'a 20 us dose is an injected delay, not a lookup time: say "injected delays up to 20"'),
+            (r'bootstrap CIs~?\\cite\{efron1979\}', 'tighter-margin containment uses paired-t CIs, not bootstrap CIs'),
+            (r'24--29', 'S = 0.705 is a 29.5% loss, so the range is 24--30'),
+            (r'matched[^.]{0,80}until read-only', 'table-count claim "matched ... until read-only"')):
+        if re.search(needle, clean):
+            errors.append(f'{name}: {message}')
+    return errors
+
+
 def verify():
     """Static checks only; standard command exports are explicitly enumerated.
 
     This registry covers the used TeX primitives and the loaded IEEEtran,
     cite, amsmath/amssymb, graphicx, booktabs, url, and tikz interfaces.
     Custom commands must have actual source definitions, including in inputs.
+    Each compiled document (paper.tex alone; paper_extended.tex with the
+    appendix it inputs) is checked against the generated files it loads.
     """
-    documents = {p: p.read_text(encoding='utf-8') for p in FILES}
-    inputs = list((ROOT / 'paper/generated').glob('*.tex'))
-    sources = '\n'.join(documents.values())
-    expanded = sources + '\n' + '\n'.join(p.read_text(encoding='utf-8') for p in inputs)
-    clean = uncomment(expanded)
-    defined = set(re.findall(r'\\(?:newcommand|renewcommand|providecommand)\{\\([A-Za-z]+)\}', clean))
-    defined.update(re.findall(r'\\(?:gdef|def)\s*\\([A-Za-z]+)', clean))
-    for name in re.findall(r'\\newif\\if([A-Za-z]+)', clean):
-        defined.update(('if' + name, name + 'true', name + 'false'))
-    # TikZ loop variables are local macro definitions.
-    for variables in re.findall(r'\\foreach\s+([^\s]+)\s+in', clean):
-        defined.update(re.findall(r'\\([A-Za-z]+)', variables))
+    texts = {p: p.read_text(encoding='utf-8') for p in FILES}
+    all_generated = list((ROOT / 'paper/generated').glob('*.tex'))
+    definitions = generated_definitions(all_generated)
+    required = math_required_macros(definitions)
     standard = set('''documentclass IEEEoverridecommandlockouts usepackage graphicspath
         input begin end raggedbottom title author IEEEauthorblockN IEEEauthorblockA
         textit maketitle section subsection label textbf texttt emph cite ref eqref
         path url item centering scriptsize small tiny setlength tabcolsep columnwidth
         textwidth caption toprule midrule bottomrule multicolumn includegraphics
         node filldraw fill draw foreach y xa xb mathrm text ln leq in mu pm times
-        approx simeq widehat qquad noindent newcommand gdef newif clearpage appendices fi
+        approx simeq widehat qquad noindent newcommand gdef newif clearpage appendices fi alpha
         bibitem mathcal textsf neg cdot lesssim geq ensuremath'''.split())
-    used = set(re.findall(r'\\([A-Za-z]+)', clean))
-    unknown = sorted(used - defined - standard)
-    labels = re.findall(r'\\label\{([^}]+)\}', sources)
-    refs = re.findall(r'\\(?:ref|eqref)\{([^}]+)\}', sources)
-    cited = {k.strip() for group in re.findall(r'\\cite\{([^}]+)\}', sources) for k in group.split(',')}
-    bib = re.findall(r'\\bibitem\{([^}]+)\}', sources)
     errors = []
-    for name, values in (
-        ('Undefined macros', unknown),
-        ('Undefined references', sorted(set(refs) - set(labels))),
-        ('Undefined citations', sorted(cited - set(bib))),
-        ('Uncited bibliography entries', sorted(set(bib) - cited)),
-        ('Duplicate labels', sorted(k for k, n in Counter(labels).items() if n > 1)),
-    ):
-        print(f'{name}: {", ".join(values) if values else "none"}')
-        errors.extend(values)
-    definitions = generated_definitions(inputs)
-    required = math_required_macros(definitions)
+    if r'\input{paper/appendix}' in texts[MAIN] or r'\input{paper/appendix}' not in texts[EXTENDED]:
+        errors.append('only paper_extended.tex may input the appendix')
+    errors.extend(followup_macro_hazards({m.name: texts[m] for m in (MAIN, EXTENDED)}, definitions))
+    errors.extend(mainpaper_macro_hazards())
+    errors.extend(main_document_hazards(texts[MAIN]))
+    for path in FILES:
+        errors.extend(phrase_hazards(path.name, texts[path]))
     math_failures, syntax_failures, table_failures = [], [], []
     table_total = row_total = 0
-    for path, source in documents.items():
-        def locate(issues):
-            return [f'{path.relative_to(ROOT).as_posix()}:{source.count(chr(10), 0, pos) + 1}: {message}'
-                    for pos, message in issues]
-        math_errors, syntax_errors = tex_hazards(source, required)
-        table_errors, tables, rows = table_hazards(source, definitions)
-        math_failures.extend(locate(math_errors))
-        syntax_failures.extend(locate(syntax_errors + moving_argument_hazards(source)))
-        table_failures.extend(locate(table_errors))
-        table_total += tables
-        row_total += rows
+    used_total = label_total = ref_total = bib_total = 0
+    for unit, paths in UNITS.items():
+        sources = '\n'.join(texts[p] for p in paths)
+        loaded = []
+        for name in re.findall(r'\\input\{(paper/generated/[^}]+)\}', uncomment(sources)):
+            path = ROOT / (name + '.tex')
+            if not path.is_file():
+                errors.append(f'{unit}: missing generated input {name}')
+            else:
+                loaded.append(path)
+        expanded = sources + '\n' + '\n'.join(p.read_text(encoding='utf-8') for p in loaded)
+        clean = uncomment(expanded)
+        defined = set(re.findall(r'\\(?:newcommand|renewcommand|providecommand)\{\\([A-Za-z]+)\}', clean))
+        defined.update(re.findall(r'\\(?:gdef|def)\s*\\([A-Za-z]+)', clean))
+        for name in re.findall(r'\\newif\\if([A-Za-z]+)', clean):
+            defined.update(('if' + name, name + 'true', name + 'false'))
+        # TikZ loop variables are local macro definitions.
+        for variables in re.findall(r'\\foreach\s+([^\s]+)\s+in', clean):
+            defined.update(re.findall(r'\\([A-Za-z]+)', variables))
+        used = set(re.findall(r'\\([A-Za-z]+)', clean))
+        unknown = sorted(used - defined - standard)
+        labels = re.findall(r'\\label\{([^}]+)\}', sources)
+        refs = re.findall(r'\\(?:ref|eqref)\{([^}]+)\}', sources)
+        cited = {k.strip() for group in re.findall(r'\\cite\{([^}]+)\}', sources) for k in group.split(',')}
+        bib = re.findall(r'\\bibitem\{([^}]+)\}', sources)
+        for label, values in (
+            ('Undefined macros', unknown),
+            ('Undefined references', sorted(set(refs) - set(labels))),
+            ('Undefined citations', sorted(cited - set(bib))),
+            ('Uncited bibliography entries', sorted(set(bib) - cited)),
+            ('Duplicate labels', sorted(k for k, n in Counter(labels).items() if n > 1)),
+        ):
+            print(f'{unit}: {label}: {", ".join(values) if values else "none"}')
+            errors.extend(f'{unit}: {label}: {v}' for v in values)
+        used_total += len(used)
+        label_total += len(labels)
+        ref_total += len(refs)
+        bib_total += len(bib)
+        for path in paths:
+            source = texts[path]
+            def locate(issues, path=path, source=source):
+                return [f'{path.relative_to(ROOT).as_posix()}:{source.count(chr(10), 0, pos) + 1}: {message}'
+                        for pos, message in issues]
+            math_errors, syntax_errors = tex_hazards(source, required)
+            table_errors, tables, rows = table_hazards(source, definitions)
+            math_failures.extend(locate(math_errors))
+            syntax_failures.extend(locate(syntax_errors + moving_argument_hazards(source)))
+            table_failures.extend(locate(table_errors))
+            table_total += tables
+            row_total += rows
+        # Switched-off blocks must not leave references dangling: with the
+        # toggle false, only the remaining labels exist.
+        main = texts[paths[0]]
+        disabled = re.sub(r'(?<!\\newif)\\ifwithappendix\b.*?\\fi\b', '', main, flags=re.S)
+        disabled = re.sub(r'(?<!\\newif)\\ifwithlinux\b.*?\\fi\b', '', disabled, flags=re.S)
+        disabled_labels = set(re.findall(r'\\label\{([^}]+)\}', disabled))
+        disabled_refs = set(re.findall(r'\\(?:ref|eqref)\{([^}]+)\}', disabled))
+        if len(paths) == 1:
+            for ref in disabled_refs - disabled_labels:
+                errors.append(f'{unit}: reference to a switched-off block: {ref}')
+        else:
+            for ref in disabled_refs - (disabled_labels | set(re.findall(r'\\label\{([^}]+)\}', texts[paths[1]]))):
+                errors.append(f'{unit}: reference to a switched-off block: {ref}')
     for name, failures in (
         (f'Math-mode check ({len(required)} generated math-only macros)', math_failures),
         ('TeX source hazards', syntax_failures),
@@ -429,18 +587,12 @@ def verify():
     ):
         print(f'{name}: {"; ".join(failures) if failures else "PASS"}')
         errors.extend(failures)
-    # Disabling appendices must not leave main-body object references dangling.
-    main = documents[FILES[0]]
-    main_labels = set(re.findall(r'\\label\{([^}]+)\}', main))
-    main_refs = set(re.findall(r'\\(?:ref|eqref)\{([^}]+)\}', main))
-    for ref in main_refs - main_labels:
-        errors.append('Appendix-dependent main-body reference: ' + ref)
     if errors:
         print('Static verification: FAILED')
         for error in errors:
             print('  ' + error)
         return False
-    print(f'Static verification: PASS ({len(used)} command names, {len(labels)} labels, {len(refs)} references, {len(bib)} cited bibliography entries).')
+    print(f'Static verification: PASS ({used_total} command names, {label_total} labels, {ref_total} references, {bib_total} cited bibliography entries, across both documents).')
     print('Standard commands checked against explicit loaded-package registry; no LaTeX run.')
     return True
 

@@ -1,0 +1,480 @@
+\documentclass[conference]{IEEEtran}
+\newif\ifwithappendix\withappendixtrue
+\IEEEoverridecommandlockouts
+\usepackage{cite}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage{tikz}
+\graphicspath{{paper/figures/x_readcost/}}
+\input{paper/generated/facts}
+\input{paper/generated/arms}
+\input{paper/generated/summary}
+\input{paper/generated/coverage}
+\input{paper/generated/x1}
+\input{paper/generated/mechanism}
+\input{paper/generated/h2_publication}
+\input{paper/generated/x2}
+\input{paper/generated/x3}
+\input{paper/generated/intervention}
+\input{paper/generated/compaction_throughput}
+\input{paper/generated/compaction_lifecycle}
+\input{paper/generated/tablecount}
+\input{paper/generated/microbench}
+\input{paper/generated/campaign_facts}
+\input{paper/generated/paced}
+\input{paper/generated/settled}
+\input{paper/generated/phase2}
+\input{paper/generated/followup}
+\input{paper/generated/mainpaper}
+\begin{document}
+\raggedbottom
+\title{When Does a Reader-Side Lifetime Fix Help? Admission Coupling in an LSM Engine (Extended Report)}
+\author{\IEEEauthorblockN{V V Ramarathinam Iyer}
+\IEEEauthorblockA{\textit{Department of Database Systems, School of Computer Science and Engineering} \\
+\textit{Vellore Institute of Technology}, Vellore, Tamil Nadu, India \\
+Email: ram.iyer200722@gmail.com}
+}
+\maketitle
+\noindent\textit{This extended report accompanies the conference paper of the same title. It adds the full cells, protocols, and execution history that the paper omits.}
+
+\begin{abstract}
+A read lock held across a lookup is an easy way to keep a storage file alive, yet a reader-side fix cannot shorten the writer's critical section. We ask when such a fix helps. In \FollowCampaignWord{} pre-registered campaigns on one LSM engine, with read cost controlled by injected delay, we compare a coarse read lock, per-table leases, and immutable reader sets across write load, compaction, and table count. Readers and writers are coupled through lock admission: each exclusive acquisition in a commit admits a round of readers, so the coarse lock's read gain at short injected delays depends on the redundant second acquisition. An intervention removing that acquisition supported this: with one acquisition the gain was absent at injected delays up to 20~$\mu$s. The writer also limits both replacements, which still take the manager lock to search memory: at a high write rate it held the lock across fsync for about three quarters of the time, and reads fell as that hold grew, though not in proportion as predicted. Leases and reader sets matched on throughput within a declared margin across publication and compaction, but read-only load separated them at high table counts, with leases completing 34\% fewer reads at 256 tables and sixteen readers; their read equivalence was not established at high write rates. Practically, measure lock-held lookup time, write load, and table count before replacing a lock. Trials started immediately after another had a largest fsync near 55~ms; 30~s pauses removed that band, the cause is unknown, and rechecked throughput classes held. Results come from one engine on one Windows host, at most one writer, injected delay, and WAL fsync under the exclusive lock.
+\end{abstract}
+\begin{IEEEkeywords}
+LSM tree, reader-writer lock, descriptor leasing, immutable snapshots, controlled experiment.
+\end{IEEEkeywords}
+
+\section{Introduction}
+\label{sec:introduction}
+A reader-side lifetime fix shortens the reader's lock hold but leaves the writer's own critical section in place. An LSM engine buffers updates in memory and writes sorted runs to disk~\cite{oneil1996lsm,luo2020}; readers need stable file references while flushes and compactions replace those runs. Holding the manager's read lock across a lookup provides that protection but makes exclusive acquisitions wait for the lookup, including file I/O. We ask: when does a reader-side lifetime fix actually help, given the writer's own critical section?
+
+Production engines separate lifetime protection from long read holds. LevelDB, RocksDB, and Pebble retain references after releasing a short coordination lock~\cite{leveldb,rocksdb,pebble}. We compare CoarseLock, which retains the manager lock, with per-table leases (Lease) and immutable reader sets (Snapshot). Injected delay controls lookup cost while the writer's validation and WAL synchronization remain shared across designs.
+
+The paper makes four contributions:
+\begin{itemize}
+\item \textbf{Admission coupling.} Under a saturated, continually waiting writer, CoarseLock's reads couple to writes as $R\simeq k\,r\,W$, where $k$ is exclusive acquisitions per commit. A pre-registered intervention changing $k$ supported this account, and the read gain depends on the redundant second acquisition (Section~\ref{sec:admission}).
+\item \textbf{The writer's critical section limits the fix.} The cost of holding a read lock depends on how long it is held and on whether the writer is at capacity: below capacity, write throughput stays within the declared margin while median write response rises through two measured lock waits, and a follow-up campaign shows reads falling as the writer's hold share rises, though not in proportion as predicted (Sections~\ref{sec:cost} and~\ref{sec:replacement}).
+\item \textbf{Replacement designs are not interchangeable at the extremes.} Lease and Snapshot match on throughput within a declared margin across publication and compaction, and separate under read-only load at high table counts; their read equivalence was not established at high write rates (Section~\ref{sec:replacement}).
+\item \textbf{A methodology lesson.} Trials started immediately after another had a largest fsync near 55~ms that 30~s pauses removed; the cause is unknown, and rechecked throughput classes held (Section~\ref{sec:settled}).
+\end{itemize}
+
+\section{Background}
+\subsection{The lifetime problem and production designs}
+Stable references let a reader outlive a short coordination critical section. LevelDB takes references on memtables and the current version under its mutex, releases it while reading, and later releases the references; its writer also releases the mutex around log append and synchronization and batches queued writers~\cite{leveldb}. RocksDB readers reference a SuperVersion, and Pebble readers reference a read state under a short \texttt{RLock}~\cite{rocksdb,pebble}. These designs motivate the lifetime question; our implementations retain their engine's validation, file format, and publication path.
+
+\subsection{Reader-writer admission}
+Admission policy determines who proceeds after an exclusive hold. Reader-writer locks permit concurrent readers while excluding writers~\cite{courtois1971}; Go's \texttt{RWMutex} blocks new readers once a writer waits and releases queued readers on writer unlock~\cite{goRWMutex}. A continually waiting writer can therefore alternate with admitted readers. Phase-fair synchronization frames this ordering~\cite{brandenburg2009}, without implying that Go satisfies its formal properties.
+
+Earlier measurements used a defective reader and supply no pooled evidence for this study; Appendix C records that history and the withdrawn claims.
+
+\section{The Engine and Three Designs}
+\subsection{Storage and point reads}
+All designs share the storage and corrected point-read paths. A skip-list memtable~\cite{pugh1990} orders versioned internal keys and flushes frozen contents into SSTables. Data blocks use a 4~KiB threshold, a flat sparse index, and a footer locating the index. The point reader checks cached user-key ranges, binary-searches the index, and issues one \texttt{ReadAt} per visited block, stopping after finding a visible version or passing the key. Versions can straddle blocks. Open-time range-metadata reads bypass the delay, and there is no application block cache.
+
+\subsection{Three ways to keep readers alive}
+CoarseLock protects file lifetime by retaining the manager read lock through lookup and I/O. All designs first search active and frozen memory under \texttt{Mu.RLock}; CoarseLock keeps it until the SSTable search ends, excluding publication and retirement throughout.
+
+Lease protects individual file readers after releasing the manager lock. Under the read lock it copies table-reader pointers into reusable scratch storage and takes an atomic lease on every active table. It searches outside \texttt{Mu} and releases the leases afterwards. Shutdown closes admission and drains active and retired leases; timeout preserves descriptors that remain leased. Each read leases all active tables even when only one range can match.
+
+Snapshot pins one immutable reader-set descriptor under the manager read lock and \texttt{snapshotMu}. It searches outside both locks and reacquires \texttt{snapshotMu} to release the pin. Publication allocates and installs a new set under the mutexes and retires the old set; once it drains, eligible closure and unlinking run outside both mutexes. Table~\ref{tab:arms} summarizes the designs.
+\begin{table}[t]
+\caption{Lifetime designs with the default commit path.}
+\label{tab:arms}\centering\scriptsize\setlength{\tabcolsep}{2pt}
+\begin{tabular}{p{0.45\columnwidth}ccc}\toprule
+Property & CoarseLock & Lease & Snapshot\\\midrule
+\TblArmsRows
+\bottomrule\end{tabular}
+\end{table}
+
+\subsection{The commit path}
+The default commit path gives every design two exclusive acquisitions per successful commit, setting $k=2$. \texttt{Transaction.Commit} first takes \texttt{Mu.Lock}, validates conflicts through \texttt{latestValueLocked}, appends and synchronizes the WAL, updates memory, and unlocks. It then calls \texttt{checkAndTriggerFlush}, which reacquires the exclusive lock even when no flush is needed. That second acquisition is unnecessary when no flush occurs; removing it below threshold changes $k$, as tested in Section~\ref{sec:intervention}. All designs share the default path. The first five campaigns time only the first acquisition's wait; the settled campaign times both.
+
+Writer validation and fsync remain inside the exclusive hold after either reader-side fix. Conflict validation can read delayed SSTable blocks in every design. The delay therefore reaches the writer as well as readers, while the two acquisitions provide separate opportunities to admit queued readers (Fig.~\ref{fig:timeline}).
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize]
+% Four aligned lanes; the right-hand zigzag marks the cut-off next commit.
+\node[anchor=east] at (-0.15,3.8) {CoarseLock writer};
+\node[anchor=east] at (-0.15,2.8) {CoarseLock reader};
+\node[anchor=east] at (-0.15,1.75) {Lease writer};
+\node[anchor=east] at (-0.15,0.7) {Lease reader};
+\foreach \y in {3.8,1.75}{
+ \filldraw[fill=gray!35] (0,\y-0.11) rectangle (2.55,\y+0.11);
+ \node[font=\tiny,anchor=south] at (1.275,\y+0.24) {Lock: check + fsync};
+ \filldraw[fill=gray!35] (3.8,\y-0.11) rectangle (4.22,\y+0.11);
+ \node[font=\tiny,anchor=south] at (4.01,\y+0.24) {Lock};
+ \fill[gray!35] (5.55,\y-0.11) rectangle (6.45,\y+0.11);
+ \draw (6.45,\y+0.11)--(5.55,\y+0.11)--(5.55,\y-0.11)--(6.45,\y-0.11);
+ \draw (6.45,\y-0.11)--(6.39,\y-0.055)--(6.51,\y)--(6.39,\y+0.055)--(6.45,\y+0.11);
+ \node[font=\tiny,anchor=south] at (6.0,\y+0.24) {next commit};
+}
+% CoarseLock's exclusive acquisitions wait until each lock-held reader interval ends.
+\foreach \xa/\xb in {2.55/3.8,4.22/5.55}{
+ \filldraw[draw=gray!60,fill=gray!12] (\xa,3.69) rectangle (\xb,3.91);
+ \node[font=\tiny,anchor=south] at ({(\xa+\xb)/2},4.04) {wait};
+}
+\draw[densely dotted,thick] (0,2.8)--(2.55,2.8);
+\node[font=\tiny,anchor=south] at (1.275,3.04) {blocked};
+\draw[line width=1.2pt] (2.55,2.8)--(3.8,2.8);
+\node[font=\tiny,anchor=south] at (3.175,3.04) {read 1};
+\draw[densely dotted,thick] (3.8,2.8)--(4.22,2.8);
+\draw[line width=1.2pt] (4.22,2.8)--(5.55,2.8);
+\node[font=\tiny,anchor=south] at (4.885,3.04) {read 2};
+\draw[densely dotted,thick] (5.55,2.8)--(6.5,2.8);
+% Lease's short RLock ends before its I/O, which overruns the second Lock.
+\draw[densely dotted,thick] (0,0.7)--(2.55,0.7);
+\node[font=\tiny,anchor=south] at (1.275,0.94) {blocked};
+\draw[line width=1.4pt] (2.55,0.7)--(2.7,0.7);
+\node[font=\tiny,anchor=south] at (2.625,0.94) {RLock};
+\draw[dashed,thick] (2.7,0.7)--(6.0,0.7);
+\node[font=\tiny,anchor=south] at (4.35,0.94) {I/O outside lock};
+\draw[densely dotted,thick] (6.0,0.7)--(6.5,0.7);
+\node[font=\tiny,anchor=south] at (6.25,0.94) {blocked};
+\draw[->] (0,0.1)--(6.55,0.1);
+\node[font=\tiny,anchor=north] at (3.275,-0.02) {time (schematic, not to scale)};
+\end{tikzpicture}
+\caption{One commit cycle under CoarseLock and Lease (schematic, not a measured trace). Under CoarseLock the writer waits for each read and each reader completes one read per exclusive acquisition. Under Lease the reader's I/O is outside the lock and can outlast the short second acquisition. CoarseLock: approximately two reads per reader per commit; Lease: fewer.}
+\label{fig:timeline}
+\end{figure}
+
+\section{Method}
+\label{sec:method}
+The campaigns fix the host and measurement conventions while varying read cost and write load. The host is an AMD Ryzen 7 7445HS with six cores, twelve logical CPUs, 15.2~GiB RAM, and a Samsung MZVL8512HFLU NVMe SSD, running Windows 11 Home build 26200 on NTFS with \texttt{GOMAXPROCS=12}. Every campaign recorded the Go toolchain as go\GoVersion{}. Timing uses QueryPerformanceCounter. Except for table-count variants, fixtures have 10,000 keys in four disjoint tables, 128-byte values, and uniform lookups with target hit ratio 0.95. Trials use 2~s reader-only warmup, a 10~s measurement window, and 200~ms cooldown.
+
+\begin{table*}[t]
+\caption{Pre-registered results. H3 had no directional prediction; its outcome is CI reporting. R-check is the sentinel rule, distinct from compaction H-C.}
+\label{tab:prereg}\centering\scriptsize\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lp{0.47\textwidth}ll}\toprule
+Campaign & Prediction in plain words & Outcome & Section\\\midrule
+Initial H1 & Write ratio falls as delay rises & Supported & \ref{sec:cost}\\
+Initial H2 & Lease/Snapshot throughput and publication waits match the margin & Partly supported & \ref{sec:replacement}\\
+Initial H3 & Churn: no directional prediction; report paired CIs & No directional prediction & \ref{sec:replacement}\\
+Intervention P1 & CoarseLock reads per reader per commit follow acquisition count & Supported & \ref{sec:admission}\\
+Intervention P2 & Removing an acquisition lowers the relative read ratio & Supported & \ref{sec:admission}\\
+Intervention P3 & Cycle errors fit the band; higher-dose writes improve & Supported & \ref{sec:admission}\\
+Compaction H-C & Lease/Snapshot throughput matches with compaction on & Supported & \ref{sec:replacement}\\
+Table count H-T1 & Lease/Snapshot read ratio declines with table count & Partly supported & \ref{sec:replacement}\\
+Table count H-T2 & Equivalence at small counts; read-only separation at the largest & Supported & \ref{sec:replacement}\\
+Paced H-P1 & CoarseLock/Lease write response p99 ratio rises with delay & Failed & \ref{sec:cost}\\
+Paced H-P2 & Below-capacity write throughput matches the margin & Supported & \ref{sec:cost}\\
+Paced H-P3 & Higher-load writes match at zero delay and separate at higher doses & Partly supported; failed at 200~$\mu$s & \ref{sec:cost}\\
+Paced H-P4 & Lease/Snapshot write and closed-reader throughput match & Partly supported & \ref{sec:replacement}\\
+Settled H-M1 & Below-capacity write response median ratio rises with delay & Supported & \ref{sec:cost}\\
+Settled H-M2 & Median ratio lies above the margin at higher doses & Supported & \ref{sec:cost}\\
+Settled H-M3 & Both CoarseLock waits fit the delay band; Lease waits are short & Supported & \ref{sec:cost}\\
+Settled H-W & Higher offered rate separates write throughput & Supported & \ref{sec:cost}\\
+Settled H-R & Previously inconclusive Lease/Snapshot reads and writes match & Failed & \ref{sec:replacement}\\
+Settled H-S & Protocol check: below-capacity median largest fsync stays below the ceiling, raised from \HSDraftMs{} to \HSThresholdMs{}~ms before any campaign trial & Supported at the raised threshold & \ref{sec:settled}\\
+Settled R-check & Recheck prior metrics and classes; rerun if the rule triggers & No rerun triggered; five metrics inconclusive & \ref{sec:settled}\\
+Follow-up H-F1 & Reads scale with free share across write rates, slope in \FollowSlopeBand{} & Failed & \ref{sec:replacement}\\
+Follow-up H-F2 & Reads rise as write rate falls & Supported & \ref{sec:replacement}\\
+Follow-up H-F3 & Lease/Snapshot reads match at \FollowRateLow{}, \FollowRateSecond{}, and \FollowRateThird{} writes/s & Partly supported; inconclusive at \FollowRateThird{} & \ref{sec:replacement}\\
+Follow-up H-F4 & CoarseLock read latency has fast and blocked groups with a near-empty gap & Supported & \ref{sec:admission}\\\bottomrule
+\end{tabular}
+\end{table*}
+
+The workloads separate writer capacity, publication, and lifetime work. Mixed uses a free-running writer and a 1~MiB memtable; Publication releases twenty pre-frozen memtables every 0.5~s; Churn uses a 16~KiB memtable and frequent flushing; Paced fixes intended write arrivals at fractions $f$ of earlier Lease capacity with closed or open readers. Compaction variants merge all active tables on a fixed timer, and table-count variants use disjoint ranges. Immediately before each point-read \texttt{ReadAt}, including writer validation, delay spins with CPU yielding below 1~ms or sleeps then spins at 2~ms. The legacy scan is excluded from the ordered dose test. Mixed and the intervention use $r\in\{4, 16\}$ and $d\in\{0, 20\,\mu\mathrm{s},200\,\mu\mathrm{s},2\,\mathrm{ms}\}$. Publication uses $r=16$ and $d\in\{0, 200\,\mu\mathrm{s},2\,\mathrm{ms}\}$; Churn uses $r\in\{1, 4, 16\}$ at zero delay. Compaction uses $r\in\{4, 16\}$ and $d\in\{0, 200\,\mu\mathrm{s},2\,\mathrm{ms}\}$. Table count uses $r\in\{4, 16\}$ at zero delay, with 4, 16, 64, or 256 tables. Paced uses $r=16$, $d\in\{0, 200\,\mu\mathrm{s},2\,\mathrm{ms}\}$, and $f\in\{0.2, 0.8\}$: \PacedRatesZero{}, \PacedRatesMedium{}, and \PacedRatesHigh{} writes/s at the three delays, each pair ordered $f=0.2/0.8$. The settled campaign adds 700 writes/s at 200~$\mu$s.
+
+The follow-up fixes $r=\FollowReaders{}$, one paced writer, closed readers, and zero delay at \FollowRateLow{}, \FollowRateSecond{}, \FollowRateThird{}, and \FollowRateHigh{} writes/s with a \FollowMemLarge{}~MiB memtable, so no flush falls in a window. It adds one \FollowRateHigh{} writes/s cell with fsync off, one with a \FollowMemSmall{}~MiB memtable reported in Appendix B, and a rerun of one Mixed cell ($r=4$, zero delay, all three designs) that stores full read-latency histograms. H-F4 uses that last cell. Appendix B gives full cells and coverage.
+
+Pairing holds seeds and operation-index streams fixed within each cell-round unit, while randomized interleaving limits order effects. Faster designs may complete longer stream prefixes. Most campaigns use ten matched triplets per cell; the intervention uses five four-run units pairing two designs and two commit paths. Throughput counts in-window completions divided by the measured window, except the intervention's fixed 10~s denominator; latency histograms retain all in-window completions, while synchronization and flush counters include drain.
+
+Service and response times distinguish execution from queueing. Service runs from issue to completion; response runs from intended arrival to completion. Below 0.95 completed/offered writes a trial is flagged saturated. Unissued ticks have no latency, so completion tails under overload are censored from below; a ratio with a censored component need not bound the true ratio. We use $r$ for readers, $d$ for delay, $W,R$ for throughput, $S=W_{\mathrm{CL}}/W_{\mathrm{L}}$, $q=R/(rW)$, $T=1/W$, and $w$ for mean first-acquisition wait.
+
+Equivalence uses paired log ratios and the declared margin $[0.90,1/0.90]$, described as $\pm10\%$ on the multiplicative scale. Holm-adjusted TOST establishes equivalence; a CI wholly beyond the margin is not equivalent, and remaining results are inconclusive. Trend tests use exact Page tests; Appendix A defines families, CIs, and sensitivity checks.
+
+Seven protocols were frozen before campaign trials, separating predictions from exploratory interpretation (Table~\ref{tab:prereg})~\cite{nosek2018}. The first five campaigns ran back to back without a deliberate pause, with a paced-load median gap of 0.04~s; the settled campaign added a pause, fresh seeds, and sentinel comparisons, and the follow-up kept the pause. All \FollowTotalTrials{} retained trials succeeded on the first attempt, with no retries or dropped paired units; Appendix C records pre-freeze exposure and execution history.
+
+\section{How much does holding the lock cost?}
+\label{sec:cost}
+\subsection{A saturated writer pays for the read hold}
+CoarseLock's write penalty increased with measured read-lock hold (Fig.~\ref{fig:penalty}, Table~\ref{tab:summary}). At about 34~$\mu$s and four readers it completed 7.4\% fewer writes than Lease, ratio 0.926 with 95\% CI $[0.881,0.974]$; around 163--173~$\mu$s losses were 24--30\%, and around 1.9~ms they were 64--69\%. H1 supported a decreasing ratio across doses at both reader counts, with Page's $L=294$, exact one-sided $p=\HOneP$, and ten paired blocks each. The point estimates were not strictly monotonic: at sixteen readers $S$ rose from 0.937 to 0.944 between zero and 20~$\mu$s, with mean ranks 3.4 and 3.6. Below about 40~$\mu$s the largest point loss, 7.4\%, is not a confidence bound: the 20~$\mu$s intervals were $[0.881,0.974]$ and $[0.887,1.004]$, allowing larger losses and, for sixteen readers, no loss. The legacy scan lost above 99\% of writes at mean holds of about 125 and 430~ms.
+\begin{figure*}[t]
+\centering\includegraphics[width=\textwidth]{fig_penalty_vs_hold.pdf}
+\caption{Mixed workload: paired CoarseLock/Lease ratios against CoarseLock's arithmetic mean trial read-lock hold. Bars are 95\% paired log-$t$ CIs. Lines connect the four injected doses; hollow legacy scan points are unconnected. Measured hold is descriptive, not a separately randomized treatment.}
+\label{fig:penalty}
+\end{figure*}
+
+\begin{table}[!ht]
+\caption{Mixed workload: measured CoarseLock hold and percentage change relative to Lease, using paired geometric ratios. These are point estimates; Appendix B gives CIs.}
+\label{tab:summary}\centering\small\setlength{\tabcolsep}{3pt}
+\begin{tabular}{rlrrr}\toprule
+$r$ & Delay & Hold ($\mu$s) & Writes & Reads\\\midrule
+\TblSummaryRows
+\bottomrule\end{tabular}
+\end{table}
+
+Lease and Snapshot also slowed as delay increased in the exploratory comparison. Conflict validation reads SSTable blocks under the exclusive lock in every design, so Lease's mean commit cycle at four readers rose from 1.07~ms at zero delay to 2.79~ms at 2~ms. A shorter reader hold leaves that exclusive work in place.
+
+The penalty did not collapse onto one curve of hold relative to the writer's cycle, under criteria fixed before the test cells were computed. This exploratory check used $x=h/T_{\mathrm{L}}$, CoarseLock's mean read hold over Lease's commit cycle, with the parameter-free model $S=1/(1+kx)$ and the same model using p95 hold. On \PhaseTwoTestCells{} test cells, the mean-hold model's median absolute log residual was \PhaseTwoMOneMedian{}, inside the \PhaseTwoMarginBound{} bound, and its reader-count difference over \PhaseTwoReaderPairs{} pairs was \PhaseTwoMOneReader{}, also inside. Its largest residual was \PhaseTwoMOneMax{}, beyond the \PhaseTwoMaxBound{} bound, so it fails. It fell inside the margin in \PhaseTwoWithinMargin{} cells, including \PhaseTwoKOneWithin{} of \PhaseTwoKOneCells{} cells with $k=1$, and missed most at 2~ms with sixteen readers, where writes fell further than it predicts. The p95 model failed two criteria, with median \PhaseTwoMTwoMedian{} and largest \PhaseTwoMTwoMax{}. We therefore offer no transferable rule; Appendix B plots the cells.
+
+\subsection{Below capacity, the cost appears in medians}
+\label{sec:paced}
+Below capacity, write throughput matched Lease while median write response rose with delay. H-P2 established equivalence in \PacedHPTwoCount{}/6 paced cells. The earlier exploratory, descriptive p50 ratios were \PacedResponseLowClosed{} with closed readers and \PacedResponseLowOpen{} with open readers across zero, 200~$\mu$s, and 2~ms; the settled campaign then tested the trend on fresh data. H-M1 held in both modes with maximum Page's $L=\SettledPageL$, exact $p=\SettledPageP$, Holm-adjusted $p=\SettledPageHolm$, and every round in the predicted order. Its response p50 ratios were \SettledMedianClosed{} and \SettledMedianOpen{}, respectively. H-M2 held in all four higher-dose tests (Table~\ref{tab:settled}). At zero delay there was no prediction; ratios \SettledMedianZeroClosed{} and \SettledMedianZeroOpen{} had 90\% CIs inside the margin.
+
+Both lock waits behind the median penalty were measured directly, supporting H-M3. At 2~ms with closed readers, CoarseLock's first wait was \SettledLockWaitCL{}~ms and its flush check \SettledFlushCL{}~ms, with 95\% CIs, against \SettledLockWaitL{} and \SettledFlushL{}~ms for Lease. The exploratory phase account assigns about \SettledPhaseShare{}\% of the excess total commit p50 at 200~$\mu$s and 2~ms to the two waits; medians do not add. Commit-phase distributions show what the median leaves out: CoarseLock's flush-check wait at 2~ms falls in two steps, with \PhaseTwoFlushLowShare{}\% of samples below 3~ms and the rest near \PhaseTwoFlushHighNote{}~ms (Appendix B), a pattern we did not predict or analyse further. Figure~\ref{fig:paced} separates achieved throughput from service medians; Appendix B retains both reader modes and full paced results.
+\begin{table*}[!t]
+\caption{Settled campaign, ten rounds per cell. The write response p50 ratio is the paired geometric CoarseLock/Lease mean with its 90\% CI; phases are arithmetic means of per-trial p50 in ms; the last column is the cell median of the trial largest fsync in ms. At 700 writes/s CoarseLock is past capacity, so its response p50 is a completion-only backlog figure and those ratios are censored, not true latency ratios.}
+\label{tab:settled}\centering\scriptsize\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrl l rrrr r}\toprule
+ & & & CoarseLock/Lease & \multicolumn{2}{c}{CoarseLock} & \multicolumn{2}{c}{Lease} & Largest\\
+Delay & Writes/s & Readers & Response p50 [90\% CI] & Lock wait & Flush check & Lock wait & Flush check & fsync\\\midrule
+\TblSettledRows
+\bottomrule\end{tabular}
+\end{table*}
+
+\begin{figure*}[t]
+\centering\includegraphics[width=\textwidth]{fig_paced.pdf}
+\caption{Paced workload, closed-reader cells only. Points are arithmetic means of trial summaries, with frozen 95\% $t$ CIs. Solid filled markers show $f=0.2$ and dashed hollow markers $f=0.8$. Panel (a) marks the 0.95 completion flag; panel (b) shows write service p50, excluding scheduling delay. Open-reader cells showed the same broad pattern and are reported in the tables.}
+\label{fig:paced}
+\end{figure*}
+
+\subsection{Past capacity, the queue is unstable}
+H-P3 failed at 200~$\mu$s because its offered rate placed capacity next to the equivalence boundary. It met only \PacedHPThreeCount{}/6 predictions: zero-delay cells were equivalent and 2~ms cells not equivalent, with ratios \PacedHPThreeHighClosed{} and \PacedHPThreeHighOpen{}, but 200~$\mu$s was inconclusive in both modes, \PacedHPThreeMediumClosed{} and \PacedHPThreeMediumOpen{} with 90\% CIs. CoarseLock fell below the completion flag in \PacedMediumSaturated{} of twenty trials there. The flaw was visible before freezing: earlier capacity divided by offered rate was $\PacedDesignCapacity/\PacedDesignOffered=\PacedDesignFraction$, already next to the 0.90 margin. H-W repaired the design at 700 writes/s: ratios \SettledHWClosed{} and \SettledHWOpen{}, with 90\% CIs, were both not equivalent.
+
+Overload produced a window-dependent backlog in the exploratory paced comparison. At 2~ms and $f=0.8$, mean completion p99 was about \PacedBacklogObserved{}~s, close to $10(1-\PacedCapacityHigh/\PacedHighOffered)=\PacedBacklogModel$~s. This is an unstable queue, so its completion-only backlog percentile is not steady-state latency.
+
+\subsection{The pre-registered p99 trend failed}
+H-P1 did not support the predicted rise in the write response p99 ratio below capacity. At $f=0.2$, closed readers gave Page's $L=\PacedPageLowClosed$, $p=\PacedPagePLowClosed$, adjusted $p=\PacedPageHolmLowClosed$; open readers gave $L=\PacedPageLowOpen$, $p=\PacedPagePLowOpen$, adjusted $p=\PacedPageHolmLowOpen$. At $f=0.8$, the respective $L$ values were \PacedPageHighClosed{} and \PacedPageHighOpen{}, with adjusted $p=\PacedPageHolmHighClosed$ and $\PacedPageHolmHighOpen$; every round had a censored component. Those tests detect increasing completion-only tails associated with backlog, not increasing true offered-work p99s.
+
+A few stalls made p99 fragile in the exploratory diagnosis. Cell/design median maximum write service lay in \PacedStallMedians{}~ms, with individual maxima \PacedStallRange{}~ms across doses and designs. At zero delay and $f=0.2$, p99 concerns roughly the \PacedTailRank{}th-worst of about \PacedLowWriteCount{} writes; a stall spans about \PacedStallTicks{} arrival ticks at 183 writes/s. Closed-reader zero-delay per-round p99 ratios ranged from \PacedTailRatioRange{}. An engine-free append/fsync probe had maxima \PacedProbeMaxima{}~ms over \PacedProbeCount{} ten-second runs, showing host stalls without accounting for the larger engine band. Section~\ref{sec:settled} diagnoses that band and reports the tails after pausing.
+
+\section{Admission coupling}
+\label{sec:admission}
+\subsection{Reads follow exclusive acquisitions}
+The exploratory read crossover appeared while CoarseLock wrote less. With a saturated writer it read more than Lease through the 200~$\mu$s dose and less at 2~ms: four-reader ratios ranged from 1.19 to 1.45 before falling to 0.725, and sixteen-reader ratios from 1.09 to 1.43 before falling to 0.625 (Fig.~\ref{fig:penalty}). This crossover was unpredicted.
+
+Admission coupling accounts for the crossover under CoarseLock with a continually waiting writer. If each exclusive acquisition admits approximately one read per reader, then
+\begin{equation}
+R_{\mathrm{CL}}\simeq k\,r\,W_{\mathrm{CL}},\qquad k=2\text{ on the default path}.
+\label{eq:coupling}
+\end{equation}
+Individual trials in the eleven non-legacy Mixed and Churn cells had $q=2.002$--$2.015$, despite changing delay and reader count. Legacy $q$ ranged from 1.98 to 2.29 with only about 26 commits per trial at four readers and six at sixteen.
+
+Lease and Snapshot can miss the second admission while doing I/O outside the manager lock. Their cell mean $q$ fell from about 1.7 at zero delay to about 1.3 at 20 and 200~$\mu$s and about one at 2~ms (Table~\ref{tab:mechanism}). At four readers and zero delay, read p50 was 45~$\mu$s for CoarseLock and 808~$\mu$s for Lease, while p99 was 2.27 and 2.31~ms. Those trials stored only percentiles, so the follow-up campaign stored full histograms and tested the shape they implied. H-F4 held: in this cell CoarseLock reads split into a fast group below \FollowFastBound{}~$\mu$s (\FollowFastA{}, \FollowRegionCI{}\% CI) and a slow group at or above \FollowBlockedBound{}~$\mu$s (\FollowBlockedA{}), with \FollowValleyA{} between them. Lease and Snapshot show the same two groups, with \FollowBlockedPointL{} and \FollowBlockedPointS{} in the slow one\ifwithappendix{} (Fig.~\ref{fig:readcdf}, Appendix B)\fi. The slow group's median, \FollowSlowLow{}--\FollowSlowHigh{}~$\mu$s, is a little below the roughly \FollowOne{}~ms commit hold we traced at paced rates. This cell carries no trace, so blocking behind a commit is inferred from that similarity and not measured.
+
+A descriptive cycle check is consistent with two reader waits per commit:
+\begin{equation}
+\widehat T_{\mathrm{CL}}=T_{\mathrm{L}}+2w_{\mathrm{CL}}.
+\label{eq:cycle}
+\end{equation}
+Arithmetic means of per-trial cycles gave prediction errors from $-13.8\%$ to $+10.6\%$ across ten Mixed cells. The second wait was assumed equal to the measured first wait; the direct measurements in Section~\ref{sec:cost} are below capacity.
+\begin{table*}[t]
+\caption{Exploratory admission and cycle check: arithmetic means over ten trials per cell. Cycles are ms; error is $100(\widehat T/T-1)$. Churn reports admission ratios only.}
+\label{tab:mechanism}\centering\small\setlength{\tabcolsep}{4pt}
+\begin{tabular}{ll l rrr rrr}\toprule
+Workload & $r$ & Delay & $q_{\mathrm{CL}}$ & $q_{\mathrm{L}}$ & $q_{\mathrm{S}}$ & $T_{\mathrm{CL}}$ & $\widehat T_{\mathrm{CL}}$ & Error (\%)\\\midrule
+\TblMechanismRows
+\bottomrule\end{tabular}
+\end{table*}
+
+\subsection{What the read gain depends on}
+\label{sec:gain}
+By definition of $q$, $R_{\mathrm{CL}}/R_{\mathrm{L}}=(q_{\mathrm{CL}}/q_{\mathrm{L}})\,S$. For the stored cell summaries the product of the mean-$q$ ratio and $S$ reproduces the read ratio to within \ReadGainIdentityMaxGap{} (Table~\ref{tab:readgain}). CoarseLock read more than Lease in six Mixed cells, at zero, 20, and 200~$\mu$s with four and sixteen readers. The gain comes from CoarseLock's higher $q$; its lower write throughput, $S$ below one in all six cells as a point estimate, shrinks it. Lease readers, doing I/O outside the lock, can miss the short second admission, and CoarseLock readers do not.
+
+In two of the six cells the write-loss CI includes one while the read gain's excludes it: at four readers and zero delay, $S$ was \GainCellFourZeroS{} and reads \GainCellFourZeroR{}; at sixteen readers and 20~$\mu$s, $S$ was \GainCellSixteenTwentyS{} and reads \GainCellSixteenTwentyR{}. In those cells we detected a read gain and no write loss at ten pairs.
+\begin{table*}[t]
+\caption{The six Mixed cells where CoarseLock read more than Lease at the default commit. $q$ values are arithmetic means; $S$ and the read ratio are paired geometric ratios with 95\% $t$ CIs, as in Table~\ref{tab:x1}.}
+\label{tab:readgain}\centering\scriptsize\setlength{\tabcolsep}{4pt}
+\begin{tabular}{rl rrr ll}\toprule
+$r$ & Delay & $q_{\mathrm{CL}}$ & $q_{\mathrm{L}}$ & $q_{\mathrm{CL}}/q_{\mathrm{L}}$ & $S$ [95\% CI] & $R_{\mathrm{CL}}/R_{\mathrm{L}}$ [95\% CI]\\\midrule
+\TblReadGainRows
+\bottomrule\end{tabular}
+\end{table*}
+
+\subsection{Changing acquisition count tests the account}
+\label{sec:intervention}
+The pre-registered intervention supported coupling by changing $k$ below the flush threshold. An experiment-only flag, false by default, checks the threshold inside the first exclusive hold and skips the second acquisition when no flush is needed. At or above threshold the default path reacquires and rechecks before rotation and flush. Validation and WAL work remain shared. Five paired four-run units per cell compare CoarseLock and Lease on both paths, with the default rerun in the same session.
+
+All P1--P3 criteria held (Fig.~\ref{fig:intervention}). P1 required mean CoarseLock $q$ near acquisition count: individual trial ranges were 2.002--2.013 for $k=2$ and 1.001--1.006 for $k=1$. P2's six applicable ratio-of-read-ratios CIs lay below one; at four readers and 20~$\mu$s the ratio was 0.659, 95\% CI $[0.595,0.730]$. P3's cycle errors were $-3.7\%$ to $+7.5\%$ with two acquisitions and $-2.0\%$ to $+8.4\%$ with one, within the declared band; all four higher-dose write-improvement CIs exceeded one. Appendix A gives the exact predictions and Appendix B the full estimates.
+\begin{figure*}[t]
+\centering\includegraphics[width=\textwidth]{fig_intervention.pdf}
+\caption{Intervention, five paired four-run units per cell. Top: arithmetic mean reads per reader per commit. Bottom: paired geometric CoarseLock/Lease read ratios with 95\% log-$t$ CIs. Solid filled markers denote two-acquisition commits; dashed hollow markers denote one-acquisition commits below threshold.}
+\label{fig:intervention}
+\end{figure*}
+
+With one acquisition, the CoarseLock/Lease read ratios at zero and 20~$\mu$s were \LowDoseReadFourZero{} and \LowDoseReadFourTwenty{} at four readers and \LowDoseReadSixteenZero{} and \LowDoseReadSixteenTwenty{} at sixteen, all with 95\% CIs including one (Table~\ref{tab:lowdose}). With one acquisition CoarseLock's read ratio was below one as a point estimate at every dose and reader count (0.864, 0.848, 0.630, and 0.559 at 200~$\mu$s and 2~ms), with CIs below one at those two doses. The read gain at injected delays up to 20~$\mu$s therefore depended on the redundant second acquisition. Removing it raised CoarseLock writes, with CIs above one, at 200~$\mu$s and 2~ms at both reader counts and at sixteen readers with zero delay; the CIs included one at four readers with zero delay and 20~$\mu$s and at sixteen readers with 20~$\mu$s. For Lease, write ratios were \IntLeaseWriteRange{}, all with CIs including one, while its reads fell to \IntLeaseReadRange{} of the two-acquisition level; CoarseLock's reads fell to \IntCLReadRange{}. These are exploratory comparisons of five pairs. Through 200~$\mu$s both designs then had $q\simeq1$, making the read ratio close to $S$; CoarseLock's read-ratio CIs fell below one at 200~$\mu$s, a crossing that was not separately predicted. Lease's one-acquisition $q$ fell to 0.857--0.858 at 2~ms. Paired trial-p99 ratios were \InterventionTailCL{} for CoarseLock and \InterventionTailL{} for Lease, descriptive raw-percentile summaries without CIs. Thus the default path's second acquisition admits readers as well as delaying writes.
+\begin{table}[t]
+\caption{One-acquisition commits: CoarseLock/Lease read ratio with 95\% paired $t$ CI at the two lowest doses.}
+\label{tab:lowdose}\centering\small\setlength{\tabcolsep}{4pt}
+\begin{tabular}{rll}\toprule
+$r$ & Delay & $R_{\mathrm{CL}}/R_{\mathrm{L}}$ [95\% CI]\\\midrule
+\TblLowDoseReadRows
+\bottomrule\end{tabular}
+\end{table}
+
+\subsection{Replication and the equal-write-rate bound}
+The exploratory paced counts replicated the coupling out of sample under closed readers. At $f=0.8$, CoarseLock completed \PacedCapacityMedium{} writes/s at 200~$\mu$s and \PacedCapacityHigh{} at 2~ms, against earlier means \PacedEarlierCapacityMedium{} and \PacedEarlierCapacityHigh{}. Reads were \PacedReadsMedium{} versus $2rW=\PacedCoupledReadsMedium$, and \PacedReadsHigh{} versus $\PacedCoupledReadsHigh$. Open readers have paced arrivals, so Equation~\ref{eq:coupling} does not apply to their rates.
+
+At write rates we could match, the read gain was absent in a descriptive comparison. With closed readers, $r=16$, $f=0.2$, and no flushes, CoarseLock and Lease achieved matched write rates at zero delay, 200~$\mu$s, and 2~ms, and the CoarseLock/Lease read ratios were \PacedReadLowClosed{}, with 95\% CIs. At $f=0.8$ only the zero-delay cell had near-equal writes, with read ratio 0.776 [0.666, 0.904]. The 200~$\mu$s and 2~ms cells at $f=0.8$ do not have equal writes, since CoarseLock completed 0.884 and 0.388 of its offered writes there, so they are not equal-rate evidence. No paced cell used 20~$\mu$s, where the saturated gain peaked. Below capacity the writer is not continually waiting, so this compares regimes. The comparison remains descriptive.
+
+The exploratory compaction comparison exposed an unpredicted limit to the earlier read-gain account. At 2~ms the CoarseLock/Lease read ratios with compaction were \CompReadFourOn{} and \CompReadSixteenOn{} at four and sixteen readers, with 95\% CIs, versus \CompReadFourOff{} and \CompReadSixteenOff{} without compaction. A post hoc, untested contributor is table count: off-condition CoarseLock flushed less and ended with cell means \CompHighTablesCL{} tables versus Lease's \CompHighTablesL{}. Admission and table-count contributions were not separated.
+
+\section{When do Lease and Snapshot differ?}
+\label{sec:replacement}
+\subsection{Throughput matches across publication}
+Lease and Snapshot met H2's throughput equivalence criterion in every Mixed and Publication cell. All ten write and fourteen read tests passed after Holm correction (Fig.~\ref{fig:equivalence}), and all corresponding bootstrap intervals lay inside the declared margin. Publication at zero delay still had read ratio 0.970, 90\% CI $[0.962,0.978]$, a detectable roughly 3\% difference within the margin. The exploratory tighter-margin check found \SensitivityW{} of ten write and \SensitivityR{} of fourteen read CIs inside $[0.95,1/0.95]$; all failures of containment occurred at $d\leq20~\mu$s, without a new adjusted equivalence test.
+\begin{figure*}[t]
+\centering\includegraphics[width=\textwidth]{fig_amin_vs_b.pdf}
+\caption{Lease/Snapshot throughput, ten triplets per cell. Points are paired geometric ratios; bars are 90\% paired log-$t$ CIs for Mixed and Publication, and 95\% for Churn. Shading shows the rounded $[0.90,1.11]$ margin. Churn was not an equivalence test.}
+\label{fig:equivalence}
+\end{figure*}
+
+Publication completion differed only under the legacy scan, while publication waits were not established as equivalent. All designs completed twenty scheduled publications at non-legacy doses; under the legacy scan CoarseLock completed median 10.5, range 9--11, while Lease and Snapshot completed twenty. Their cell geometric publication-wait p99s stayed below 42~$\mu$s, but the zero-delay Lease/Snapshot ratio was 3.11, 90\% CI $[1.54,6.30]$, not equivalent; the other three cells were inconclusive (Appendix B).
+
+\subsection{Churn corrects the lifecycle attribution}
+The Lease control does not support attributing Churn's read deficit to Snapshot's lifecycle, an exploratory earlier reading. CoarseLock/Snapshot read ratios were 1.66, 1.53, and 1.29 across reader counts, and Lease also showed the deficit despite allocating no reader-set descriptors. H3 had no directional prediction: all Lease/Snapshot 95\% paired-$t$ CIs included one, while bootstrap intervals at one and sixteen readers narrowly excluded it for both outcomes, including the one-reader read interval $[0.909,0.997]$; these data do not establish that Lease avoids the deficit.
+
+\subsection{Compaction preserved throughput; commit tails differed}
+\label{sec:compaction}
+Compaction preserved throughput equivalence, and commit-wait tails differed in an exploratory comparison. All twelve primary on tests met H-C after separate write and read Holm corrections, as did the twelve off reference tests. The closest write comparison was 0.949, 90\% CI $[0.909,0.991]$, at sixteen readers and 200~$\mu$s.
+
+The exploratory tail comparison gave Lease commit-wait p99 ratios of \CompWaitRatio{} times Snapshot's, with every 95\% paired CI excluding one (Fig.~\ref{fig:compaction}). Absolute arithmetic means were \CompWaitL{}~$\mu$s for Lease, \CompWaitS{}~$\mu$s for Snapshot, and \CompWaitCL{}~$\mu$s for CoarseLock. CoarseLock and Lease open compaction inputs under the exclusive lock, while Snapshot opens them outside all locks; this asymmetry is not an established cause of the tail gap. The campaigns ran back to back, and after the settled campaign's pause the rechecked ratio moved from \SettledCOneTailOld{} to \SettledCOneTailNew{} and was classed inconclusive (Section~\ref{sec:settled}). The cause of the tail difference is untested.
+\begin{figure*}[t]
+\centering\includegraphics[width=\textwidth]{fig_compaction.pdf}
+\caption{Compaction-on cells, ten triplets each. Left: Lease/Snapshot read throughput with 90\% paired log-$t$ CIs and the equivalence band. Right: arithmetic mean trial commit-wait p99 with 95\% $t$ CIs, in $\mu$s on a log axis. Ratio intervals and absolute-duration intervals use different summaries.}
+\label{fig:compaction}
+\end{figure*}
+
+Turning compaction on raised write throughput by \CompGainW{} and reads by \CompGainR{} in the exploratory on/off comparison, while reducing overlapping tables from a maximum cell mean \CompTablesOffMax{} to means \CompTablesOn{}; the comparison includes relief from read amplification.
+
+\subsection{Table count exposes per-read work}
+\label{sec:tablecount}
+Read-only load separated Lease and Snapshot as table count grew, while free-writer throughput remained equivalent. H-T1 detected declining read ratios in both read-only families, Page's $L=\TablePageFour$ and $\TablePageSixteen$ with Holm-adjusted $p=\TablePagePFour$ and $\TablePagePSixteen$, but not with a writer. All H-T2 predictions held: equivalence at four tables and read-only non-equivalence at 256 for both reader counts. Across the four counts, read-only ratios were \TableReadFour{} at four readers and \TableReadSixteen{} at sixteen. At sixteen readers, 64 tables already gave 0.851, 90\% CI $[0.837,0.866]$, not equivalent. At 256 tables the read-only ratios were 0.712 at four readers and 0.663, 90\% CI $[0.660,0.666]$, at sixteen, both not equivalent; the roughly 34\% fewer reads applies to sixteen readers only. Lease/Snapshot read equivalence was not established at high write rates (Section~\ref{sec:highwrite}). All sixteen applicable free-writer tests were equivalent, with ratios \TableWriterRatios{} (Fig.~\ref{fig:tablecount}).
+
+The exploratory critical-section evidence locates growing work in Lease's read path. Read-only mean holds grew with table count, spanning \TableLeaseCSFour{}~ns at four readers and \TableLeaseCSSixteen{}~ns at sixteen, while Snapshot stayed below 1~$\mu$s. Separate capture/release microbenchmarks cost Lease \BenchReadLOne{}~ns at one goroutine and \BenchReadLSixteen{}~ns at sixteen, against Snapshot's \BenchReadSOne{} and \BenchReadSSixteen{}~ns. Publication cost Lease \BenchPubL{}~ns with no allocations and Snapshot \BenchPubS{}~ns with three, moving table-proportional work from reads to publication (Appendix B).
+\begin{figure*}[t]
+\centering\includegraphics[width=\textwidth]{fig_tablecount.pdf}
+\caption{Table-count campaign and separate lifecycle microbenchmark. Left: Lease/Snapshot read ratios with 90\% paired log-$t$ CIs; solid lines are read-only and dashed lines have one free writer. Right: arithmetic means of three benchmark counts, with no campaign CI. The benchmark isolates capture/release and excludes search and I/O.}
+\label{fig:tablecount}
+\end{figure*}
+
+\subsection{A high write rate leaves little time for readers}
+\label{sec:highwrite}
+H-P4 and H-R left the same read comparison inconclusive twice. H-P4 established Lease/Snapshot write equivalence in \PacedHPFourWCount{}/12 cells and closed-reader read equivalence in \PacedHPFourRCount{}/6. At zero delay and $f=0.8$, reads were \PacedReadException{}, 90\% CI, adjusted $p=\PacedReadExceptionHolm$, with log-ratio SD \PacedReadExceptionSD{}. On fresh settled data H-R failed: writes were equivalent, \SettledHRWrite{}, but reads remained inconclusive, \SettledHRRead{}, adjusted $p=\SettledHRReadHolm$, SD \SettledHRReadSD{}.
+
+The exploratory fsync on/off check reduced read spread at the same frozen load specification. Pooled log-read SD fell from \FsyncPooledOn{} to \FsyncPooledOff{}, a ratio of \FsyncSdRatio{} with a 90\% F interval assuming normality; the read comparison moved from inconclusive to equivalent (Appendix B). Fsync off removes ordinary holds as well as bursts, implicating fsync without isolating bursts.
+
+The exploratory hold-share account relates reads to time outside the writer's exclusive hold\ifwithappendix{} (Fig.~\ref{fig:hold}, Appendix B)\fi. At 732 writes/s, median hold shares were \HoldSettledMedian{}\% in the campaign, range \HoldSettledRange{}, and \HoldOnMedian{}\% in the check, range \HoldOnRange{}, versus \HoldOff{}\% with fsync off. Log reads tracked log free share with $r=\HoldSettledR$, slope \HoldSettledSlope{} in the campaign and $r=\HoldOnR$, slope \HoldOnSlope{} in the check; bursts occupied median \HoldBurstOn{}--\HoldBurstSettled{}\% of the window. Adjusting the paired campaign ratio for free share tightened \SettledHRRead{} to \HoldAdjSettled{} and reduced log-ratio SD from \SettledHRReadSD{} to \HoldAdjSettledSD{}. This adjusted CI is not a test of H-R, which stays failed; hold time is an outcome of the same trial and direction is not established.
+
+A follow-up campaign tested this account on new data, setting the hold share through the write rate. Hold share rose from about \FollowHoldAboutLow{}\% at \FollowRateLow{} writes/s to about \FollowHoldAboutHigh{}\% at \FollowRateHigh{}, and reads fell from about \FollowReadsAboutLow{} to about \FollowReadsAboutHigh{} per second. The hold per commit stayed near one millisecond, \HoldMsRange{}~ms across rates and designs, and WAL sync took \FsyncShareRange{}\% of the exclusive hold (Table~\ref{tab:holdpercommit}). H-F2 held, with Page's $L=\FollowPageL$ and adjusted $p<\FollowPThreshold$ for both designs. The primary prediction, H-F1, failed. Across the four rates, the slope of log reads on log free share was \FollowSlopeL{} for Lease and \FollowSlopeS{} for Snapshot, with \FollowCI{}\% CIs reaching below the predicted band \FollowSlopeBand{} and excluding \FollowOne{} (Fig.~\ref{fig:followup}). Reads fall as the hold grows but not in proportion to free share. One candidate, which we have not tested, is that read cost falls as write rate rises. Writes in these cells use the read keys and stay in the memtable, and a read found in memory skips the SSTable search. The share of reads served from memory rose from about \MemShareAboutLow{} at \FollowRateLow{} writes/s to about \MemShareAboutHigh{} at \FollowRateHigh{}, and reads per unit of free share rose from about \MemCapacityAboutLow{} to about \MemCapacityAboutHigh{} per second. Write rate and memory share move together here, so these cells cannot separate this from a rival in which fsync costs readers more than its hold at low write rates. A frozen protocol that would separate them has not been run. The slopes above came from one write rate and do not measure this response.
+\begin{figure}[t]
+\centering\includegraphics[width=\columnwidth]{fig_followup_reads.pdf}
+\caption{Reads against the share of the window outside the writer's exclusive hold, every Lease and Snapshot trial at four write rates and with fsync off, zero delay, closed readers, log axes. The dashed line has slope \FollowOne{} through median fsync-off capacity. H-F1 predicted a slope in \FollowSlopeBand{} across the four rates and failed.}
+\label{fig:followup}
+\end{figure}
+
+One exploratory comparison holds the write rate fixed. At \FollowRateHigh{} writes/s, turning fsync off raised reads \FollowReadGainL{} and \FollowReadGainS{} times for Lease and Snapshot and free share \FollowFreeGainL{} and \FollowFreeGainS{} times, so read gain over free-share gain was \FollowRelativeGainL{} and \FollowRelativeGainS{} (\FollowCI{}\% paired-$t$ CIs). Fsync off gives up durability, so this does not estimate what a commit-path change would recover. Memory share was similar in those two cells, and read gain tracked free-share gain, which fits a factor tied to write rate without establishing one.
+
+H-F3 was partly supported on the read comparison that H-P4 and H-R left open. Lease/Snapshot reads were equivalent at \FollowRateLow{} and \FollowRateSecond{} writes/s, \FollowRatioLow{} and \FollowRatioSecond{} (adjusted $p=\FollowPSecond$), and inconclusive at \FollowRateThird{}, \FollowRatioThird{}, adjusted $p=\FollowPThird$. They stayed inconclusive at \FollowRateHigh{}, \FollowRatioHigh{}, where we made no prediction, and were equivalent with fsync off, \FollowRatioOff{} (all \FollowCI{}\% CIs). The log-ratio SD grew from \FollowSDLow{} at \FollowRateLow{} writes/s to \FollowSDHigh{} at \FollowRateHigh{} and was \FollowSDOff{} with fsync off. The estimates are close to \FollowOne{}, but the intervals at \FollowRateThird{} and \FollowRateHigh{} writes/s neither establish nor exclude a difference larger than the margin; at high write rates the comparison lacks the precision to show equivalence.
+
+\section{Trial spacing: a methodology lesson}
+\label{sec:settled}
+\subsection{Pauses removed the band}
+The exploratory diagnosis located the large write stall inside WAL fsync and found it when a trial started immediately after another. All 27 fsync-on diagnostic runs placed the largest commit's time there. In 9/9 same-specification pairs, the largest fsync was higher back to back: median \StallBackMedian{}~ms, range \StallBackRange{}, versus \StallSettledMedian{}~ms, range \StallSettledRange{}, after 30~s pauses, with nonoverlapping ranges. Deleting a trial-shaped directory alone did not reproduce the effect. Calibration pauses of at least 15~s removed the band above about 45~ms in 18/18 trials; the settled protocol froze 20~s. The cause is unknown.
+
+H-S is a protocol check, and it held at a threshold we raised from \HSDraftMs{} to \HSThresholdMs{}~ms after seeing the calibration trials and before any campaign trial. Three of \HSDesignCount{} design-level medians (\HSAboveDraftRange{}~ms) exceed \HSDraftMs{}~ms, so H-S would have failed at the draft threshold. Realized pauses were \SettledGapMin{}--\SettledGapMax{}~s, with design-level medians of the largest fsync at \SettledHSRange{}~ms. Cell medians of largest write service descriptively fell from \SettledStallPaced{} to \SettledStallSettled{}~ms; one trial still reached \SettledOutlier{}~ms.
+
+\subsection{Rechecked classes held while tails moved}
+R-check triggered no rerun and contradicted no rechecked published class. Of \SettledSentinelTotal{} metrics, \SettledSentinelUnchanged{} were unchanged, \SettledSentinelInconclusive{} inconclusive, and \SettledSentinelChanged{} changed; none of \SettledPublishedClasses{} published classes was contradicted. The five inconclusive metrics were the Publication lock-wait p99 Lease/Snapshot ratio, the compaction commit-wait p99 Lease/Snapshot ratio, and three five-round intervention throughput ratios whose intervals extended beyond the margin; they do not rule out change. The compaction tail ratio moved from \SettledCOneTailOld{} to \SettledCOneTailNew{}, as Snapshot's median trial p99 fell from \SettledCOneSnapshotOld{} to \SettledCOneSnapshotNew{}~ms while Lease's remained near \SettledCOneLeaseOld{} and \SettledCOneLeaseNew{}~ms.
+
+The exploratory tail recheck showed substantial distortion at 2~ms and unusable zero-delay tails after pausing. CoarseLock cell-median response p99 fell from \SettledTailCLClosedOld{} to \SettledTailCLClosedNew{}~ms with closed readers and \SettledTailCLOpenOld{} to \SettledTailCLOpenNew{}~ms with open readers; geometric CoarseLock/Lease ratios fell from \SettledTailRatioClosedOld{} to \SettledTailRatioClosedNew{} and \SettledTailRatioOpenOld{} to \SettledTailRatioOpenNew{}. H-P1 stands as failed. Zero-delay p99 log-ratio SD remained \SettledTailSDZeroClosed{} and \SettledTailSDZeroOpen{}.
+
+\subsection{The bare-loop prediction failed}
+The exploratory burst check failed to reproduce the engine pattern from rate alone. Fsyncs near 31~ms became more common with engine write rate: trials with an fsync of at least 25~ms rose from 6/60 at 72 writes/s to 88/90 at 650--730 writes/s (Appendix B). The engine-free append/fsync prediction, at least 8 of 10 runs with such an fsync at 700 writes/s, failed: only 5 of 10 did; rate/burst Spearman correlation was \BareSpearman{}, unadjusted $p=\BareSpearmanP$. In \BareFirstSlowCount{} bare runs across rates the only slow fsync was the first, at \BareFirstSlow{}~ms. The \BareBurstRuns{} runs with real bursts were all among the first ten of forty despite shuffled rates. Flushes, readers, data volume, and run order, with bare runs first, were not separated, and the cause remains unknown. Pause between storage trials, report the gap, and check results against a paused sentinel.
+
+\section{Discussion}
+A reader-side lifetime fix helps when writers wait on lock-held lookups at the intended write load or those waits limit capacity. Admission coupling makes the read/write balance part of that decision, and the writer's own exclusive work bounds either replacement.
+
+As a worked example, consider a team whose engine holds a coarse read lock across lookups and that is considering Lease. The figures are this study's and show how to read each measurement; the team should take its own.
+\begin{enumerate}
+\item \textbf{Measure the hold and split the writer's time.} The team records lock-held lookup time and divides each commit into validation, synchronization, and lock waits. Only the lock waits can be recovered. With a saturated writer, our observed write losses stayed below about 8\% at holds below about 40~$\mu$s, then reached 24--30\% around 170~$\mu$s and 64--69\% around 1.9~ms. Lease's own commit cycle at four readers still grew from 1.07 to 2.79~ms with delay, because validation reads delayed blocks under the exclusive lock.
+\item \textbf{Compare at the intended write rate.} The team next asks whether its writer runs at capacity. Below capacity, Lease has little write throughput to recover, since CoarseLock already matched it within the margin; what it improves is median write response, where CoarseLock's ratio reached 1.33--1.43 at 200~$\mu$s and 2.41--2.66 at 2~ms. Past CoarseLock's capacity, Lease also recovers throughput and avoids a growing backlog: at 700 writes/s and 200~$\mu$s, CoarseLock completed 0.792 and 0.840 of Lease's writes with closed and open readers.
+\item \textbf{Count acquisitions and judge reads at equal write rates.} A saturated-writer benchmark may show CoarseLock reading more than Lease at short holds and seem to argue against the change. In our data that gain depended on the redundant second acquisition and was absent at the matched write rates we measured, so the team compares reads at the rate it will run. It also counts exclusive acquisitions per commit, since that count sets $k$. Removing a second acquisition is a different fix with its own trade-off: in our intervention CoarseLock gained writes at 200~$\mu$s and 2~ms, while its reads fell to 0.507--0.763 of the two-acquisition level and read p99 rose.
+\item \textbf{Test the intended table count and tails.} Lease does work per active table on every read. If the load is read-heavy with many tables, the team should test Snapshot too: with sixteen readers and no writer, Lease's read ratio to Snapshot was 0.851 at 64 tables and 0.663 at 256, while Snapshot moved that work to publication. With a free writer, all comparisons stayed equivalent. If commit tails matter under compaction, the team should test them directly: Lease's commit-wait p99 exceeded Snapshot's in one exploratory, back-to-back comparison, and the cause is untested.
+\item \textbf{Measure the writer's hold share and space the trials.} At a high write rate our writer held the lock across fsync for about three quarters of the window, and reads fell as that hold grew. If the team sees this, neither replacement returns that time, and commit-path work such as group commit, which we did not test, is the next candidate. Finally, the team separates trials with a pause and checks results against a paused sentinel, since back-to-back runs here distorted p99 while rechecked throughput classes held.
+\end{enumerate}
+The decision then follows from the measurements. A reader-side fix is worth testing when holds are long enough to cost writes at the intended rate. No throughput comparison favoured Lease over Snapshot beyond the declared margin: the two were equivalent at small table counts, and Snapshot read more under read-only load at high table counts. Complexity was not measured. Lease's cheaper publication appears in a microbenchmark and was not visible end to end; the zero-delay publication lock-wait p99 ratio was 3.11, 90\% CI $[1.54,6.30]$, not equivalent. When holds are short or the writer's own hold dominates, the team should look at the commit path first.
+
+\subsection{What we did not test}
+Further experiments must isolate overlapping-table search, independently queued writes, multiple writers, longer windows, burst and carry-over triggers, fsync outside the lock with group commit, other admission policies, real device reads on larger datasets, and other operating systems. Intervening on compaction input opening could test whether it explains the tail gap. The read-cost candidate in Section~\ref{sec:highwrite} remains untested; the protocol to separate it from the fsync rival was frozen and has not been run.
+
+\section{Threats to Validity}
+\subsection{Construct}
+Injected delay controls read cost rather than reproducing a device. The small dataset was likely page-cache resident, with no application block cache; every visited block incurs delay, and the treatment changes from yielding spin to mostly sleep. Sixteen readers run on twelve logical CPUs. Closed-loop readers can understate latency relative to open arrivals~\cite{schroeder2006}; paced readers add open load, but unissued write ticks still have no latency observation, including some trials above the completion flag. The overloaded queue and its censored tails depend on the measurement window. Synchronization and flush counters include drain, unlike throughput; publication p99 is near a maximum over twenty events, and full read histograms exist for one Mixed cell only.
+
+Compaction and table-count variants isolate limited workload features. The first two campaigns had no compaction; the later merge-all timer differs from production level- or size-based policies, and on/off comparisons also change read amplification. Disjoint table ranges shrink under a fixed keyspace, while every design still does range comparisons. Synthetic lifecycle microbenchmarks exclude search, memory-tier lookup, and I/O, prime scratch storage, and use a Lease helper and spare publication slice capacity.
+
+\subsection{Internal}
+\label{sec:internal}
+Host state remains a source of variation despite pairing and randomized order~\cite{mytkowicz2009}. First-campaign drift was $D=\DriftD$, $|\ln D|=\DriftLog$, below 0.10; CoarseLock and Snapshot end/start read ratios were about 1.09 with logs 0.087 and 0.090, each based on single anchors. Later campaigns had no anchors. Back-to-back running affected the first five campaigns, and settled sentinels cover only rechecked cells while confounding the pause with date, rebuilt binary, tracing, and seeds. Bursts near 31~ms were uncontrolled. Settled execution deviations included helper activity, an overlapping status check, and the running desktop application; Appendix C records them in full.
+
+The untested read-cost candidate in Section~\ref{sec:highwrite} remains confounded with write rate. The shared writer path constrains both mechanisms and attribution. WAL fsync remains under the exclusive lock without group commit; the separate exploratory fsync-off diagnostic reduced commit p50 from \StallSyncOffLeaseOn{} to \StallSyncOffLeaseOff{}~ms for Lease, \StallSyncOffSnapshotOn{} to \StallSyncOffSnapshotOff{}~ms for Snapshot, and \StallSyncOffCLOn{} to \StallSyncOffCLOff{}~ms for CoarseLock, with three runs each. Delayed writer validation was noticed after collection, correcting the first protocol's reader-only statement. The default second acquisition remains common to all designs; the cycle check assumes its wait at saturation, while settled timing measures it below capacity. The compaction input-open asymmetry was disclosed before that campaign, is not intrinsic to leasing, and was not experimentally isolated. Smoke exposure, aborted starts, power-overlay history, and the race-detector context are in Appendix C.
+
+\subsection{External}
+One engine on one Windows host, at most one writer, injected delay, and fsync under the exclusive lock define the study's scope. Production engines may use group commit, block caches, different validation and publication, multiple writers, or different admission policies. These implementations do not reproduce LevelDB, RocksDB, or Pebble. The coupling equation describes this Go lock and workload rather than a general readers-writers law; the sole experimenter and analyst has no independent replication.
+
+\subsection{Statistical}
+The equivalence margin is the author's judgment rather than a production requirement. Holm adjustment applies within declared families, not across all outcomes. Churn has no equivalence prediction; CIs including one do not establish equality, and a missing writer-present trend does not establish absence of per-table cost. The intervention has five paired units, omits Snapshot, and has no multiplicity correction, including P2. Its rerun baseline reproduced admission but not identical ratios: sixteen-reader 20~$\mu$s $S$ was 0.855 versus 0.944 earlier, and cohorts were not pooled. Tighter-margin containment uses the paired-$t$ CIs and is post hoc and unadjusted; bootstrap sensitivity does not remove paired-inference assumptions.
+
+New-data predictions preserve their exploratory origins. The admission account followed the first campaign, and settled hypotheses arose from earlier outcomes, as did the follow-up's, whose latency bounds drew on percentiles already seen. The fsync checks are unadjusted; post hoc hold-share adjustment cannot establish causal direction or repair H-R. Free-share capacity scaling undershot reads by mean \HoldUndershootOn{}--\HoldUndershootSettled{} in log, and hold/burst correlations differed, \HoldVsBurstOn{} versus \HoldVsBurstSettled{}. In the follow-up, reads went from about \FollowScalingLow{}\% below that scaling at \FollowRateLow{} writes/s to about \FollowScalingHigh{}\% above it at \FollowRateHigh{}, so free share gives a direction and not a calibrated model, and bursts do not explain all variation. The compaction-tail interpretation and the read-cost candidate remain untested; within-host repetition does not replicate machines or implementations. In the collapse check, $x$ and $S$ share Lease's measurements, and the development cells were seen before the criteria were written, so they do not count as evidence.
+
+\section{Related Work}
+LSM concurrency work pursues scalability across more engine components than reader lifetime. The LSM-tree and subsequent survey frame the storage design~\cite{oneil1996lsm,luo2020}; cLSM uses non-blocking structures with shared-exclusive coordination around merge pointer updates~\cite{golan2015}, FloDB scales the memory component~\cite{flodb2017}, and RocksDB's development history describes broader production priorities~\cite{dong2021}. SILK schedules internal I/O to prevent latency spikes~\cite{balmau2019}, while performance-stability work studies write stalls~\cite{luo2019}. Our fixed-timer on/off comparison includes read amplification and does not decompose background-work cost.
+
+Reclamation and synchronization research explain different parts of the trade-off. Hazard pointers and comparisons with epoch and quiescent-state methods address lifetime protection without a globally optimal scheme~\cite{michael2004,hart2007}. Scalable, phase-fair, NUMA-aware, passive, and biased reader-writer locks address admission and reader costs~\cite{mellor1991,brandenburg2009,calciu2013,liu2014,bravo2019}. Our coupling result connects admission to completed storage reads and writes through exclusive acquisitions per logical commit. Group commit and Aether's early lock release and flush pipelining address writer work that the reader-side replacements retain~\cite{dewitt1984,aether2010}.
+
+Evaluation literature motivates separating throughput, latency, and workload construction. Benchmarking guidance identifies measurement and host-state pitfalls~\cite{georges2007,hoefler2015,traeger2008,mytkowicz2009}; open versus closed load changes queueing interpretation~\cite{schroeder2006}. Equivalence testing and pre-registration separate a declared tolerance from prediction and observation~\cite{lakens2017,nosek2018}. The carry-over diagnosis adds a concrete reason to check storage-trial spacing against a paused sentinel.
+
+\section{Conclusion}
+A reader-side lifetime fix helps when shortening the read hold relieves writer waiting at the intended load; the writer's own critical section bounds the gain. Admission coupling ties CoarseLock reads to exclusive acquisitions and writes, so its saturated-writer read gain depends on the redundant second acquisition and was absent at the matched write rates we measured. Below capacity the cost appears in median response through both lock waits, while reads fall as the writer's hold share rises, though not in proportion. Lease and Snapshot match throughput within the declared margin across publication and compaction, and read-only load at high table counts separates them; read equivalence was not established at high write rates. Trials started immediately after another had a largest fsync near 55~ms that pauses removed, the cause is unknown, and rechecked throughput classes held. These results cover one engine on one Windows host, at most one writer, injected delay, and WAL fsync under the exclusive lock.
+
+\section*{Acknowledgment}
+Anthropic's Claude and OpenAI's Codex were used to assist with engineering, analysis scripts and drafting of text. The author reviewed the results and is responsible for the content.
+\section*{Artifact Availability}
+The repository is \url{https://github.com/itsramhere/selfdbms}, with campaign records on branches \texttt{research/x-readcost} and \texttt{research/x-phase3}. Evidence is indexed by \path{paper/CLAIM_EVIDENCE_MAP_X.md}; the reproducibility appendix is \path{paper/REPRODUCIBILITY_APPENDIX.md}, and paper names map to repository identifiers in \path{paper/REPOSITORY_IDENTIFIERS.md}. Appendix A records protocols and provenance, Appendix B the full results, and Appendix C execution history.
+
+\begin{thebibliography}{33}
+\bibitem{oneil1996lsm} P. O'Neil, E. Cheng, D. Gawlick, and E. O'Neil, ``The log-structured merge-tree (LSM-tree),'' \emph{Acta Informatica}, vol. 33, no. 4, pp. 351--385, 1996.
+\bibitem{luo2020} C. Luo and M. J. Carey, ``LSM-based storage techniques: a survey,'' \emph{The VLDB Journal}, vol. 29, no. 1, pp. 393--418, 2020.
+\bibitem{leveldb} S. Ghemawat and J. Dean, ``LevelDB.'' [Online]. Available: \url{https://github.com/google/leveldb}
+\bibitem{rocksdb} Meta Platforms, ``RocksDB.'' [Online]. Available: \url{https://github.com/facebook/rocksdb}
+\bibitem{pebble} Cockroach Labs, ``Pebble.'' [Online]. Available: \url{https://github.com/cockroachdb/pebble}
+\bibitem{dong2021} S. Dong, A. Kryczka, Y. Jin, and M. Stumm, ``RocksDB: Evolution of development priorities in a key-value store serving large-scale applications,'' \emph{ACM Trans. Storage}, vol. 17, no. 4, Art. 26, 2021.
+\bibitem{golan2015} G. Golan-Gueta, E. Bortnikov, E. Hillel, and I. Keidar, ``Scaling concurrent log-structured data stores,'' in \emph{Proc. EuroSys}, 2015, Art. 32.
+\bibitem{flodb2017} O. Balmau, R. Guerraoui, V. Trigonakis, and I. Zablotchi, ``FloDB: Unlocking memory in persistent key-value stores,'' in \emph{Proc. EuroSys}, 2017, pp. 80--94.
+\bibitem{balmau2019} O. Balmau, F. Dinu, W. Zwaenepoel, K. Gupta, R. Chandhiramoorthi, and D. Didona, ``SILK: Preventing latency spikes in log-structured merge key-value stores,'' in \emph{Proc. USENIX ATC}, 2019, pp. 753--766.
+\bibitem{luo2019} C. Luo and M. J. Carey, ``On performance stability in LSM-based storage systems,'' \emph{Proc. VLDB Endow.}, vol. 13, no. 4, pp. 449--462, 2019.
+\bibitem{pugh1990} W. Pugh, ``Skip lists: A probabilistic alternative to balanced trees,'' \emph{Commun. ACM}, vol. 33, no. 6, pp. 668--676, 1990.
+\bibitem{courtois1971} P. J. Courtois, F. Heymans, and D. L. Parnas, ``Concurrent control with `readers' and `writers','' \emph{Commun. ACM}, vol. 14, no. 10, pp. 667--668, 1971.
+\bibitem{mellor1991} J. M. Mellor-Crummey and M. L. Scott, ``Scalable reader-writer synchronization for shared-memory multiprocessors,'' in \emph{Proc. PPoPP}, 1991, pp. 106--113.
+\bibitem{brandenburg2009} B. B. Brandenburg and J. H. Anderson, ``Reader-writer synchronization for shared-memory multiprocessor real-time systems,'' in \emph{Proc. ECRTS}, 2009, pp. 184--193.
+\bibitem{calciu2013} I. Calciu, D. Dice, Y. Lev, V. Luchangco, V. J. Marathe, and N. Shavit, ``NUMA-aware reader-writer locks,'' in \emph{Proc. PPoPP}, 2013, pp. 157--166.
+\bibitem{liu2014} R. Liu, H. Zhang, and H. Chen, ``Scalable read-mostly synchronization using passive reader-writer locks,'' in \emph{Proc. USENIX ATC}, 2014, pp. 219--230.
+\bibitem{bravo2019} D. Dice and A. Kogan, ``BRAVO: Biased locking for reader-writer locks,'' in \emph{Proc. USENIX ATC}, 2019, pp. 315--328.
+\bibitem{goRWMutex} The Go Authors, ``sync package: RWMutex.'' [Online]. Available: \url{https://pkg.go.dev/sync#RWMutex}
+\bibitem{michael2004} M. M. Michael, ``Hazard pointers: Safe memory reclamation for lock-free objects,'' \emph{IEEE Trans. Parallel Distrib. Syst.}, vol. 15, no. 6, pp. 491--504, 2004.
+\bibitem{hart2007} T. E. Hart, P. E. McKenney, A. D. Brown, and J. Walpole, ``Performance of memory reclamation for lockless synchronization,'' \emph{J. Parallel Distrib. Comput.}, vol. 67, no. 12, pp. 1270--1285, 2007.
+\bibitem{dewitt1984} D. J. DeWitt, R. H. Katz, F. Olken, L. D. Shapiro, M. R. Stonebraker, and D. A. Wood, ``Implementation techniques for main memory database systems,'' in \emph{Proc. ACM SIGMOD}, 1984, pp. 1--8.
+\bibitem{aether2010} R. Johnson, I. Pandis, R. Stoica, M. Athanassoulis, and A. Ailamaki, ``Aether: A scalable approach to logging,'' \emph{Proc. VLDB Endow.}, vol. 3, no. 1--2, pp. 681--692, 2010.
+\bibitem{page1963} E. B. Page, ``Ordered hypotheses for multiple treatments: A significance test for linear ranks,'' \emph{J. Amer. Statist. Assoc.}, vol. 58, no. 301, pp. 216--230, 1963.
+\bibitem{schuirmann1987} D. J. Schuirmann, ``A comparison of the two one-sided tests procedure and the power approach for assessing the equivalence of average bioavailability,'' \emph{J. Pharmacokinet. Biopharm.}, vol. 15, no. 6, pp. 657--680, 1987.
+\bibitem{holm1979} S. Holm, ``A simple sequentially rejective multiple test procedure,'' \emph{Scand. J. Statist.}, vol. 6, no. 2, pp. 65--70, 1979.
+\bibitem{efron1979} B. Efron, ``Bootstrap methods: Another look at the jackknife,'' \emph{Ann. Statist.}, vol. 7, no. 1, pp. 1--26, 1979.
+\bibitem{lakens2017} D. Lakens, ``Equivalence tests: A practical primer for t tests, correlations, and meta-analyses,'' \emph{Soc. Psychol. Personal. Sci.}, vol. 8, no. 4, pp. 355--362, 2017.
+\bibitem{nosek2018} B. A. Nosek, C. R. Ebersole, A. C. DeHaven, and D. T. Mellor, ``The preregistration revolution,'' \emph{Proc. Natl. Acad. Sci. USA}, vol. 115, no. 11, pp. 2600--2606, 2018.
+\bibitem{georges2007} A. Georges, D. Buytaert, and L. Eeckhout, ``Statistically rigorous Java performance evaluation,'' in \emph{Proc. OOPSLA}, 2007, pp. 57--76.
+\bibitem{mytkowicz2009} T. Mytkowicz, A. Diwan, M. Hauswirth, and P. F. Sweeney, ``Producing wrong data without doing anything obviously wrong!,'' in \emph{Proc. ASPLOS}, 2009, pp. 265--276.
+\bibitem{hoefler2015} T. Hoefler and R. Belli, ``Scientific benchmarking of parallel computing systems,'' in \emph{Proc. SC}, 2015, pp. 1--12.
+\bibitem{traeger2008} A. Traeger, E. Zadok, N. Joukov, and C. P. Wright, ``A nine year study of file system and storage benchmarking,'' \emph{ACM Trans. Storage}, vol. 4, no. 2, Art. 5, 2008.
+\bibitem{schroeder2006} B. Schroeder, A. Wierman, and M. Harchol-Balter, ``Open versus closed: A cautionary tale,'' in \emph{Proc. NSDI}, 2006.
+\end{thebibliography}
+
+\ifwithappendix
+\clearpage
+\appendices
+\input{paper/appendix}
+\fi
+\end{document}

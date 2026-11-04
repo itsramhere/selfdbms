@@ -42,10 +42,12 @@ def decorate(ax):
     ax.spines[['top', 'right']].set_visible(False)
 
 
-def save(fig, directory, name):
+def save(fig, directory, name, formats=('pdf', 'png')):
     fig.tight_layout()
-    fig.savefig(directory / (name + '.pdf'), metadata={'CreationDate': None, 'ModDate': None})
-    fig.savefig(directory / (name + '.png'), dpi=300)
+    if 'pdf' in formats:
+        fig.savefig(directory / (name + '.pdf'), metadata={'CreationDate': None, 'ModDate': None})
+    if 'png' in formats:
+        fig.savefig(directory / (name + '.png'), dpi=300)
     plt.close(fig)
 
 
@@ -271,8 +273,12 @@ def forest(data, directory):
     save(fig, directory, 'fig_amin_vs_b')
 
 
-def fig_penalty_vs_hold(data, directory):
+def fig_penalty_vs_hold(data, directory, legacy=True, name='fig_penalty_vs_hold', formats=('pdf', 'png')):
+    """Penalty against measured hold. legacy=False drops the legacy scan points
+    and refits the axes to the four injected doses; the data, styling and CIs
+    are otherwise identical. Defaults reproduce the original figure exactly."""
     fig, axes = plt.subplots(1, 2, figsize=(7.16, 3.05), sharex=True)
+    shown_bounds = {'W': [], 'R': [], 'hold': []}
     for r, color, marker, line in ((4, '#235e96', 'o', '-'), (16, '#6595bf', 'D', '--')):
         cells = [data.get('cells', {}).get(f'X1_r{r:02d}_{d}', {}) for d in ('d0000', 'd0020', 'd0200', 'd2000', 'legacy')]
         holds = [c.get('arms', {}).get('A', {}).get('read_cs_mean', {}).get('mean', math.nan) / 1e3 for c in cells]
@@ -281,18 +287,35 @@ def fig_penalty_vs_hold(data, directory):
             vals = [c.get('ratios', {}).get(metric, {}).get('A/AMIN', {}) for c in cells]
             categorical_series(ax, holds[:4], [v.get('geometric_mean_ratio') for v in vals[:4]],
                                [v.get('t_ci') for v in vals[:4]], style, 4)
-            if math.isfinite(holds[4]) and point(ax, holds[4], vals[4].get('geometric_mean_ratio'), vals[4].get('t_ci'),
+            for v in vals[:4]:
+                shown_bounds[metric].extend([v.get('geometric_mean_ratio'), *(v.get('t_ci') or [])])
+            shown_bounds['hold'].extend(h for h in holds[:4] if math.isfinite(h))
+            if legacy and math.isfinite(holds[4]) and point(ax, holds[4], vals[4].get('geometric_mean_ratio'), vals[4].get('t_ci'),
                                               dict(style, markerfacecolor='none')):
                 ax.annotate('legacy scan', (holds[4], vals[4]['geometric_mean_ratio']),
                             xytext=(-8, 12), textcoords='offset points', ha='right', fontsize=6)
-    for ax, ylabel, limits, ticks in zip(axes,
-            ('Write ratio CoarseLock / Lease', 'Read ratio CoarseLock / Lease'),
-            ((.001, 1.5), (.4, 1.8)), ([.001, .01, .1, 1], [.4, .5, 1, 1.5])):
+    specs = [('Write ratio CoarseLock / Lease', (.001, 1.5), [.001, .01, .1, 1]),
+             ('Read ratio CoarseLock / Lease', (.4, 1.8), [.4, .5, 1, 1.5])]
+    xticks, xlimits = [1, 10, 100, 1000, 10000, 100000, 1000000], (8, 1000000)
+    if not legacy:
+        # Refit to the injected doses, in log space with the original 8% margin style.
+        def fit(values, candidates):
+            values = [v for v in values if v is not None and math.isfinite(v) and v > 0]
+            low, high = min(values + [1.]), max(values + [1.])
+            pad = .08 * math.log(high / low)
+            limits = (low * math.exp(-pad), high * math.exp(pad))
+            return limits, [t for t in candidates if limits[0] <= t <= limits[1]]
+        candidates = [.2, .25, .3, .4, .5, .6, .7, .8, 1, 1.25, 1.5, 2]
+        specs = [(specs[i][0],) + fit(shown_bounds[m], candidates) for i, m in enumerate(('W', 'R'))]
+        holds_shown = shown_bounds['hold']
+        xlimits = (min(holds_shown) / 1.6, max(holds_shown) * 1.6)
+        xticks = [t for t in (10, 100, 1000, 10000) if xlimits[0] <= t <= xlimits[1]]
+    for ax, (ylabel, limits, ticks) in zip(axes, specs):
         ax.set(xscale='log', yscale='log', ylim=limits, ylabel=ylabel,
                xlabel='Measured mean CoarseLock read-lock hold (µs)')
         ax.axhline(1, color='#777777', lw=.8)
-        ax.set_xticks([1, 10, 100, 1000, 10000, 100000, 1000000])
-        ax.set_xlim(8, 1000000)
+        ax.set_xticks(xticks)
+        ax.set_xlim(*xlimits)
         ax.set_yticks(ticks)
         for axis in (ax.xaxis, ax.yaxis):
             axis.set_major_formatter(FuncFormatter(plain_number))
@@ -301,7 +324,7 @@ def fig_penalty_vs_hold(data, directory):
         ax.legend(handles=[Line2D([], [], color=c, marker=m, linestyle=l, label=f'r = {r}')
                            for r, c, m, l in ((4, '#235e96', 'o', '-'), (16, '#6595bf', 'D', '--'))])
         decorate(ax)
-    save(fig, directory, 'fig_penalty_vs_hold')
+    save(fig, directory, name, formats)
 
 
 def fig_intervention(data, directory):

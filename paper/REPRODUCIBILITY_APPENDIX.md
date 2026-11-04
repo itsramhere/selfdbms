@@ -74,3 +74,54 @@ In accordance with scientific integrity guidelines, the following execution cond
    Go's race detector requires cgo and a C compiler (GCC/MinGW). The Windows benchmark runners were compiled with `CGO_ENABLED=0` without `-race` to avoid measurement skew. Concurrency correctness and data race freedom were verified independently on Linux via `go test -race ./lsmengine/...`.
 5. **Warm-Cache Single-Node Storage**:
    Trial working sets fit comfortably within system RAM and OS page cache. Read latencies reflect in-process and OS cache behavior rather than physical flash access latency.
+
+
+## 5. Seventh campaign: X-followup-v1
+
+This campaign supplements the six corrected-reader campaigns in `paper.tex`; the older Phase I/II artifacts above remain historical and are not pooled. Protocol: `research/experiments/phase_i7/X_FOLLOWUP_PREREGISTRATION.md`. Completion records: `b19ee36` on `research/x-phase3`. The measured runner used `fc7998c`, plan prefix `394675b73698`, runner prefix `6d065832f639`, master seed `20261108`, and a 20 s pause. Seven cells supplied 150 retained first-attempt successes; gaps were 20.0 to 22.5 s. Seven mechanical smoke trials and an aborted start (13 completed, a 14th killed) were excluded; the latter was set aside unread and restarted with the same plan, seeds and runner.
+
+Regenerate the gitignored results JSON from the committed raw records, then the manuscript outputs, from the repository root (analysis only, no trials):
+
+```bash
+python research/experiments/analysis/x_followup_analyze.py --data-dir research/experiments/phase_i7/X_READCOST/followup --output-dir research/experiments/phase_i7/X_READCOST/analysis_followup
+python research/experiments/analysis/x_followup_paper_outputs.py --results research/experiments/phase_i7/X_READCOST/analysis_followup/x_followup_results.json --data-dir research/experiments/phase_i7/X_READCOST/followup --macros-out paper/generated/followup.tex --figures-dir paper/figures/x_readcost
+python -m unittest discover -s research/experiments/analysis -p "test_x_followup*.py"
+python paper/check_revision_numbers.py --verify
+```
+
+Outputs are `paper/generated/followup.tex`, `paper/figures/x_readcost/fig_followup_reads.pdf`, and `fig_read_cdf.pdf`, with PNG previews. The paper generator checks retained raw trial metrics against `analysis_followup/x_followup_results.json`, copies the frozen confirmatory estimates, computes descriptive paired 90% log-t intervals from raw trials, and pools F4 histogram mass at bucket lower bounds. For F3 against F1 at 732 writes/s, it records each round's log read gain, log free-share gain and difference in generated TeX comments, and a 90% paired-t CI on that difference. Cumulative trial count adds this campaign to the prior `SettledTotalTrials` macro in `paper/generated/settled.tex`. PDF timestamps are suppressed, paths and wall-clock times are absent from outputs, and repeated generation must be byte-identical.
+
+Capacity scaling in the new prose is cell mean reads divided by (each arm's median F3 reads times cell mean free share), rather than the mean of per-trial ratios. Slow-group medians are the arithmetic mean of each trial's conditional median, at recorded bucket lower bounds. The 549 writes/s read interval's upper bound is 1.1084820951208332 and rounds directly to 1.108; the requested 1.109 is not reproduced. No data or frozen analyzer is changed. H-F1 failed, H-F2 and H-F4 held, and H-F3 was only partly supported; no mechanism is offered for the less-than-proportional read decline.
+
+
+## 6. Conference paper and extended report
+
+`paper.tex` is the conference paper (no appendix) and `paper_extended.tex` is the extended report (it inputs `paper/appendix.tex`). Both read macros and figures from `paper/generated/` and `paper/figures/x_readcost/` relative to the repository root, so build from the root.
+
+Regenerate the main-paper macros and `fig_penalty_no_legacy.pdf` from retained results only (analysis, no trials; running it twice gives byte-identical `mainpaper.tex`):
+
+```bash
+python research/experiments/analysis/x_main_paper_outputs.py
+```
+
+It reads `analysis/x_readcost_results.json`, `analysis/mechanism.json`, `analysis_intervention/x_intervention_results.json`, `analysis_followup/x_followup_results.json` with the raw `followup/trials`, `analysis_settled/x_settled_results.json`, and the `platform.json` of the seven campaigns (all under `research/experiments/phase_i7/X_READCOST/`), and stops if a statement the prose relies on stops holding. Defaults can be overridden; see `--help`.
+
+Check and test, from the repository root:
+
+```bash
+python paper/check_revision_numbers.py
+python paper/check_revision_numbers.py --verify
+python -m unittest discover -s research/experiments/analysis -p "test_x_main_paper_outputs.py"
+```
+
+Build both documents with `pdflatex` (two or three passes for references), writing auxiliary files outside the repository. Under WSL, from the repository root:
+
+```bash
+mkdir -p /tmp/build_paper /tmp/build_ext
+pdflatex -interaction=nonstopmode -halt-on-error -output-directory=/tmp/build_paper paper.tex
+pdflatex -interaction=nonstopmode -halt-on-error -output-directory=/tmp/build_paper paper.tex
+pdflatex -interaction=nonstopmode -halt-on-error -output-directory=/tmp/build_ext paper_extended.tex
+pdflatex -interaction=nonstopmode -halt-on-error -output-directory=/tmp/build_ext paper_extended.tex
+```
+
+`paper.tex` must stay at 10 IEEE conference pages or fewer including references (8 at the last build). `paper_extended.tex` was 26 pages. The Linux section of `paper.tex` is behind `\withlinuxtrue`; leave the default `\withlinuxfalse` until native Linux results exist, and then fill the guarded block from `xcampaign -design settled` and `-design followup` runs on that host, in separate output folders.
