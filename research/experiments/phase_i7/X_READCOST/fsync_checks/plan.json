@@ -1,0 +1,568 @@
+{
+  "pause_s": 20,
+  "runs": [
+    {
+      "block": 1,
+      "order_position": 1,
+      "part": "bare",
+      "rate": 155
+    },
+    {
+      "block": 1,
+      "order_position": 2,
+      "part": "bare",
+      "rate": 183
+    },
+    {
+      "block": 1,
+      "order_position": 3,
+      "part": "bare",
+      "rate": 700
+    },
+    {
+      "block": 1,
+      "order_position": 4,
+      "part": "bare",
+      "rate": 72
+    },
+    {
+      "block": 2,
+      "order_position": 5,
+      "part": "bare",
+      "rate": 700
+    },
+    {
+      "block": 2,
+      "order_position": 6,
+      "part": "bare",
+      "rate": 183
+    },
+    {
+      "block": 2,
+      "order_position": 7,
+      "part": "bare",
+      "rate": 72
+    },
+    {
+      "block": 2,
+      "order_position": 8,
+      "part": "bare",
+      "rate": 155
+    },
+    {
+      "block": 3,
+      "order_position": 9,
+      "part": "bare",
+      "rate": 700
+    },
+    {
+      "block": 3,
+      "order_position": 10,
+      "part": "bare",
+      "rate": 155
+    },
+    {
+      "block": 3,
+      "order_position": 11,
+      "part": "bare",
+      "rate": 183
+    },
+    {
+      "block": 3,
+      "order_position": 12,
+      "part": "bare",
+      "rate": 72
+    },
+    {
+      "block": 4,
+      "order_position": 13,
+      "part": "bare",
+      "rate": 183
+    },
+    {
+      "block": 4,
+      "order_position": 14,
+      "part": "bare",
+      "rate": 155
+    },
+    {
+      "block": 4,
+      "order_position": 15,
+      "part": "bare",
+      "rate": 700
+    },
+    {
+      "block": 4,
+      "order_position": 16,
+      "part": "bare",
+      "rate": 72
+    },
+    {
+      "block": 5,
+      "order_position": 17,
+      "part": "bare",
+      "rate": 183
+    },
+    {
+      "block": 5,
+      "order_position": 18,
+      "part": "bare",
+      "rate": 72
+    },
+    {
+      "block": 5,
+      "order_position": 19,
+      "part": "bare",
+      "rate": 700
+    },
+    {
+      "block": 5,
+      "order_position": 20,
+      "part": "bare",
+      "rate": 155
+    },
+    {
+      "block": 6,
+      "order_position": 21,
+      "part": "bare",
+      "rate": 72
+    },
+    {
+      "block": 6,
+      "order_position": 22,
+      "part": "bare",
+      "rate": 700
+    },
+    {
+      "block": 6,
+      "order_position": 23,
+      "part": "bare",
+      "rate": 155
+    },
+    {
+      "block": 6,
+      "order_position": 24,
+      "part": "bare",
+      "rate": 183
+    },
+    {
+      "block": 7,
+      "order_position": 25,
+      "part": "bare",
+      "rate": 700
+    },
+    {
+      "block": 7,
+      "order_position": 26,
+      "part": "bare",
+      "rate": 72
+    },
+    {
+      "block": 7,
+      "order_position": 27,
+      "part": "bare",
+      "rate": 155
+    },
+    {
+      "block": 7,
+      "order_position": 28,
+      "part": "bare",
+      "rate": 183
+    },
+    {
+      "block": 8,
+      "order_position": 29,
+      "part": "bare",
+      "rate": 700
+    },
+    {
+      "block": 8,
+      "order_position": 30,
+      "part": "bare",
+      "rate": 72
+    },
+    {
+      "block": 8,
+      "order_position": 31,
+      "part": "bare",
+      "rate": 183
+    },
+    {
+      "block": 8,
+      "order_position": 32,
+      "part": "bare",
+      "rate": 155
+    },
+    {
+      "block": 9,
+      "order_position": 33,
+      "part": "bare",
+      "rate": 183
+    },
+    {
+      "block": 9,
+      "order_position": 34,
+      "part": "bare",
+      "rate": 155
+    },
+    {
+      "block": 9,
+      "order_position": 35,
+      "part": "bare",
+      "rate": 700
+    },
+    {
+      "block": 9,
+      "order_position": 36,
+      "part": "bare",
+      "rate": 72
+    },
+    {
+      "block": 10,
+      "order_position": 37,
+      "part": "bare",
+      "rate": 72
+    },
+    {
+      "block": 10,
+      "order_position": 38,
+      "part": "bare",
+      "rate": 700
+    },
+    {
+      "block": 10,
+      "order_position": 39,
+      "part": "bare",
+      "rate": 183
+    },
+    {
+      "block": 10,
+      "order_position": 40,
+      "part": "bare",
+      "rate": 155
+    },
+    {
+      "arm": "AMIN",
+      "condition": "off",
+      "id": "F_off_AMIN_t01",
+      "order_position": 41,
+      "part": "engine",
+      "round": 1
+    },
+    {
+      "arm": "B",
+      "condition": "off",
+      "id": "F_off_B_t01",
+      "order_position": 42,
+      "part": "engine",
+      "round": 1
+    },
+    {
+      "arm": "AMIN",
+      "condition": "on",
+      "id": "F_on_AMIN_t01",
+      "order_position": 43,
+      "part": "engine",
+      "round": 1
+    },
+    {
+      "arm": "B",
+      "condition": "on",
+      "id": "F_on_B_t01",
+      "order_position": 44,
+      "part": "engine",
+      "round": 1
+    },
+    {
+      "arm": "B",
+      "condition": "on",
+      "id": "F_on_B_t02",
+      "order_position": 45,
+      "part": "engine",
+      "round": 2
+    },
+    {
+      "arm": "B",
+      "condition": "off",
+      "id": "F_off_B_t02",
+      "order_position": 46,
+      "part": "engine",
+      "round": 2
+    },
+    {
+      "arm": "AMIN",
+      "condition": "on",
+      "id": "F_on_AMIN_t02",
+      "order_position": 47,
+      "part": "engine",
+      "round": 2
+    },
+    {
+      "arm": "AMIN",
+      "condition": "off",
+      "id": "F_off_AMIN_t02",
+      "order_position": 48,
+      "part": "engine",
+      "round": 2
+    },
+    {
+      "arm": "B",
+      "condition": "on",
+      "id": "F_on_B_t03",
+      "order_position": 49,
+      "part": "engine",
+      "round": 3
+    },
+    {
+      "arm": "AMIN",
+      "condition": "off",
+      "id": "F_off_AMIN_t03",
+      "order_position": 50,
+      "part": "engine",
+      "round": 3
+    },
+    {
+      "arm": "AMIN",
+      "condition": "on",
+      "id": "F_on_AMIN_t03",
+      "order_position": 51,
+      "part": "engine",
+      "round": 3
+    },
+    {
+      "arm": "B",
+      "condition": "off",
+      "id": "F_off_B_t03",
+      "order_position": 52,
+      "part": "engine",
+      "round": 3
+    },
+    {
+      "arm": "B",
+      "condition": "off",
+      "id": "F_off_B_t04",
+      "order_position": 53,
+      "part": "engine",
+      "round": 4
+    },
+    {
+      "arm": "AMIN",
+      "condition": "on",
+      "id": "F_on_AMIN_t04",
+      "order_position": 54,
+      "part": "engine",
+      "round": 4
+    },
+    {
+      "arm": "B",
+      "condition": "on",
+      "id": "F_on_B_t04",
+      "order_position": 55,
+      "part": "engine",
+      "round": 4
+    },
+    {
+      "arm": "AMIN",
+      "condition": "off",
+      "id": "F_off_AMIN_t04",
+      "order_position": 56,
+      "part": "engine",
+      "round": 4
+    },
+    {
+      "arm": "AMIN",
+      "condition": "off",
+      "id": "F_off_AMIN_t05",
+      "order_position": 57,
+      "part": "engine",
+      "round": 5
+    },
+    {
+      "arm": "B",
+      "condition": "off",
+      "id": "F_off_B_t05",
+      "order_position": 58,
+      "part": "engine",
+      "round": 5
+    },
+    {
+      "arm": "B",
+      "condition": "on",
+      "id": "F_on_B_t05",
+      "order_position": 59,
+      "part": "engine",
+      "round": 5
+    },
+    {
+      "arm": "AMIN",
+      "condition": "on",
+      "id": "F_on_AMIN_t05",
+      "order_position": 60,
+      "part": "engine",
+      "round": 5
+    },
+    {
+      "arm": "AMIN",
+      "condition": "off",
+      "id": "F_off_AMIN_t06",
+      "order_position": 61,
+      "part": "engine",
+      "round": 6
+    },
+    {
+      "arm": "B",
+      "condition": "on",
+      "id": "F_on_B_t06",
+      "order_position": 62,
+      "part": "engine",
+      "round": 6
+    },
+    {
+      "arm": "AMIN",
+      "condition": "on",
+      "id": "F_on_AMIN_t06",
+      "order_position": 63,
+      "part": "engine",
+      "round": 6
+    },
+    {
+      "arm": "B",
+      "condition": "off",
+      "id": "F_off_B_t06",
+      "order_position": 64,
+      "part": "engine",
+      "round": 6
+    },
+    {
+      "arm": "B",
+      "condition": "off",
+      "id": "F_off_B_t07",
+      "order_position": 65,
+      "part": "engine",
+      "round": 7
+    },
+    {
+      "arm": "B",
+      "condition": "on",
+      "id": "F_on_B_t07",
+      "order_position": 66,
+      "part": "engine",
+      "round": 7
+    },
+    {
+      "arm": "AMIN",
+      "condition": "off",
+      "id": "F_off_AMIN_t07",
+      "order_position": 67,
+      "part": "engine",
+      "round": 7
+    },
+    {
+      "arm": "AMIN",
+      "condition": "on",
+      "id": "F_on_AMIN_t07",
+      "order_position": 68,
+      "part": "engine",
+      "round": 7
+    },
+    {
+      "arm": "B",
+      "condition": "off",
+      "id": "F_off_B_t08",
+      "order_position": 69,
+      "part": "engine",
+      "round": 8
+    },
+    {
+      "arm": "AMIN",
+      "condition": "on",
+      "id": "F_on_AMIN_t08",
+      "order_position": 70,
+      "part": "engine",
+      "round": 8
+    },
+    {
+      "arm": "AMIN",
+      "condition": "off",
+      "id": "F_off_AMIN_t08",
+      "order_position": 71,
+      "part": "engine",
+      "round": 8
+    },
+    {
+      "arm": "B",
+      "condition": "on",
+      "id": "F_on_B_t08",
+      "order_position": 72,
+      "part": "engine",
+      "round": 8
+    },
+    {
+      "arm": "B",
+      "condition": "off",
+      "id": "F_off_B_t09",
+      "order_position": 73,
+      "part": "engine",
+      "round": 9
+    },
+    {
+      "arm": "AMIN",
+      "condition": "on",
+      "id": "F_on_AMIN_t09",
+      "order_position": 74,
+      "part": "engine",
+      "round": 9
+    },
+    {
+      "arm": "AMIN",
+      "condition": "off",
+      "id": "F_off_AMIN_t09",
+      "order_position": 75,
+      "part": "engine",
+      "round": 9
+    },
+    {
+      "arm": "B",
+      "condition": "on",
+      "id": "F_on_B_t09",
+      "order_position": 76,
+      "part": "engine",
+      "round": 9
+    },
+    {
+      "arm": "B",
+      "condition": "on",
+      "id": "F_on_B_t10",
+      "order_position": 77,
+      "part": "engine",
+      "round": 10
+    },
+    {
+      "arm": "AMIN",
+      "condition": "off",
+      "id": "F_off_AMIN_t10",
+      "order_position": 78,
+      "part": "engine",
+      "round": 10
+    },
+    {
+      "arm": "AMIN",
+      "condition": "on",
+      "id": "F_on_AMIN_t10",
+      "order_position": 79,
+      "part": "engine",
+      "round": 10
+    },
+    {
+      "arm": "B",
+      "condition": "off",
+      "id": "F_off_B_t10",
+      "order_position": 80,
+      "part": "engine",
+      "round": 10
+    }
+  ],
+  "seed": 20261103,
+  "smoke": false,
+  "window_s": 10
+}

@@ -1,0 +1,13 @@
+{
+  "ac_line": 1,
+  "arm": "B",
+  "condition": "off",
+  "end_iso": "2026-11-03T19:05:28.836763+00:00",
+  "exit_code": 0,
+  "id": "F_off_B_t06",
+  "order_position": 64,
+  "part": "engine",
+  "round": 6,
+  "start_iso": "2026-11-03T19:05:16.555022+00:00",
+  "stderr": ""
+}

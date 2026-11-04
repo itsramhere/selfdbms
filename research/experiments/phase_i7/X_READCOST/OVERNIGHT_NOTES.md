@@ -158,3 +158,37 @@ The first commit of the window has fsync median 6.6 ms (1.7 to 16.7, 180 S1 tria
 - H-R stays open: inconclusive twice, on fresh data, and the likely reason now has evidence.
 - Sentinels: earlier results were not artefacts of back-to-back running, at these margins, with the confounds above. C1's AMIN/B tail ratio should be reported beside the original.
 - All campaigns before this one ran back to back, about 0.04 s apart. That must be disclosed along with the stall diagnosis.
+
+## Two fsync checks (3 Nov, late). Exploratory, not pre-registered, not campaign evidence.
+Predictions written before any run. Evidence in `fsync_checks/`.
+
+Offline fact that shaped the design: the S1 cells have 0 measured flushes and S2/S3 have about 1 per window, so a flush could be part of why bursts are near universal at 650 to 730 writes/s. The bare loop has no flush, no reader and no engine.
+
+### Check 1: bare append+fsync loop
+72, 155, 183 and 700 writes/s, 10 runs each, 140 bytes, fresh file, 2 s after creation, 10 s window, 20 s pause, shuffled within each block.
+Prediction: runs with any fsync of 25 ms or longer rise with rate, at most 3/10 at 72 and at least 8/10 at 700. If that holds, the rise is below the engine. If the bare loop stays flat, something in the engine, most likely the flush or the readers, is needed for it.
+
+### Check 2: fsync on and off at S3 (d=0, f=0.8, closed)
+Frozen X-settled-v1 specs, Lease and Snapshot, rounds 1 to 10, `stalldiag -wal-sync true|false`, 40 trials, 20 s pause, shuffled within each round. These specs already set `diag_trace`, so the fsync-on trials are the same configuration as the campaign, apart from the driver.
+Prediction: with fsync off, the sd of log reads falls by at least half, and the Lease/Snapshot read ratio has a 90% CI inside +/-10%. With fsync on, the spread stays near 0.28 and the ratio stays inconclusive.
+Limit: turning fsync off removes the ordinary 1 ms holds as well as the bursts, so a fall in spread implicates fsync, not bursts alone. The result can't rescue H-R, which stays failed.
+
+### Results (run 4 Nov, 00:01 to 00:44 IST)
+80/80 runs exited 0, all on AC, 20 s pauses. Tool built from f71e7e2, a clean tree apart from these notes and the new check scripts (binary sha256 D0E7BB68...; diagnostic results don't carry a git revision). A 3-run smoke test was excluded. The driver spawned no process but stalldiag and used no status checks. I stayed idle during the run, and the operator was at the machine in the same session at the start. Report: `fsync_checks/report/`. Raw recomputation: `fsync_checks/verify/`.
+
+**Check 1: prediction NOT met.** Runs with any fsync >= 25 ms: 72/s 0/10, 155/s 2/10, 183/s 2/10, 700/s 5/10. The 700/s figure missed the predicted 8/10. Spearman of rate and burst count 0.40, p = 0.010.
+- Five of those nine runs have a single slow first fsync (47.4 to 51.8 ms) and nothing else. Excluding first fsyncs: 0, 0, 1 and 3 of 10.
+- The four runs with real 31 ms bursts are all among the first 10 of 40 runs (positions 3, 5, 6, 9). None in the last 30, though rates were shuffled. The first three 700/s runs burst; the next seven did not. So time or host state matters and rate alone does not settle it.
+- Engine with fsync on at 732/s, straight after, had 17/20. Settled at 650 to 730/s had 88/90. Fraction of fsyncs >= 25 ms: bare 700/s 0.05%, settled 650 to 730/s 0.28%.
+- Reading: engine-free fsync can show the 31 ms pattern, so the bursts aren't created by the engine's code. But the near-universal bursts at high rate aren't reproduced by rate alone. Flush, readers, data volume or the order (bare first, engine second, not interleaved) could each be the difference. Not separated.
+
+**Check 2: prediction met.** Pooled sd of log reads, arm means removed: on 0.142, off 0.018, ratio 0.128 [0.086, 0.191] (F interval, assumes normality). Lease/Snapshot reads: on 1.052 [0.906, 1.222], inconclusive; off 0.994 [0.987, 1.000], equivalent. Writes equivalent in both: 1.011 [0.989, 1.034], 1.000 [1.000, 1.000]. Reads: on, Lease 108,009 to 173,846, Snapshot 104,776 to 156,826; off, Lease 437,665 to 454,848, Snapshot 427,814 to 460,161. Any fsync >= 25 ms: on 17/20, off 0/20. Largest write service with fsync off 5.0 to 6.5 ms. The fsync-on trials replicate settled (sd log R 0.159 and 0.123 against 0.137 and 0.194; settled Snapshot range 104,364 to 186,900).
+
+### New, post hoc: read spread follows the writer's exclusive hold time
+At 732 writes/s the writer holds the exclusive lock for about three quarters of the window, so readers share the rest and small changes in the hold are large changes in what is left.
+- Hold share (validate + WAL write + fsync + apply, phase means x commits / window): fsync on 67.6 to 78.8%, median 72.3%; settled S3 67.4 to 79.2%, median 74.7%; fsync off 4.3%.
+- log R vs log(1 - hold share): fsync on r = 0.965, slope 1.16, n = 20; frozen settled S3 r = 0.905, slope 1.11, n = 20. Slope near 1 is what proportional reads would give.
+- Fsync-off capacity x free share predicts the right scale but undershoots: observed is higher by a mean 0.14 in log (on), 0.19 (settled). So it is an account of the shape, not a calibrated model.
+- Frozen settled S3, paired by round: AMIN/B read ratio against the ratio of free shares r = 0.97. Raw 0.995 [0.846, 1.171], sd 0.280; adjusted for free share 1.003 [0.956, 1.052], sd 0.082. This check: raw 1.052 [0.906, 1.222], sd 0.258; adjusted 1.009 [0.972, 1.047], sd 0.064.
+- This answers open item (1), read swing larger than bursts directly explain: the bursts take a median 4.9 to 8.3% of the window, but the free share is only about 25 to 30%, so the loss is proportionally much larger.
+- Limits: post hoc on outcomes measured in the same trial, so it doesn't establish direction. Hold share vs burst share r = 0.94 in settled but 0.44 here, so bursts are not the whole of the variation in hold. H-R stays failed; the adjusted CI is not a test of it.

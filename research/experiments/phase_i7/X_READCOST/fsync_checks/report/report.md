@@ -1,0 +1,445 @@
+# Fsync checks
+
+## bare
+
+| Field | Value |
+| --- | --- |
+| 155.any_ge_25.k | 2 |
+| 155.any_ge_25.n | 10 |
+| 155.any_ge_25_excluding_first.k | 0 |
+| 155.any_ge_25_excluding_first.n | 10 |
+| 155.any_ge_45.k | 2 |
+| 155.any_ge_45.n | 10 |
+| 155.bursts_per_run_median | 0.0 |
+| 155.bursts_total | 2 |
+| 155.first_fsync_ge_25 | 2 |
+| 155.first_fsync_ms.max | 48.547200043686 |
+| 155.first_fsync_ms.median | 8.391299983487 |
+| 155.first_fsync_ms.min | 2.12250003824 |
+| 155.fraction_ge_25 | 0.000129032258 |
+| 155.largest_fsync_ms.max | 48.547200043686 |
+| 155.largest_fsync_ms.median | 8.391299983487 |
+| 155.largest_fsync_ms.min | 4.86980000278 |
+| 155.mean_achieved_rate | 155.0 |
+| 155.mean_window_share_ge_25_pct | 0.096329100023 |
+| 155.median_fsync_p50_ms | 0.92809999478 |
+| 155.runs | 10 |
+| 155.total_fsyncs | 15500 |
+| 155.total_ge_25 | 2 |
+| 183.any_ge_25.k | 2 |
+| 183.any_ge_25.n | 10 |
+| 183.any_ge_25_excluding_first.k | 1 |
+| 183.any_ge_25_excluding_first.n | 10 |
+| 183.any_ge_45.k | 1 |
+| 183.any_ge_45.n | 10 |
+| 183.bursts_per_run_median | 0.0 |
+| 183.bursts_total | 2 |
+| 183.first_fsync_ge_25 | 1 |
+| 183.first_fsync_ms.max | 50.794000038877 |
+| 183.first_fsync_ms.median | 7.725950039458 |
+| 183.first_fsync_ms.min | 2.020999963861 |
+| 183.fraction_ge_25 | 0.000928961749 |
+| 183.largest_fsync_ms.max | 50.794000038877 |
+| 183.largest_fsync_ms.median | 7.84635002492 |
+| 183.largest_fsync_ms.min | 2.946100023109 |
+| 183.mean_achieved_rate | 183.0 |
+| 183.mean_window_share_ge_25_pct | 0.559482100012 |
+| 183.median_fsync_p50_ms | 0.899699982256 |
+| 183.runs | 10 |
+| 183.total_fsyncs | 18300 |
+| 183.total_ge_25 | 17 |
+| 700.any_ge_25.k | 5 |
+| 700.any_ge_25.n | 10 |
+| 700.any_ge_25_excluding_first.k | 3 |
+| 700.any_ge_25_excluding_first.n | 10 |
+| 700.any_ge_45.k | 2 |
+| 700.any_ge_45.n | 10 |
+| 700.bursts_per_run_median | 0.5 |
+| 700.bursts_total | 5 |
+| 700.first_fsync_ge_25 | 2 |
+| 700.first_fsync_ms.max | 51.771400030702 |
+| 700.first_fsync_ms.median | 6.967750028707 |
+| 700.first_fsync_ms.min | 2.163800003473 |
+| 700.fraction_ge_25 | 0.000528571429 |
+| 700.largest_fsync_ms.max | 51.771400030702 |
+| 700.largest_fsync_ms.median | 23.072300013155 |
+| 700.largest_fsync_ms.min | 7.432000013068 |
+| 700.mean_achieved_rate | 700.0 |
+| 700.mean_window_share_ge_25_pct | 1.203760200122 |
+| 700.median_fsync_p50_ms | 0.813250022475 |
+| 700.runs | 10 |
+| 700.total_fsyncs | 70000 |
+| 700.total_ge_25 | 37 |
+| 72.any_ge_25.k | 0 |
+| 72.any_ge_25.n | 10 |
+| 72.any_ge_25_excluding_first.k | 0 |
+| 72.any_ge_25_excluding_first.n | 10 |
+| 72.any_ge_45.k | 0 |
+| 72.any_ge_45.n | 10 |
+| 72.bursts_per_run_median | 0.0 |
+| 72.bursts_total | 0 |
+| 72.first_fsync_ge_25 | 0 |
+| 72.first_fsync_ms.max | 10.37340000039 |
+| 72.first_fsync_ms.median | 7.373599975836 |
+| 72.first_fsync_ms.min | 3.848600026686 |
+| 72.fraction_ge_25 | 0.0 |
+| 72.largest_fsync_ms.max | 10.37340000039 |
+| 72.largest_fsync_ms.median | 7.373599975836 |
+| 72.largest_fsync_ms.min | 5.845500039868 |
+| 72.mean_achieved_rate | 72.0 |
+| 72.mean_window_share_ge_25_pct | 0.0 |
+| 72.median_fsync_p50_ms | 0.953650000156 |
+| 72.runs | 10 |
+| 72.total_fsyncs | 7200 |
+| 72.total_ge_25 | 0 |
+
+## bare_first_slow_ms
+
+| Field | Value |
+| --- | --- |
+| max | 51.771400030702 |
+| median | 48.547200043686 |
+| min | 47.385699988808 |
+
+## bare_spearman_rate_bursts
+
+| Field | Value |
+| --- | --- |
+| p | 0.010210634169 |
+| r | 0.401609664451 |
+
+## burst_run_positions
+
+| Field | Value |
+| --- | --- |
+|  | [3,5,6,9] |
+
+## engine_on_off
+
+| Field | Value |
+| --- | --- |
+| off.AMIN.R.max | 454847.9772576011 |
+| off.AMIN.R.median | 447149.8 |
+| off.AMIN.R.min | 437665.4781167261 |
+| off.AMIN.achieved | [] |
+| off.AMIN.any_ge_25.k | 0 |
+| off.AMIN.any_ge_25.n | 10 |
+| off.AMIN.largest_write_service_ms.max | 6.459 |
+| off.AMIN.largest_write_service_ms.median | 5.66615 |
+| off.AMIN.largest_write_service_ms.min | 5.0099 |
+| off.AMIN.mean_W | 731.999892396115 |
+| off.AMIN.runs | 10 |
+| off.AMIN.sd_log_R | 0.014284755851 |
+| off.AMIN.wal_sync_p50_ms_median | 0.0 |
+| off.AMIN.write_excess_s.max | 0.407404 |
+| off.AMIN.write_excess_s.median | 0.38051128 |
+| off.AMIN.write_excess_s.min | 0.35088074 |
+| off.B.R.max | 460161.1769919411 |
+| off.B.R.median | 451241.22963253374 |
+| off.B.R.min | 427813.8 |
+| off.B.achieved | [] |
+| off.B.any_ge_25.k | 0 |
+| off.B.any_ge_25.n | 10 |
+| off.B.largest_write_service_ms.max | 6.3251 |
+| off.B.largest_write_service_ms.median | 5.4385 |
+| off.B.largest_write_service_ms.min | 5.1463 |
+| off.B.mean_W | 731.969964864004 |
+| off.B.runs | 10 |
+| off.B.sd_log_R | 0.021433696582 |
+| off.B.wal_sync_p50_ms_median | 0.0 |
+| off.B.write_excess_s.max | 0.39046768 |
+| off.B.write_excess_s.median | 0.36457873 |
+| off.B.write_excess_s.min | 0.34784788 |
+| on.AMIN.R.max | 173846.19652307607 |
+| on.AMIN.R.median | 156822.84292178758 |
+| on.AMIN.R.min | 108009.4 |
+| on.AMIN.achieved | [] |
+| on.AMIN.any_ge_25.k | 9 |
+| on.AMIN.any_ge_25.n | 10 |
+| on.AMIN.largest_write_service_ms.max | 36.1472 |
+| on.AMIN.largest_write_service_ms.median | 31.5017 |
+| on.AMIN.largest_write_service_ms.min | 9.8899 |
+| on.AMIN.mean_W | 728.12987053284 |
+| on.AMIN.runs | 10 |
+| on.AMIN.sd_log_R | 0.159163947373 |
+| on.AMIN.wal_sync_p50_ms_median | 0.821248 |
+| on.AMIN.write_excess_s.max | 301.1054729 |
+| on.AMIN.write_excess_s.median | 197.46510081 |
+| on.AMIN.write_excess_s.min | 10.051991552 |
+| on.B.R.max | 156825.8 |
+| on.B.R.median | 142329.15000000002 |
+| on.B.R.min | 104776.09895223902 |
+| on.B.achieved | [] |
+| on.B.any_ge_25.k | 8 |
+| on.B.any_ge_25.n | 10 |
+| on.B.largest_write_service_ms.max | 36.127 |
+| on.B.largest_write_service_ms.median | 31.71635 |
+| on.B.largest_write_service_ms.min | 8.4531 |
+| on.B.mean_W | 720.54992520072 |
+| on.B.runs | 10 |
+| on.B.sd_log_R | 0.122890905718 |
+| on.B.wal_sync_p50_ms_median | 0.8192 |
+| on.B.write_excess_s.max | 1438.50909388 |
+| on.B.write_excess_s.median | 365.771811146 |
+| on.B.write_excess_s.min | 1.879834488 |
+
+## engine_reference
+
+| Field | Value |
+| --- | --- |
+| 155.any_ge_25.k | 16 |
+| 155.any_ge_25.n | 60 |
+| 155.any_ge_45.k | 0 |
+| 155.any_ge_45.n | 60 |
+| 155.bursts_per_run_median | 0.0 |
+| 155.bursts_total | 20 |
+| 155.fraction_ge_25 | 0.001398014819 |
+| 155.histogram_stored_crossing_disagreements | 0 |
+| 155.largest_fsync_ms.max | 36.0893 |
+| 155.largest_fsync_ms.median | 9.6017 |
+| 155.largest_fsync_ms.min | 4.9044 |
+| 155.mean_achieved_rate | 154.981666666667 |
+| 155.mean_window_share_ge_25_pct | 0.675710383333 |
+| 155.median_fsync_p50_ms | 0.9216 |
+| 155.runs | 60 |
+| 155.total_fsyncs | 92989 |
+| 155.total_ge_25 | 130 |
+| 183.any_ge_25.k | 28 |
+| 183.any_ge_25.n | 60 |
+| 183.any_ge_45.k | 1 |
+| 183.any_ge_45.n | 60 |
+| 183.bursts_per_run_median | 0.0 |
+| 183.bursts_total | 30 |
+| 183.fraction_ge_25 | 0.002285974499 |
+| 183.histogram_stored_crossing_disagreements | 0 |
+| 183.largest_fsync_ms.max | 81.2614 |
+| 183.largest_fsync_ms.median | 13.6071 |
+| 183.largest_fsync_ms.min | 5.997 |
+| 183.mean_achieved_rate | 183.0 |
+| 183.mean_window_share_ge_25_pct | 1.310784616667 |
+| 183.median_fsync_p50_ms | 0.919552 |
+| 183.runs | 60 |
+| 183.total_fsyncs | 109800 |
+| 183.total_ge_25 | 251 |
+| 650-730.any_ge_25.k | 88 |
+| 650-730.any_ge_25.n | 90 |
+| 650-730.any_ge_45.k | 0 |
+| 650-730.any_ge_45.n | 90 |
+| 650-730.bursts_per_run_median | 2.0 |
+| 650-730.bursts_total | 146 |
+| 650-730.fraction_ge_25 | 0.00283203061 |
+| 650-730.histogram_stored_crossing_disagreements | 0 |
+| 650-730.largest_fsync_ms.max | 40.1839 |
+| 650-730.largest_fsync_ms.median | 31.49305 |
+| 650-730.largest_fsync_ms.min | 9.6391 |
+| 650-730.mean_achieved_rate | 678.351111111111 |
+| 650-730.mean_window_share_ge_25_pct | 5.957263 |
+| 650-730.median_fsync_p50_ms | 0.835584 |
+| 650-730.runs | 90 |
+| 650-730.total_fsyncs | 610516 |
+| 650-730.total_ge_25 | 1729 |
+| 72.any_ge_25.k | 6 |
+| 72.any_ge_25.n | 60 |
+| 72.any_ge_45.k | 0 |
+| 72.any_ge_45.n | 60 |
+| 72.bursts_per_run_median | 0.0 |
+| 72.bursts_total | 7 |
+| 72.fraction_ge_25 | 0.000439814815 |
+| 72.histogram_stored_crossing_disagreements | 0 |
+| 72.largest_fsync_ms.max | 38.3484 |
+| 72.largest_fsync_ms.median | 7.07805 |
+| 72.largest_fsync_ms.min | 3.4862 |
+| 72.mean_achieved_rate | 72.0 |
+| 72.mean_window_share_ge_25_pct | 0.101693633333 |
+| 72.median_fsync_p50_ms | 0.93184 |
+| 72.runs | 60 |
+| 72.total_fsyncs | 43200 |
+| 72.total_ge_25 | 19 |
+
+## failed
+
+| Field | Value |
+| --- | --- |
+|  | [] |
+
+## flags
+
+| Field | Value |
+| --- | --- |
+|  | [] |
+
+## hold_account
+
+| Field | Value |
+| --- | --- |
+| off.burst_share_pct.max | 0.0 |
+| off.burst_share_pct.median | 0.0 |
+| off.burst_share_pct.min | 0.0 |
+| off.hold_share_pct.max | 4.483968 |
+| off.hold_share_pct.median | 4.2500935 |
+| off.hold_share_pct.min | 4.044506 |
+| off.n | 20 |
+| off.off_read_median_for_arm.AMIN | 447149.8 |
+| off.off_read_median_for_arm.B | 451241.22963253374 |
+| off.paired.adjusted.ci90 | [0.988048065615,1.000488556801] |
+| off.paired.adjusted.ci90_log | [-0.01202393301,0.000488437496] |
+| off.paired.adjusted.classification | equivalent |
+| off.paired.adjusted.geometric_mean | 0.994248853767 |
+| off.paired.adjusted.runs | 10 |
+| off.paired.adjusted.sd_log | 0.010792458288 |
+| off.paired.raw.ci90 | [0.987057748544,1.000307113636] |
+| off.paired.raw.ci90_log | [-0.013026732097,0.000307066486] |
+| off.paired.raw.classification | equivalent |
+| off.paired.raw.geometric_mean | 0.993660348126 |
+| off.paired.raw.runs | 10 |
+| off.paired.raw.sd_log | 0.011500975372 |
+| off.paired.raw_log_ratio_log_free_ratio_r | 0.558773180823 |
+| off.paired.rounds | [1,2,3,4,5,6,7,8,9,10] |
+| off.points | [{"arm":"AMIN","burst_share_pct":0.0,"free_share":0.95638032,"hold_share_pct":4.361968,"reads_per_sec":443621.3645102908,"round":1},{"arm":"AMIN","burst_share_pct":0.0,"free_share":0.95613821,"hold_share_pct":4.386179,"reads_per_sec":437665.4781167261,"round":2},{"arm":"AMIN","burst_share_pct":0.0,"free_share":0.95767562,"hold_share_pct":4.232438,"reads_per_sec":450562.8,"round":3},{"arm":"AMIN","burst_share_pct":0.0,"free_share":0.9566707,"hold_share_pct":4.33293,"reads_per_sec":452958.39094083215,"round":4},{"arm":"AMIN","burst_share_pct":0.0,"free_share":0.95767357,"hold_share_pct":4.232643,"reads_per_sec":454847.9772576011,"round":5},{"arm":"AMIN","burst_share_pct":0.0,"free_share":0.95761506,"hold_share_pct":4.238494,"reads_per_sec":451698.7,"round":6},{"arm":"AMIN","burst_share_pct":0.0,"free_share":0.95676772,"hold_share_pct":4.323228,"reads_per_sec":454206.23224220966,"round":7},{"arm":"AMIN","burst_share_pct":0.0,"free_share":0.95541902,"hold_share_pct":4.458098,"reads_per_sec":440236.6955976331,"round":8},{"arm":"AMIN","burst_share_pct":0.0,"free_share":0.95728045,"hold_share_pct":4.271955,"reads_per_sec":441716.49558283505,"round":9},{"arm":"AMIN","burst_share_pct":0.0,"free_share":0.95757505,"hold_share_pct":4.242495,"reads_per_sec":443736.8,"round":10},{"arm":"B","burst_share_pct":0.0,"free_share":0.95763457,"hold_share_pct":4.236543,"reads_per_sec":445110.8910977822,"round":1},{"arm":"B","burst_share_pct":0.0,"free_share":0.95516032,"hold_share_pct":4.483968,"reads_per_sec":427813.8,"round":2},{"arm":"B","burst_share_pct":0.0,"free_share":0.95748184,"hold_share_pct":4.251816,"reads_per_sec":453705.66824060323,"round":3},{"arm":"B","burst_share_pct":0.0,"free_share":0.95779546,"hold_share_pct":4.220454,"reads_per_sec":460161.1769919411,"round":4},{"arm":"B","burst_share_pct":0.0,"free_share":0.95751629,"hold_share_pct":4.248371,"reads_per_sec":457452.2176586008,"round":5},{"arm":"B","burst_share_pct":0.0,"free_share":0.95955494,"hold_share_pct":4.044506,"reads_per_sec":457536.77254779363,"round":6},{"arm":"B","burst_share_pct":0.0,"free_share":0.95879399,"hold_share_pct":4.120601,"reads_per_sec":456674.9,"round":7},{"arm":"B","burst_share_pct":0.0,"free_share":0.957616,"hold_share_pct":4.2384,"reads_per_sec":448776.7910244642,"round":8},{"arm":"B","burst_share_pct":0.0,"free_share":0.95724964,"hold_share_pct":4.275036,"reads_per_sec":447115.4,"round":9},{"arm":"B","burst_share_pct":0.0,"free_share":0.9560644,"hold_share_pct":4.39356,"reads_per_sec":445939.76432481885,"round":10}] |
+| on.burst_share_pct.max | 16.248806 |
+| on.burst_share_pct.median | 4.8535945 |
+| on.burst_share_pct.min | 0.0 |
+| on.hold_burst_r | 0.444198560567 |
+| on.hold_share_pct.max | 78.786067 |
+| on.hold_share_pct.median | 72.267712 |
+| on.hold_share_pct.min | 67.635821 |
+| on.log_R_log_free_r | 0.964732998133 |
+| on.log_R_log_free_slope | 1.157068425366 |
+| on.mean_log_observed_over_predicted | 0.138580712661 |
+| on.n | 20 |
+| on.off_read_median_for_arm.AMIN | 447149.8 |
+| on.off_read_median_for_arm.B | 451241.22963253374 |
+| on.paired.adjusted.ci90 | [0.972345674927,1.047324715926] |
+| on.paired.adjusted.ci90_log | [-0.028043905103,0.046239023181] |
+| on.paired.adjusted.classification | equivalent |
+| on.paired.adjusted.geometric_mean | 1.009139067609 |
+| on.paired.adjusted.runs | 10 |
+| on.paired.adjusted.sd_log | 0.064072223936 |
+| on.paired.raw.ci90 | [0.906086933048,1.221541032219] |
+| on.paired.raw.ci90_log | [-0.098620024951,0.200113202817] |
+| on.paired.raw.classification | inconclusive |
+| on.paired.raw.geometric_mean | 1.052056256802 |
+| on.paired.raw.runs | 10 |
+| on.paired.raw.sd_log | 0.25767027107 |
+| on.paired.raw_log_ratio_log_free_ratio_r | 0.975801210229 |
+| on.paired.rounds | [1,2,3,4,5,6,7,8,9,10] |
+| on.points | [{"arm":"AMIN","burst_share_pct":0.0,"free_share":0.21213933,"hold_share_pct":78.786067,"reads_per_sec":108009.4,"round":1},{"arm":"AMIN","burst_share_pct":0.624082,"free_share":0.27962455,"hold_share_pct":72.037545,"reads_per_sec":142325.59857674403,"round":2},{"arm":"AMIN","burst_share_pct":3.977231,"free_share":0.24261308,"hold_share_pct":75.738692,"reads_per_sec":119494.57251624831,"round":3},{"arm":"AMIN","burst_share_pct":5.915537,"free_share":0.24399374,"hold_share_pct":75.600626,"reads_per_sec":120542.3,"round":4},{"arm":"AMIN","burst_share_pct":4.020149,"free_share":0.30396598,"hold_share_pct":69.603402,"reads_per_sec":159186.9856731713,"round":5},{"arm":"AMIN","burst_share_pct":4.716067,"free_share":0.28925815,"hold_share_pct":71.074185,"reads_per_sec":156311.0874169211,"round":6},{"arm":"AMIN","burst_share_pct":4.991122,"free_share":0.29398625,"hold_share_pct":70.601375,"reads_per_sec":158305.79683388406,"round":7},{"arm":"AMIN","burst_share_pct":3.379257,"free_share":0.32364179,"hold_share_pct":67.635821,"reads_per_sec":173846.19652307607,"round":8},{"arm":"AMIN","burst_share_pct":3.0607,"free_share":0.31159367,"hold_share_pct":68.840633,"reads_per_sec":157334.59842665403,"round":9},{"arm":"AMIN","burst_share_pct":6.269987,"free_share":0.29593614,"hold_share_pct":70.406386,"reads_per_sec":158882.09523353714,"round":10},{"arm":"B","burst_share_pct":0.0,"free_share":0.30323882,"hold_share_pct":69.676118,"reads_per_sec":156825.8,"round":1},{"arm":"B","burst_share_pct":0.0,"free_share":0.29842235,"hold_share_pct":70.157765,"reads_per_sec":155049.4,"round":2},{"arm":"B","burst_share_pct":2.433704,"free_share":0.2906981,"hold_share_pct":70.93019,"reads_per_sec":146616.55748119834,"round":3},{"arm":"B","burst_share_pct":5.443166,"free_share":0.27316095,"hold_share_pct":72.683905,"reads_per_sec":140673.7,"round":4},{"arm":"B","burst_share_pct":7.726333,"free_share":0.26178213,"hold_share_pct":73.821787,"reads_per_sec":144622.36095196256,"round":5},{"arm":"B","burst_share_pct":6.866384,"free_share":0.27018914,"hold_share_pct":72.981086,"reads_per_sec":134869.17976962304,"round":6},{"arm":"B","burst_share_pct":16.248806,"free_share":0.23948099,"hold_share_pct":76.051901,"reads_per_sec":126774.7,"round":7},{"arm":"B","burst_share_pct":10.570201,"free_share":0.22762283,"hold_share_pct":77.237717,"reads_per_sec":104776.09895223902,"round":8},{"arm":"B","burst_share_pct":10.066712,"free_share":0.23440177,"hold_share_pct":76.559823,"reads_per_sec":121971.56218881572,"round":9},{"arm":"B","burst_share_pct":7.547914,"free_share":0.27502121,"hold_share_pct":72.497879,"reads_per_sec":143984.6,"round":10}] |
+| settled_S3.burst_share_pct.max | 11.441842 |
+| settled_S3.burst_share_pct.median | 8.295015 |
+| settled_S3.burst_share_pct.min | 1.556181 |
+| settled_S3.hold_burst_r | 0.941075535714 |
+| settled_S3.hold_share_pct.max | 79.241933 |
+| settled_S3.hold_share_pct.median | 74.6500445 |
+| settled_S3.hold_share_pct.min | 67.40711 |
+| settled_S3.log_R_log_free_r | 0.905146130594 |
+| settled_S3.log_R_log_free_slope | 1.112306030799 |
+| settled_S3.mean_log_observed_over_predicted | 0.191204560314 |
+| settled_S3.n | 20 |
+| settled_S3.off_read_median_for_arm.AMIN | 447149.8 |
+| settled_S3.off_read_median_for_arm.B | 451241.22963253374 |
+| settled_S3.paired.adjusted.ci90 | [0.956206577529,1.051829199426] |
+| settled_S3.paired.adjusted.ci90_log | [-0.044781303992,0.050530743174] |
+| settled_S3.paired.adjusted.classification | equivalent |
+| settled_S3.paired.adjusted.geometric_mean | 1.00287885556 |
+| settled_S3.paired.adjusted.runs | 10 |
+| settled_S3.paired.adjusted.sd_log | 0.082210744393 |
+| settled_S3.paired.raw.ci90 | [0.846496066305,1.170637689608] |
+| settled_S3.paired.raw.ci90_log | [-0.166649724431,0.157548634185] |
+| settled_S3.paired.raw.classification | inconclusive |
+| settled_S3.paired.raw.geometric_mean | 0.99545979292 |
+| settled_S3.paired.raw.runs | 10 |
+| settled_S3.paired.raw.sd_log | 0.279635042842 |
+| settled_S3.paired.raw_log_ratio_log_free_ratio_r | 0.969802975561 |
+| settled_S3.paired.rounds | [1,2,3,4,5,6,7,8,9,10] |
+| settled_S3.points | [{"arm":"AMIN","burst_share_pct":10.898439,"free_share":0.20758067,"hold_share_pct":79.241933,"reads_per_sec":121993.36950165761,"round":1},{"arm":"AMIN","burst_share_pct":7.794729,"free_share":0.25147458,"hold_share_pct":74.852542,"reads_per_sec":149756.0565707436,"round":2},{"arm":"AMIN","burst_share_pct":9.036728,"free_share":0.25491866,"hold_share_pct":74.508134,"reads_per_sec":133942.098660579,"round":3},{"arm":"AMIN","burst_share_pct":11.441842,"free_share":0.22068623,"hold_share_pct":77.931377,"reads_per_sec":122255.59877744401,"round":4},{"arm":"AMIN","burst_share_pct":3.0678,"free_share":0.31493151,"hold_share_pct":68.506849,"reads_per_sec":188947.8,"round":5},{"arm":"AMIN","burst_share_pct":8.500763,"free_share":0.23458955,"hold_share_pct":76.541045,"reads_per_sec":125549.99874450002,"round":6},{"arm":"AMIN","burst_share_pct":9.370236,"free_share":0.25208045,"hold_share_pct":74.791955,"reads_per_sec":134742.7,"round":7},{"arm":"AMIN","burst_share_pct":9.007765,"free_share":0.2437509,"hold_share_pct":75.62491,"reads_per_sec":128051.79871948202,"round":8},{"arm":"AMIN","burst_share_pct":2.181193,"free_share":0.31025912,"hold_share_pct":68.974088,"reads_per_sec":157047.69842952304,"round":9},{"arm":"AMIN","burst_share_pct":1.876412,"free_share":0.29274066,"hold_share_pct":70.725934,"reads_per_sec":144554.09710891804,"round":10},{"arm":"B","burst_share_pct":5.732119,"free_share":0.2757691,"hold_share_pct":72.42309,"reads_per_sec":162351.79837648204,"round":1},{"arm":"B","burst_share_pct":10.919344,"free_share":0.21268497,"hold_share_pct":78.731503,"reads_per_sec":107474.87420603019,"round":2},{"arm":"B","burst_share_pct":4.909444,"free_share":0.27488915,"hold_share_pct":72.511085,"reads_per_sec":153336.3555324569,"round":3},{"arm":"B","burst_share_pct":4.047062,"free_share":0.29689222,"hold_share_pct":70.310778,"reads_per_sec":166883.6,"round":4},{"arm":"B","burst_share_pct":7.132288,"free_share":0.26893026,"hold_share_pct":73.106974,"reads_per_sec":147362.09852637904,"round":5},{"arm":"B","burst_share_pct":10.27601,"free_share":0.22907585,"hold_share_pct":77.092415,"reads_per_sec":129119.89870880102,"round":6},{"arm":"B","burst_share_pct":9.860128,"free_share":0.25560476,"hold_share_pct":74.439524,"reads_per_sec":147574.39852425602,"round":7},{"arm":"B","burst_share_pct":1.556181,"free_share":0.3259289,"hold_share_pct":67.40711,"reads_per_sec":186899.8775720147,"round":8},{"arm":"B","burst_share_pct":8.089267,"free_share":0.23312278,"hold_share_pct":76.687722,"reads_per_sec":118962.2,"round":9},{"arm":"B","burst_share_pct":9.413579,"free_share":0.22771353,"hold_share_pct":77.228647,"reads_per_sec":104363.79478181025,"round":10}] |
+
+## on_pearson_log_R_write_excess
+
+| Field | Value |
+| --- | --- |
+| r | -0.492376948341 |
+| runs | 20 |
+
+## paired_ratios
+
+| Field | Value |
+| --- | --- |
+| off.denominator | B |
+| off.numerator | AMIN |
+| off.read.ci90 | [0.987057748544,1.000307113636] |
+| off.read.ci90_log | [-0.013026732097,0.000307066486] |
+| off.read.classification | equivalent |
+| off.read.geometric_mean | 0.993660348126 |
+| off.read.runs | 10 |
+| off.read.sd_log | 0.011500975372 |
+| off.rounds | [1,2,3,4,5,6,7,8,9,10] |
+| off.write.ci90 | [0.999965740263,1.000116053072] |
+| off.write.ci90_log | [-3.4260324e-05,0.000116046339] |
+| off.write.classification | equivalent |
+| off.write.geometric_mean | 1.000040893843 |
+| off.write.runs | 10 |
+| off.write.sd_log | 0.000129645968 |
+| on.denominator | B |
+| on.numerator | AMIN |
+| on.read.ci90 | [0.906086933048,1.221541032219] |
+| on.read.ci90_log | [-0.098620024951,0.200113202817] |
+| on.read.classification | inconclusive |
+| on.read.geometric_mean | 1.052056256802 |
+| on.read.runs | 10 |
+| on.read.sd_log | 0.25767027107 |
+| on.rounds | [1,2,3,4,5,6,7,8,9,10] |
+| on.write.ci90 | [0.988692580292,1.033870015134] |
+| on.write.ci90_log | [-0.011371834616,0.033309057482] |
+| on.write.classification | equivalent |
+| on.write.geometric_mean | 1.011028987195 |
+| on.write.runs | 10 |
+| on.write.sd_log | 0.038539193195 |
+
+## pooled_log_R
+
+| Field | Value |
+| --- | --- |
+| off.df | 18 |
+| off.sd | 0.018213423606 |
+| on.df | 18 |
+| on.sd | 0.142188847755 |
+| sd_off_over_on.assumption | normality |
+| sd_off_over_on.ci90 | [0.086024845117,0.190734040022] |
+| sd_off_over_on.ratio | 0.128093193619 |
+
+## settled_reference
+
+| Field | Value |
+| --- | --- |
+| AMIN.R.max | 188947.8 |
+| AMIN.R.median | 134342.3993302895 |
+| AMIN.R.min | 121993.36950165761 |
+| AMIN.achieved | [] |
+| AMIN.any_ge_25.k | 10 |
+| AMIN.any_ge_25.n | 10 |
+| AMIN.largest_write_service_ms.max | 36.2867 |
+| AMIN.largest_write_service_ms.median | 33.99965 |
+| AMIN.largest_write_service_ms.min | 31.5076 |
+| AMIN.mean_W | 729.909955364911 |
+| AMIN.runs | 10 |
+| AMIN.sd_log_R | 0.137062586039 |
+| AMIN.wal_sync_p50_ms_median | 0.827392 |
+| AMIN.write_excess_s.max | 926.62947754 |
+| AMIN.write_excess_s.median | 534.2932424 |
+| AMIN.write_excess_s.min | 24.304104348 |
+| B.R.max | 186899.8775720147 |
+| B.R.median | 147468.24852531753 |
+| B.R.min | 104363.79478181025 |
+| B.achieved | [] |
+| B.any_ge_25.k | 10 |
+| B.any_ge_25.n | 10 |
+| B.largest_write_service_ms.max | 36.3806 |
+| B.largest_write_service_ms.median | 36.01105 |
+| B.largest_write_service_ms.min | 31.4127 |
+| B.mean_W | 729.169945860312 |
+| B.runs | 10 |
+| B.sd_log_R | 0.194139062749 |
+| B.wal_sync_p50_ms_median | 0.827392 |
+| B.write_excess_s.max | 634.86655882 |
+| B.write_excess_s.median | 408.12830574 |
+| B.write_excess_s.min | 33.03522314 |

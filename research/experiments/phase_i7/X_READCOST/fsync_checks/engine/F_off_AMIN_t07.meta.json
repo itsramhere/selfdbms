@@ -1,0 +1,13 @@
+{
+  "ac_line": 1,
+  "arm": "AMIN",
+  "condition": "off",
+  "end_iso": "2026-11-03T19:07:05.737938+00:00",
+  "exit_code": 0,
+  "id": "F_off_AMIN_t07",
+  "order_position": 67,
+  "part": "engine",
+  "round": 7,
+  "start_iso": "2026-11-03T19:06:53.451176+00:00",
+  "stderr": ""
+}

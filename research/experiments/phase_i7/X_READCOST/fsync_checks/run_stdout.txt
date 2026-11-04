@@ -1,0 +1,80 @@
+﻿1/80 bare r155 ac=1 exit=0
+2/80 bare r183 ac=1 exit=0
+3/80 bare r700 ac=1 exit=0
+4/80 bare r72 ac=1 exit=0
+5/80 bare r700 ac=1 exit=0
+6/80 bare r183 ac=1 exit=0
+7/80 bare r72 ac=1 exit=0
+8/80 bare r155 ac=1 exit=0
+9/80 bare r700 ac=1 exit=0
+10/80 bare r155 ac=1 exit=0
+11/80 bare r183 ac=1 exit=0
+12/80 bare r72 ac=1 exit=0
+13/80 bare r183 ac=1 exit=0
+14/80 bare r155 ac=1 exit=0
+15/80 bare r700 ac=1 exit=0
+16/80 bare r72 ac=1 exit=0
+17/80 bare r183 ac=1 exit=0
+18/80 bare r72 ac=1 exit=0
+19/80 bare r700 ac=1 exit=0
+20/80 bare r155 ac=1 exit=0
+21/80 bare r72 ac=1 exit=0
+22/80 bare r700 ac=1 exit=0
+23/80 bare r155 ac=1 exit=0
+24/80 bare r183 ac=1 exit=0
+25/80 bare r700 ac=1 exit=0
+26/80 bare r72 ac=1 exit=0
+27/80 bare r155 ac=1 exit=0
+28/80 bare r183 ac=1 exit=0
+29/80 bare r700 ac=1 exit=0
+30/80 bare r72 ac=1 exit=0
+31/80 bare r183 ac=1 exit=0
+32/80 bare r155 ac=1 exit=0
+33/80 bare r183 ac=1 exit=0
+34/80 bare r155 ac=1 exit=0
+35/80 bare r700 ac=1 exit=0
+36/80 bare r72 ac=1 exit=0
+37/80 bare r72 ac=1 exit=0
+38/80 bare r700 ac=1 exit=0
+39/80 bare r183 ac=1 exit=0
+40/80 bare r155 ac=1 exit=0
+41/80 F_off_AMIN_t01 ac=1 exit=0
+42/80 F_off_B_t01 ac=1 exit=0
+43/80 F_on_AMIN_t01 ac=1 exit=0
+44/80 F_on_B_t01 ac=1 exit=0
+45/80 F_on_B_t02 ac=1 exit=0
+46/80 F_off_B_t02 ac=1 exit=0
+47/80 F_on_AMIN_t02 ac=1 exit=0
+48/80 F_off_AMIN_t02 ac=1 exit=0
+49/80 F_on_B_t03 ac=1 exit=0
+50/80 F_off_AMIN_t03 ac=1 exit=0
+51/80 F_on_AMIN_t03 ac=1 exit=0
+52/80 F_off_B_t03 ac=1 exit=0
+53/80 F_off_B_t04 ac=1 exit=0
+54/80 F_on_AMIN_t04 ac=1 exit=0
+55/80 F_on_B_t04 ac=1 exit=0
+56/80 F_off_AMIN_t04 ac=1 exit=0
+57/80 F_off_AMIN_t05 ac=1 exit=0
+58/80 F_off_B_t05 ac=1 exit=0
+59/80 F_on_B_t05 ac=1 exit=0
+60/80 F_on_AMIN_t05 ac=1 exit=0
+61/80 F_off_AMIN_t06 ac=1 exit=0
+62/80 F_on_B_t06 ac=1 exit=0
+63/80 F_on_AMIN_t06 ac=1 exit=0
+64/80 F_off_B_t06 ac=1 exit=0
+65/80 F_off_B_t07 ac=1 exit=0
+66/80 F_on_B_t07 ac=1 exit=0
+67/80 F_off_AMIN_t07 ac=1 exit=0
+68/80 F_on_AMIN_t07 ac=1 exit=0
+69/80 F_off_B_t08 ac=1 exit=0
+70/80 F_on_AMIN_t08 ac=1 exit=0
+71/80 F_off_AMIN_t08 ac=1 exit=0
+72/80 F_on_B_t08 ac=1 exit=0
+73/80 F_off_B_t09 ac=1 exit=0
+74/80 F_on_AMIN_t09 ac=1 exit=0
+75/80 F_off_AMIN_t09 ac=1 exit=0
+76/80 F_on_B_t09 ac=1 exit=0
+77/80 F_on_B_t10 ac=1 exit=0
+78/80 F_off_AMIN_t10 ac=1 exit=0
+79/80 F_on_AMIN_t10 ac=1 exit=0
+80/80 F_off_B_t10 ac=1 exit=0
